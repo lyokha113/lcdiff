@@ -69,7 +69,7 @@ try {
     throw new Error(`frontend shell rendered too few buttons: ${buttonCount}`);
   }
 
-  const mockedPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  var mockedPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const mockMessages = [];
   mockedPage.on("console", (message) => {
     if (!["debug", "info"].includes(message.type())) {
@@ -245,88 +245,157 @@ try {
   await mockedPage.goto(url, { waitUntil: "domcontentloaded" });
   await mockedPage.locator("h1", { hasText: "jdiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: /Compare \/ Merge/ }).click();
-  await mockedPage.getByPlaceholder("~/path/to/archive.jar or folder").nth(0).waitFor({ timeout: 5_000 });
-  await mockedPage.getByPlaceholder("~/path/to/archive.jar or folder").nth(0).fill("/fixtures/not-a-zip.jar");
-  await mockedPage.getByRole("button", { name: "Open" }).nth(0).click();
-  await mockedPage.locator(".open-panel", { hasText: "LEFT" }).locator("text=Error: not a valid zip/jar").waitFor({ timeout: 5_000 });
-  await mockedPage.getByPlaceholder("~/path/to/archive.jar or folder").nth(0).fill("/fixtures/left.jar");
-  await mockedPage.getByRole("button", { name: "Open" }).nth(0).click();
-  await mockedPage.locator(".open-panel", { hasText: "LEFT" }).locator("text=Error: not a valid zip/jar").waitFor({ state: "detached", timeout: 5_000 });
-  await mockedPage.getByPlaceholder("~/path/to/archive.jar or folder").nth(1).fill("/fixtures/right.jar");
-  await mockedPage.getByRole("button", { name: "Open" }).nth(1).click();
+
+  // Helpers for the new chip-based source UI. The path Input only renders while
+  // the chip's Popover is open, so open the chip, act, then close (Escape).
+  const archiveInput = () => mockedPage.getByPlaceholder("~/path/to/archive.jar or folder");
+  async function openLeftPopover() {
+    await mockedPage.getByRole("button", { name: "Change left source", exact: true }).click();
+    await archiveInput().waitFor({ timeout: 5_000 });
+  }
+  async function openRightPopover() {
+    await mockedPage.getByRole("button", { name: "Change right source", exact: true }).click();
+    await archiveInput().waitFor({ timeout: 5_000 });
+  }
+  async function closePopover() {
+    await mockedPage.keyboard.press("Escape");
+    await archiveInput().waitFor({ state: "detached", timeout: 5_000 });
+  }
+
+  // Bad-path error shows inside the open left Popover as <small class="path-error">.
+  await openLeftPopover();
+  await archiveInput().fill("/fixtures/not-a-zip.jar");
+  await archiveInput().press("Enter");
+  await mockedPage.locator("small.path-error", { hasText: "not a valid zip/jar" }).waitFor({ timeout: 5_000 });
+  // Recover: fixing the path detaches the error.
+  await archiveInput().fill("/fixtures/left.jar");
+  await archiveInput().press("Enter");
+  await mockedPage.locator("small.path-error", { hasText: "not a valid zip/jar" }).waitFor({ state: "detached", timeout: 5_000 });
+  await closePopover();
+
+  // Open the right side.
+  await openRightPopover();
+  await archiveInput().fill("/fixtures/right.jar");
+  await archiveInput().press("Enter");
+  await closePopover();
+
+  // Tree filter (in the always-visible SearchBar): Only right hides left-only.
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Only right" }).click();
   await mockedPage.locator(".tree-row", { hasText: "right-only.txt" }).waitFor({ timeout: 5_000 });
   if (await mockedPage.locator(".tree-row", { hasText: "left-only.txt" }).count()) {
     throw new Error("Only right filter still showed left-only row");
   }
-  await mockedPage.getByPlaceholder("Search paths, text, constants").fill("right-only");
+
+  // Search scope lives in the config drawer (closed by default) — open it.
+  await mockedPage.getByRole("button", { name: "Settings", exact: true }).click();
   await mockedPage.getByRole("combobox", { name: "Search scope" }).click();
   await mockedPage.getByRole("option", { name: "Search right" }).click();
+  // Submit via the SearchBar Search button (MenuBar toggle is now "Toggle search").
+  await mockedPage.getByPlaceholder("Search paths, text, constants").fill("right-only");
   await mockedPage.getByRole("button", { name: "Search", exact: true }).click();
   await mockedPage.locator("text=Search matched 1 entries.").waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "right-only.txt · path · T2 · RIGHT" }).click();
   await mockedPage.locator("text=right text content for right-only.txt").waitFor({ timeout: 5_000 });
+
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Differences only" }).click();
   await mockedPage.getByRole("button", { name: "Clear search" }).click();
+
+  // Metadata-only detection: identical decompiled source -> differentMetadataOnly badge.
   const metadataRow = mockedPage.locator(".tree-row", { hasText: "com/example/Meta.class" });
   await metadataRow.waitFor({ timeout: 5_000 });
   await metadataRow.click({ force: true });
   await mockedPage.locator("text=class MetaSameSource").first().waitFor({ timeout: 10_000 });
   await mockedPage.locator(".tree-row", { hasText: "com/example/Meta.class" }).locator("text=differentMetadataOnly").waitFor({ timeout: 10_000 });
+
   const appRow = mockedPage.locator(".tree-row", { hasText: "com/example/App.class" });
   await appRow.waitFor({ timeout: 5_000 });
   await appRow.click();
-  await mockedPage.getByRole("button", { name: "Bytecode" }).click();
+
+  // Bytecode view (LEFT/RIGHT ASM) then source view (LeftApp/RightApp).
+  await mockedPage.getByRole("button", { name: "Show bytecode", exact: true }).click();
   await mockedPage.locator("text=LEFT ASM BYTECODE for com/example/App.class").waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=RIGHT ASM BYTECODE for com/example/App.class").waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("button", { name: "Source" }).click();
+  await mockedPage.getByRole("button", { name: "Show source", exact: true }).click();
   await mockedPage.locator("text=class LeftApp").waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=class RightApp").waitFor({ timeout: 5_000 });
-  const copyRightButton = mockedPage.getByRole("button", { name: "Copy →" });
+
+  // Copy-to-right staging: MenuBar badge "1 → right" + row badge "pending → right".
+  const copyRightButton = mockedPage.getByRole("button", { name: "Copy to right", exact: true });
   await copyRightButton.waitFor({ timeout: 5_000 });
-  await copyRightButton.click({ force: true });
-  await mockedPage.locator("text=Pending copies target: right").waitFor({ timeout: 10_000 });
+  await copyRightButton.click();
+  await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await mockedPage.locator("text=pending → right").waitFor({ timeout: 10_000 });
+
+  // Unstage via context menu: badges disappear.
   await appRow.click({ button: "right" });
   const unstageMenuItem = mockedPage.getByRole("menuitem", { name: "Unstage" });
   await unstageMenuItem.waitFor({ timeout: 5_000 });
   await unstageMenuItem.evaluate((element) => element.click());
   await mockedPage.locator("text=Unstaged com/example/App.class.").waitFor({ timeout: 5_000 });
-  await mockedPage.locator("text=No staged copies").waitFor({ timeout: 5_000 });
+  if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
+    throw new Error("MenuBar staged badge still present after unstage");
+  }
   await mockedPage.locator("text=pending → right").waitFor({ state: "detached", timeout: 5_000 });
+
+  // Re-stage. The copy button is enabled only once the pair is selected, so a
+  // plain (non-forced) click auto-waits for that precondition.
   await appRow.click();
-  await copyRightButton.click({ force: true });
-  await mockedPage.locator("text=Pending copies target: right").waitFor({ timeout: 10_000 });
+  await copyRightButton.click();
+  await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await mockedPage.locator("text=pending → right").waitFor({ timeout: 10_000 });
+
+  // Binary preview details + hex dump.
   const binaryRow = mockedPage.locator(".tree-row", { hasText: "assets/blob.bin" });
   await binaryRow.click();
   await mockedPage.locator("text=LEFT: Binary · 4 bytes · SHA-256 left-sha · CRC32 11111111").waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=RIGHT: Binary · 4 bytes · SHA-256 right-sha · CRC32 22222222").waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=00000000  de ad be ef").waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=00000000  fe ed fa ce").waitFor({ timeout: 5_000 });
+
+  // Single-mode switch guard: blocked while staged.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "Single" }).click();
   await mockedPage.locator("text=Save or clear staged copies before switching to Single mode.").waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("button", { name: "Clear staged" }).click();
+
+  // Clear staged (MenuBar icon button): badges gone.
+  await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.locator("text=Cleared staged copies.").waitFor({ timeout: 5_000 });
-  await mockedPage.locator("text=No staged copies").waitFor({ timeout: 5_000 });
+  if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
+    throw new Error("MenuBar staged badge still present after clear staged");
+  }
   await mockedPage.locator("text=pending → right").waitFor({ state: "detached", timeout: 5_000 });
+
+  // Now the switch to Single succeeds; SourceChips renders only the left chip.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "Single" }).click();
-  await mockedPage.locator(".open-panel").filter({ hasText: "LEFT" }).waitFor({ timeout: 5_000 });
-  if (await mockedPage.locator(".open-panel", { hasText: "RIGHT" }).count()) {
-    throw new Error("Single mode still rendered the right open panel after clearing staged copies");
+  await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
+  if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
+    throw new Error("Single mode still rendered the right source chip");
   }
+
+  // Back to Compare: right chip returns.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "Compare" }).click();
-  await mockedPage.locator(".open-panel").filter({ hasText: "RIGHT" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
+
+  // Stage + signed-save (backup=false by default).
+  const menuBarSaveStaged = mockedPage.getByRole("button", { name: "Save staged", exact: true });
   const compareAppRow = mockedPage.locator(".tree-row.different", { hasText: "com/example/App.class" });
-  await compareAppRow.click({ force: true });
-  await copyRightButton.click({ force: true });
-  await mockedPage.locator("text=Pending copies target: right").waitFor({ timeout: 10_000 });
-  await mockedPage.getByRole("button", { name: "Save staged" }).nth(1).click();
+  // Selecting an entry and waiting for the copy button to enable is the precondition
+  // for staging; a save reloads the archive and resets the selection, so re-select
+  // and confirm the copy button is enabled before each stage.
+  async function selectAppAndStageRight() {
+    await compareAppRow.waitFor({ state: "visible", timeout: 5_000 });
+    await compareAppRow.click({ force: true });
+    await copyRightButton.click(); // auto-waits for enabled (selection committed)
+    await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
+  }
+  await selectAppAndStageRight();
+  // Save via the MenuBar Save staged button (Popovers closed -> single match).
+  await menuBarSaveStaged.waitFor({ state: "visible", timeout: 5_000 });
+  await menuBarSaveStaged.click();
   await mockedPage.getByRole("heading", { name: "Signed JAR warning" }).waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=Modifying it will invalidate the signature").waitFor({ timeout: 5_000 });
   const suppressSignedWarningCheckbox = mockedPage.getByLabel("Do not ask again for this file this session");
@@ -334,12 +403,18 @@ try {
   await suppressSignedWarningCheckbox.evaluate((element) => element.click());
   await mockedPage.getByRole("button", { name: "Save anyway" }).click();
   await mockedPage.locator("text=Saved 1 entries to /fixtures/right.jar (signed archive is now invalid)").waitFor({ timeout: 5_000 });
-  await compareAppRow.click({ force: true });
-  await copyRightButton.click({ force: true });
+  // The signed-save Dialog leaves the page briefly inert while Radix tears it down;
+  // wait for it to fully detach before interacting with the tree again.
+  await mockedPage.getByRole("heading", { name: "Signed JAR warning" }).waitFor({ state: "detached", timeout: 5_000 });
+
+  // Re-stage + toggle backup (in config drawer, still open) + save (backup=true,
+  // no second signed prompt thanks to session suppression).
+  await selectAppAndStageRight();
   const backupCheckbox = mockedPage.getByLabel("Keep one overwritten .bak on save");
   await backupCheckbox.waitFor({ timeout: 5_000 });
   await backupCheckbox.evaluate((element) => element.click());
-  await mockedPage.getByRole("button", { name: "Save staged" }).nth(1).click();
+  await menuBarSaveStaged.waitFor({ state: "visible", timeout: 5_000 });
+  await menuBarSaveStaged.click();
   await mockedPage.locator("text=Saved 2 entries to /fixtures/right.jar (signed archive is now invalid)").waitFor({ timeout: 5_000 });
   if (await mockedPage.getByRole("heading", { name: "Signed JAR warning" }).count()) {
     throw new Error("signed warning Dialog reappeared after session suppression");

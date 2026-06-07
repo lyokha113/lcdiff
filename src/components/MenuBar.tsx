@@ -60,7 +60,7 @@ export function MenuBar({
           <TooltipContent><p>Discard all staged copies</p></TooltipContent>
         </Tooltip>
         {stagedTarget && <Badge variant="secondary">{stagedCount} → {stagedTarget}</Badge>}
-        <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Search" aria-pressed={searchOpen} onClick={onToggleSearch}>
+        <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
           <Search />
         </Button>
         <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Settings" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
