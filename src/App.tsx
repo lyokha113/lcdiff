@@ -28,16 +28,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { open as chooseFile } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +59,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DiffView, pairHasClass } from "@/components/DiffView";
+import { FileTree } from "@/components/FileTree";
 import { SplashScreen } from "@/components/SplashScreen";
 import {
   type HistoryEntry,
@@ -777,54 +770,16 @@ export function App() {
       <section className="workspace">
         <ResizablePanelGroup orientation="vertical" className="workspace-panels">
           <ResizablePanel defaultSize={44} minSize={25}>
-            <div className="tree">
-              {visiblePairs.map((pair) => (
-                <ContextMenu key={pair.path}>
-                  <ContextMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className={`tree-row ${pair.status} ${selected?.path === pair.path ? "selected" : ""}`}
-                      onClick={() => {
-                        setSelectedSearchResult(undefined);
-                        void inspect(pair);
-                      }}
-                      onContextMenu={() => {
-                        setSelectedSearchResult(undefined);
-                        setSelected(pair);
-                      }}
-                    >
-                      <span>{pair.left ? pair.path : ""}</span>
-                      <b>
-                        <Badge variant="outline">{pair.status}</Badge>
-                        {stagedEntries[pair.path] && <Badge variant="secondary">pending → {stagedEntries[pair.path]}</Badge>}
-                      </b>
-                      <span>{pair.right ? pair.path : ""}</span>
-                    </Button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem
-                      disabled={mode === "single" || !pair.right || pair.right.kind === "directory"}
-                      onSelect={() => void copy("right", "left", pair)}
-                    >
-                      Copy to left
-                    </ContextMenuItem>
-                    <ContextMenuItem
-                      disabled={mode === "single" || !pair.left || pair.left.kind === "directory"}
-                      onSelect={() => void copy("left", "right", pair)}
-                    >
-                      Copy to right
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    <ContextMenuItem
-                      disabled={!stagedEntries[pair.path]}
-                      onSelect={() => void unstage(pair.path)}
-                    >
-                      Unstage
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
-              ))}
-            </div>
+            <FileTree
+              visiblePairs={visiblePairs}
+              selected={selected}
+              stagedEntries={stagedEntries}
+              mode={mode}
+              onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
+              onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+              onCopy={(from, to, pair) => void copy(from, to, pair)}
+              onUnstage={(entryPath) => void unstage(entryPath)}
+            />
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel defaultSize={56} minSize={30}>
