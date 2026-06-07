@@ -1,5 +1,28 @@
 import "@/lib/monaco";
-import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
+import type {
+  ArchiveDiff,
+  ArchiveSummary,
+  CodeEditor,
+  CommitResult,
+  ComparePair,
+  DecorationRef,
+  DiffCodeEditor,
+  Engine,
+  EntryKind,
+  EntryPreview,
+  Mode,
+  MonacoApi,
+  PairStatus,
+  PlatformHints,
+  SearchHit,
+  SearchResult,
+  SearchScope,
+  SearchTier,
+  Side,
+  TreeFilter,
+  ViewMode,
+} from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -51,71 +74,8 @@ import {
   recordSession,
 } from "@/lib/history";
 
-type Side = "left" | "right";
-type PairStatus = "onlyLeft" | "onlyRight" | "identical" | "different" | "differentMetadataOnly";
-type EntryKind = "directory" | "class" | "text" | "binary";
-type Engine = "cfr" | "vineflower";
-type Mode = "single" | "compare";
-type SearchScope = Side | "both";
-type TreeFilter = "all" | "differences" | "onlyLeft" | "onlyRight";
-type SearchTier = "T2" | "T3";
-type CodeEditor = Parameters<OnMount>[0];
-type DiffCodeEditor = Parameters<DiffOnMount>[0];
-type MonacoApi = Parameters<OnMount>[1];
-type DecorationRef = { current: string[] };
-
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
-}
-
-interface ArchiveSummary {
-  path: string;
-  metadata: { sourceKind: "archive" | "directory"; signed: boolean; multiRelease: boolean; zip64: boolean };
-  entries: Array<{ path: string; kind: EntryKind; uncompressedSize: number }>;
-}
-
-interface ComparePair {
-  path: string;
-  status: PairStatus;
-  left?: { path: string; kind: EntryKind };
-  right?: { path: string; kind: EntryKind };
-}
-
-interface ArchiveDiff {
-  pairs: ComparePair[];
-}
-
-interface EntryPreview {
-  path: string;
-  kind: EntryKind;
-  language: string;
-  details?: string;
-  content: string;
-}
-
-interface CommitResult {
-  rewrittenPath: string;
-  backupPath?: string;
-  signatureInvalidated: boolean;
-  copiedEntries: number;
-}
-
-interface SearchResult {
-  side: Side;
-  path: string;
-  tier: SearchTier;
-  matchKind: string;
-  line?: number;
-}
-
-interface SearchHit {
-  path: string;
-  matchKind: string;
-  line?: number;
-}
-
-interface PlatformHints {
-  dropHint?: string;
 }
 
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
