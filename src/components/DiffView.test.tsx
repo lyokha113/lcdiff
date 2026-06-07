@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DiffView } from "@/components/DiffView";
@@ -40,5 +41,20 @@ describe("DiffView", () => {
   it("marks Bytecode toggle disabled when selection has no class entry", () => {
     setup({ selected: { path: "x.txt", status: "different", left: { path: "x.txt", kind: "text" } } });
     expect(screen.getByLabelText("Show bytecode")).toBeDisabled();
+  });
+  it("Source button has aria-pressed=true and Bytecode has aria-pressed=false when viewMode=source", () => {
+    setup();
+    expect(screen.getByLabelText("Show source").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByLabelText("Show bytecode").getAttribute("aria-pressed")).toBe("false");
+  });
+  it("Bytecode button has aria-pressed=true when viewMode=bytecode", () => {
+    setup({ viewMode: "bytecode" });
+    expect(screen.getByLabelText("Show bytecode").getAttribute("aria-pressed")).toBe("true");
+  });
+  it("clicking Source button calls onShowSource", async () => {
+    const user = userEvent.setup();
+    const props = setup();
+    await user.click(screen.getByLabelText("Show source"));
+    expect(props.onShowSource).toHaveBeenCalledTimes(1);
   });
 });

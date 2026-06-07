@@ -408,7 +408,7 @@ h1 {
 }
 
 /* ---------- editor pane ---------- */
-.editor-panel { display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+.editor-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .copy-actions {
   display: flex;
   align-items: center;

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ComparePair, EntryPreview, Mode, Side, ViewMode } from "@/lib/types";
 
-function pairHasClass(pair?: ComparePair) {
+export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
 }
 

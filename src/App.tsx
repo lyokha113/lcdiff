@@ -66,7 +66,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { DiffView } from "@/components/DiffView";
+import { DiffView, pairHasClass } from "@/components/DiffView";
 import { SplashScreen } from "@/components/SplashScreen";
 import {
   type HistoryEntry,
@@ -114,10 +114,6 @@ function applySearchLineHighlight(
   editor.revealLineInCenter(lineNumber);
 }
 
-function pairHasClass(pair?: ComparePair) {
-  return pair?.left?.kind === "class" || pair?.right?.kind === "class";
-}
-
 function dropSideForPosition(mode: Mode, x: number, width: number): Side {
   if (mode === "single") return "left";
   return x < width / 2 ? "left" : "right";
@@ -159,8 +155,8 @@ export function App() {
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
-  const handleEditorMount: OnMount = (editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; };
-  const handleDiffMount: DiffOnMount = (editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; };
+  const handleEditorMount = useCallback<OnMount>((editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; }, []);
+  const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; }, []);
   const displayedPairs = useMemo<ComparePair[]>(
     () =>
       mode === "compare"
