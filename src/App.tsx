@@ -1,5 +1,5 @@
 import "@/lib/monaco";
-import Editor, { DiffEditor } from "@monaco-editor/react";
+import type { DiffOnMount, OnMount } from "@monaco-editor/react";
 import type {
   ArchiveDiff,
   ArchiveSummary,
@@ -66,6 +66,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DiffView } from "@/components/DiffView";
 import { SplashScreen } from "@/components/SplashScreen";
 import {
   type HistoryEntry,
@@ -142,6 +143,7 @@ export function App() {
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [ignoreTrimWhitespace, setIgnoreTrimWhitespace] = useState(true);
+  const [viewMode, setViewMode] = useState<ViewMode>("source");
   const [stagedTarget, setStagedTarget] = useState<Side>();
   const [stagedEntries, setStagedEntries] = useState<Record<string, Side>>({});
   const [searching, setSearching] = useState(false);
@@ -157,6 +159,8 @@ export function App() {
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
+  const handleEditorMount: OnMount = (editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; };
+  const handleDiffMount: DiffOnMount = (editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; };
   const displayedPairs = useMemo<ComparePair[]>(
     () =>
       mode === "compare"
@@ -347,6 +351,7 @@ export function App() {
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
     setSelected(pair);
+    setViewMode("source");
     const next: Partial<Record<Side, EntryPreview>> = {};
     for (const side of ["left", "right"] as const) {
       if (pair[side]) {
@@ -398,6 +403,7 @@ export function App() {
       }
       if (previewRequestId.current !== requestId) return;
       setPreview(next);
+      setViewMode("bytecode");
     } catch (error) {
       setMessage(String(error));
     }
@@ -825,68 +831,19 @@ export function App() {
             </div>
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={56} minSize={30} className="editor-panel">
-            <div className="copy-actions">
-              <Button variant="outline" disabled={mode === "single" || !selected?.right || selected.right.kind === "directory"} onClick={() => copy("right", "left")}>← Copy</Button>
-              <Button variant="outline" disabled={mode === "single" || !selected?.left || selected.left.kind === "directory"} onClick={() => copy("left", "right")}>Copy →</Button>
-              <Button variant="secondary" disabled={!selected} onClick={() => selected && inspect(selected)}>Source</Button>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      variant="secondary"
-                      disabled={!pairHasClass(selected)}
-                      onClick={showBytecode}
-                    >
-                      Bytecode
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Open ASM bytecode for class entries; useful for metadata-only differences.</p>
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <div className="editors">
-              {(preview.left?.details || preview.right?.details) && (
-                <p className="preview-details">
-                  {preview.left?.details && `LEFT: ${preview.left.details}`}
-                  {preview.left?.details && preview.right?.details && " · "}
-                  {preview.right?.details && `RIGHT: ${preview.right.details}`}
-                </p>
-              )}
-              {mode === "compare" ? (
-                <DiffEditor
-                  height="100%"
-                  language={preview.left?.language ?? preview.right?.language ?? "plaintext"}
-                  original={preview.left?.content ?? ""}
-                  modified={preview.right?.content ?? ""}
-                  theme="vs-dark"
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    renderSideBySide: true,
-                    ignoreTrimWhitespace,
-                  }}
-                  onMount={(editor, monaco) => {
-                    diffEditorRef.current = editor;
-                    monacoRef.current = monaco;
-                  }}
-                />
-              ) : (
-                <Editor
-                  height="100%"
-                  language={preview.left?.language ?? "plaintext"}
-                  value={preview.left?.content ?? ""}
-                  theme="vs-dark"
-                  options={{ readOnly: true, minimap: { enabled: false } }}
-                  onMount={(editor, monaco) => {
-                    editorRef.current = editor;
-                    monacoRef.current = monaco;
-                  }}
-                />
-              )}
-            </div>
+          <ResizablePanel defaultSize={56} minSize={30}>
+            <DiffView
+              mode={mode}
+              selected={selected}
+              preview={preview}
+              viewMode={viewMode}
+              ignoreTrimWhitespace={ignoreTrimWhitespace}
+              onCopy={(from, to) => void copy(from, to)}
+              onShowSource={() => selected && void inspect(selected)}
+              onShowBytecode={showBytecode}
+              onEditorMount={handleEditorMount}
+              onDiffMount={handleDiffMount}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </section>
