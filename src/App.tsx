@@ -52,12 +52,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { FileTree } from "@/components/FileTree";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -140,6 +136,7 @@ export function App() {
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
   const [suppressSignedWarningForFile, setSuppressSignedWarningForFile] = useState(false);
   const [signedWarningSuppressions, setSignedWarningSuppressions] = useState<Record<string, boolean>>({});
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const previewRequestId = useRef(0);
   const searchStreamId = useRef(0);
   const editorRef = useRef<CodeEditor | undefined>(undefined);
@@ -626,6 +623,7 @@ export function App() {
             </SelectContent>
           </Select>
           <Button variant="outline" onClick={clearStaged}>Clear staged</Button>
+          <Button variant="outline" aria-label="Settings" onClick={() => setDrawerOpen((o) => !o)}>Settings</Button>
         </div>
       </header>
 
@@ -653,106 +651,14 @@ export function App() {
         </div>
       </section>
 
-      <section className="toolbar panel">
-        <div className="toolbar-group find">
-          <span className="zone-label">Find</span>
-          <div className="row">
-            <Input
-              className="search-input"
-              value={query}
-              placeholder="Search paths, text, constants"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <Select
-              value={searchScope}
-              disabled={mode === "single"}
-              onValueChange={(value) => setSearchScope(value as SearchScope)}
-            >
-              <SelectTrigger aria-label="Search scope">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="both">Search both</SelectItem>
-                  <SelectItem value="left">Search left</SelectItem>
-                  <SelectItem value="right">Search right</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <Button onClick={runSearch}>Search</Button>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button variant="secondary" disabled={searching} onClick={runDeepSearch}>Deep search</Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Decompile classes in the background and stream source matches.</p>
-              </TooltipContent>
-            </Tooltip>
-            <Button variant="outline" disabled={!searching} onClick={cancelDeepSearch}>Cancel search</Button>
-            <Button variant="ghost" onClick={clearSearch}>Clear search</Button>
-          </div>
-        </div>
-        <div className="toolbar-group view">
-          <span className="zone-label">View</span>
-          <div className="row">
-            <Select
-              value={treeFilter}
-              onValueChange={(value) => setTreeFilter(value as TreeFilter)}
-            >
-              <SelectTrigger aria-label="Tree filter">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="all">Show all</SelectItem>
-                  <SelectItem value="differences">Differences only</SelectItem>
-                  <SelectItem value="onlyLeft">Only left</SelectItem>
-                  <SelectItem value="onlyRight">Only right</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div className="options-zone">
-          <div className="options-group">
-            <span className="zone-label">Decompiler &amp; diff</span>
-            <div className="row">
-              <Select value={engine} onValueChange={(value) => void changeEngine(value as Engine)}>
-                <SelectTrigger aria-label="Decompiler engine">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="cfr">CFR</SelectItem>
-                    <SelectItem value="vineflower">Vineflower</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <label className="check-label">
-                <Checkbox
-                  checked={ignoreTrimWhitespace}
-                  onCheckedChange={(checked) => setIgnoreTrimWhitespace(checked === true)}
-                />
-                Ignore trim whitespace
-              </label>
-            </div>
-          </div>
-        </div>
-      </section>
+      <div className="search-bar">
+        <Input className="search-input" value={query} placeholder="Search paths, text, constants"
+          onChange={(event) => setQuery(event.target.value)} />
+        <Button onClick={runSearch}>Search</Button>
+      </div>
       {dropHint && <p className="platform-hint">{dropHint}</p>}
-      {mode === "compare" && <section className="save-settings">
-        <label className="check-label">
-          <Checkbox
-            checked={backupEnabled}
-            onCheckedChange={(checked) => setBackupEnabled(checked === true)}
-          />
-          Keep one overwritten .bak on save
-        </label>
-        <span>{stagedTarget ? `Pending copies target: ${stagedTarget}` : "No staged copies"}</span>
-      </section>}
       <p className="message">{message}</p>
+      <span className="staged-status">{stagedTarget ? `Pending copies target: ${stagedTarget}` : "No staged copies"}</span>
       {searchResults.length > 0 && (
         <section className="search-results">
           {searchResults.map((result) => (
@@ -798,6 +704,24 @@ export function App() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </section>
+      <ConfigDrawer
+        open={drawerOpen}
+        mode={mode}
+        searchScope={searchScope}
+        searching={searching}
+        treeFilter={treeFilter}
+        engine={engine}
+        ignoreTrimWhitespace={ignoreTrimWhitespace}
+        backupEnabled={backupEnabled}
+        onScopeChange={setSearchScope}
+        onDeepSearch={runDeepSearch}
+        onCancelDeepSearch={cancelDeepSearch}
+        onClearSearch={clearSearch}
+        onFilterChange={setTreeFilter}
+        onEngineChange={(next) => void changeEngine(next)}
+        onIgnoreWsChange={setIgnoreTrimWhitespace}
+        onBackupChange={setBackupEnabled}
+      />
       <Dialog open={signedSavePrompt !== undefined} onOpenChange={(open) => !open && setSignedSavePrompt(undefined)}>
         <DialogContent>
           <DialogHeader>
