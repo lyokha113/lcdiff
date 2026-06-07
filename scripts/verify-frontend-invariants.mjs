@@ -290,12 +290,12 @@ if (
 }
 
 if (!frontend.includes('disabled={mode === "single"}')) {
-  failures.push("src/App.tsx: search scope selector must be disabled in Single mode");
+  failures.push("frontend: search scope selector must be disabled in Single mode");
 }
 
 const copyActionGuards = frontend.match(/mode === "single"/g)?.length ?? 0;
 if (copyActionGuards < 5) {
-  failures.push("src/App.tsx: Single mode must disable search scope and all merge copy actions");
+  failures.push("frontend: Single mode must disable search scope and all merge copy actions");
 }
 
 if (!frontend.includes('disabled={mode === "single"}') || !/save\(side\)/.test(frontend)) {
