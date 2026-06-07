@@ -98,7 +98,7 @@ function FileTreeNode({ node, depth, expanded, onToggle, ...props }: NodeProps) 
         <button
           type="button"
           style={indent}
-          className={`tree-row tree-file ${pair.status} ${pres.className} ${selected?.path === pair.path ? "selected" : ""}`}
+          className={`tree-row tree-file ${pair.status} ${selected?.path === pair.path ? "selected" : ""}`}
           onClick={() => onInspect(pair)}
           onContextMenu={() => onSelect(pair)}
         >
