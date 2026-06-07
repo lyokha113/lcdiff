@@ -35,7 +35,7 @@ export function FileTree(props: FileTreeProps) {
   const pathsKey = useMemo(() => visiblePairs.map((p) => p.path).join("|"), [visiblePairs]);
   const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(tree));
   useEffect(() => {
-    setExpanded(defaultExpanded(buildTree(visiblePairs)));
+    setExpanded(defaultExpanded(tree));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathsKey]);
 
@@ -50,7 +50,7 @@ export function FileTree(props: FileTreeProps) {
   return (
     <div className="tree">
       {tree.map((node) => (
-        <FileTreeNode key={node.path} node={node} depth={0} expanded={expanded} onToggle={toggle} {...props} />
+        <FileTreeNode {...props} key={node.path} node={node} depth={0} expanded={expanded} onToggle={toggle} />
       ))}
     </div>
   );
@@ -83,7 +83,7 @@ function FileTreeNode({ node, depth, expanded, onToggle, ...props }: NodeProps) 
           {node.diffCount > 0 && <span className="folder-rollup">● {node.diffCount}</span>}
         </button>
         {open && node.children.map((child) => (
-          <FileTreeNode key={child.path} node={child} depth={depth + 1} expanded={expanded} onToggle={onToggle} {...props} />
+          <FileTreeNode {...props} key={child.path} node={child} depth={depth + 1} expanded={expanded} onToggle={onToggle} />
         ))}
       </>
     );
