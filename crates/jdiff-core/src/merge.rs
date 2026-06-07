@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -229,6 +229,58 @@ fn copy_dir_all(source: &Path, destination: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Read a single entry's bytes from an in-memory zip.
+pub fn read_zip_entry_from_bytes(zip_bytes: &[u8], name: &str) -> Result<Vec<u8>> {
+    let name = normalize_archive_entry_path(name)?;
+    let mut archive = ZipArchive::new(Cursor::new(zip_bytes))?;
+    let mut entry = archive
+        .by_name(&name)
+        .map_err(|_| Error::EntryNotFound(name.clone()))?;
+    let mut out = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut out)?;
+    Ok(out)
+}
+
+/// Rewrite an in-memory zip, substituting any entry present in `replacements`
+/// (keyed by normalized entry path). Entries only present in `replacements`
+/// are appended.
+pub fn rewrite_zip_bytes(
+    zip_bytes: &[u8],
+    replacements: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let mut source = ZipArchive::new(Cursor::new(zip_bytes))?;
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut pending = replacements.clone();
+    for index in 0..source.len() {
+        let mut entry = source.by_index(index)?;
+        let path = normalize_archive_entry_path(entry.name())?;
+        let options = entry
+            .options()
+            .large_file(entry.size().max(entry.compressed_size()) >= ZIP64_BYTES_THR)
+            .unix_permissions(entry.unix_mode().unwrap_or(0o644));
+        if entry.is_dir() {
+            writer.add_directory(path, options)?;
+            continue;
+        }
+        writer.start_file(path.clone(), options)?;
+        if let Some(replacement) = pending.remove(&path) {
+            writer.write_all(&replacement)?;
+        } else {
+            io::copy(&mut entry, &mut writer)?;
+        }
+    }
+    for (path, bytes) in pending {
+        writer.start_file(
+            path,
+            SimpleFileOptions::default()
+                .large_file(bytes.len() as u64 >= ZIP64_BYTES_THR)
+                .compression_method(zip::CompressionMethod::Deflated),
+        )?;
+        writer.write_all(&bytes)?;
+    }
+    Ok(writer.finish()?.into_inner())
 }
 
 fn rewrite_archive(

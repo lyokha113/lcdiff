@@ -665,3 +665,21 @@ fn resolve_archive_opens_nested_archive_directly() {
     let arc = cache.resolve_archive(&root, "lib/inner.jar").unwrap();
     assert_eq!(arc.read_entry("x.txt").unwrap(), b"xx");
 }
+
+#[test]
+fn rewrite_zip_bytes_replaces_entry() {
+    use jdiff_core::{read_zip_entry_from_bytes, rewrite_zip_bytes};
+    use std::collections::BTreeMap;
+
+    let dir = tempdir().unwrap();
+    let jar = dir.path().join("a.jar");
+    create_zip(&jar, &[("keep.txt", b"keep"), ("swap.txt", b"old")]);
+    let bytes = fs::read(&jar).unwrap();
+
+    let mut repl = BTreeMap::new();
+    repl.insert("swap.txt".to_owned(), b"new".to_vec());
+    let out = rewrite_zip_bytes(&bytes, &repl).unwrap();
+
+    assert_eq!(read_zip_entry_from_bytes(&out, "keep.txt").unwrap(), b"keep");
+    assert_eq!(read_zip_entry_from_bytes(&out, "swap.txt").unwrap(), b"new");
+}
