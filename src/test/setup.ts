@@ -1,5 +1,14 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom lacks ResizeObserver, which Radix primitives (Select, Tooltip) require.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Node v25+ ships an experimental global `localStorage` that lacks `.clear()`.
 // vitest exposes the underlying jsdom instance as `global.jsdom`; use its
 // window to get the fully-functional Storage implementation.
