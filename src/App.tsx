@@ -599,7 +599,7 @@ export function App() {
 
   return (
     <TooltipProvider>
-    <main>
+    <main className="app-shell">
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
@@ -634,6 +634,55 @@ export function App() {
         onFilterChange={setTreeFilter}
       />
       {dropHint && <p className="platform-hint">{dropHint}</p>}
+      <div className="work-area">
+        <section className="workspace">
+          <ResizablePanelGroup orientation="vertical" className="workspace-panels">
+            <ResizablePanel defaultSize={44} minSize={25}>
+              <FileTree
+                visiblePairs={visiblePairs}
+                selected={selected}
+                stagedEntries={stagedEntries}
+                mode={mode}
+                onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
+                onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                onCopy={(from, to, pair) => void copy(from, to, pair)}
+                onUnstage={(entryPath) => void unstage(entryPath)}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={56} minSize={30}>
+              <DiffView
+                mode={mode}
+                selected={selected}
+                preview={preview}
+                viewMode={viewMode}
+                ignoreTrimWhitespace={ignoreTrimWhitespace}
+                onCopy={(from, to) => void copy(from, to)}
+                onShowSource={() => selected && void inspect(selected)}
+                onShowBytecode={showBytecode}
+                onEditorMount={handleEditorMount}
+                onDiffMount={handleDiffMount}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </section>
+        <ConfigDrawer
+          open={drawerOpen}
+          mode={mode}
+          searchScope={searchScope}
+          searching={searching}
+          engine={engine}
+          ignoreTrimWhitespace={ignoreTrimWhitespace}
+          backupEnabled={backupEnabled}
+          onScopeChange={setSearchScope}
+          onDeepSearch={runDeepSearch}
+          onCancelDeepSearch={cancelDeepSearch}
+          onClearSearch={clearSearch}
+          onEngineChange={(next) => void changeEngine(next)}
+          onIgnoreWhitespaceChange={setIgnoreTrimWhitespace}
+          onBackupEnabledChange={setBackupEnabled}
+        />
+      </div>
       <p className="message">{message}</p>
       {searchResults.length > 0 && (
         <section className="search-results">
@@ -649,53 +698,6 @@ export function App() {
           ))}
         </section>
       )}
-      <section className="workspace">
-        <ResizablePanelGroup orientation="vertical" className="workspace-panels">
-          <ResizablePanel defaultSize={44} minSize={25}>
-            <FileTree
-              visiblePairs={visiblePairs}
-              selected={selected}
-              stagedEntries={stagedEntries}
-              mode={mode}
-              onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
-              onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
-              onCopy={(from, to, pair) => void copy(from, to, pair)}
-              onUnstage={(entryPath) => void unstage(entryPath)}
-            />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={56} minSize={30}>
-            <DiffView
-              mode={mode}
-              selected={selected}
-              preview={preview}
-              viewMode={viewMode}
-              ignoreTrimWhitespace={ignoreTrimWhitespace}
-              onCopy={(from, to) => void copy(from, to)}
-              onShowSource={() => selected && void inspect(selected)}
-              onShowBytecode={showBytecode}
-              onEditorMount={handleEditorMount}
-              onDiffMount={handleDiffMount}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </section>
-      <ConfigDrawer
-        open={drawerOpen}
-        mode={mode}
-        searchScope={searchScope}
-        searching={searching}
-        engine={engine}
-        ignoreTrimWhitespace={ignoreTrimWhitespace}
-        backupEnabled={backupEnabled}
-        onScopeChange={setSearchScope}
-        onDeepSearch={runDeepSearch}
-        onCancelDeepSearch={cancelDeepSearch}
-        onClearSearch={clearSearch}
-        onEngineChange={(next) => void changeEngine(next)}
-        onIgnoreWhitespaceChange={setIgnoreTrimWhitespace}
-        onBackupEnabledChange={setBackupEnabled}
-      />
       <Dialog open={signedSavePrompt !== undefined} onOpenChange={(open) => !open && setSignedSavePrompt(undefined)}>
         <DialogContent>
           <DialogHeader>
