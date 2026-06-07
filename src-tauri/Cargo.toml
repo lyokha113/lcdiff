@@ -1,0 +1,19 @@
+[package]
+name = "jdiff-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+jdiff-core = { path = "../crates/jdiff-core" }
+serde.workspace = true
+sha2.workspace = true
+tauri = { version = "2.11", features = [] }
+tauri-plugin-dialog = "2.4"
+
+[dev-dependencies]
+tempfile.workspace = true
+zip.workspace = true

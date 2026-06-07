@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Quality gates
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux WebKitGTK dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium with Linux deps
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright Chromium
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+
+      - name: Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: Rust clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Verify release workflow invariants
+        run: npm run verify:release-workflow
+
+      - name: Verify packaging script invariants
+        run: npm run verify:packaging-scripts
+
+      - name: Verify CI workflow invariants
+        run: npm run verify:ci-workflow
+
+      - name: Verify frontend invariants
+        run: npm run verify:frontend-invariants
+
+      - name: Verify frontend render
+        run: npm run verify:frontend-render
+
+      - name: Verify docs invariants
+        run: npm run verify:docs
+
+      - name: Assemble Java runtime resources
+        run: JDIFF_JLINK="$JAVA_HOME/bin/jlink" scripts/assemble-sidecar-resources.sh
+
+      - name: Sidecar smoke
+        run: scripts/test-sidecar-smoke.sh
+
+      - name: Tauri debug build
+        run: npm run tauri -- build --debug

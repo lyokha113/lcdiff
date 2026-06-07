@@ -1,0 +1,15 @@
+[package]
+name = "jdiff-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+jdiff-core = { path = "../jdiff-core" }
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+zip.workspace = true

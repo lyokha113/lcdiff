@@ -1,0 +1,20 @@
+mod archive;
+mod class_search;
+mod detect;
+mod diff;
+mod error;
+mod merge;
+mod path;
+mod sidecar_protocol;
+
+pub use archive::{Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind};
+pub use class_search::{ConstantPoolMatch, search_constant_pool};
+pub use detect::EntryKind;
+pub use diff::{ArchiveDiff, ComparePair, PairStatus, compare};
+pub use error::{Error, Result};
+pub use merge::{CommitOptions, CommitResult, MergePlan, StagedCopy};
+pub use path::{normalize_archive_entry_path, validate_path};
+pub use sidecar_protocol::{
+    DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest, SidecarResponse, read_frame,
+    write_frame,
+};
