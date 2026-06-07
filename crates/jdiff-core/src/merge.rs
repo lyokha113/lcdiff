@@ -8,7 +8,11 @@ use std::{
 use serde::Serialize;
 use zip::{ZIP64_BYTES_THR, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
-use crate::{Archive, ArchiveSourceKind, EntryKind, Error, Result, normalize_archive_entry_path};
+use crate::nested::ARCHIVE_SEPARATOR;
+use crate::{
+    Archive, ArchiveSourceKind, EntryKind, Error, NestedArchiveCache, Result, is_nested,
+    normalize_archive_entry_path,
+};
 
 #[derive(Clone, Debug)]
 pub struct StagedCopy {
@@ -50,11 +54,13 @@ impl MergePlan {
     ) -> Result<()> {
         let source_entry_path = normalize_archive_entry_path(source_entry_path)?;
         let target_entry_path = normalize_archive_entry_path(target_entry_path)?;
-        let source_entry = source
-            .entry(&source_entry_path)
-            .ok_or_else(|| Error::EntryNotFound(source_entry_path.clone()))?;
-        if source_entry.kind == EntryKind::Directory {
-            return Err(Error::CannotCopyDirectory(source_entry_path));
+        if !is_nested(&source_entry_path) {
+            let source_entry = source
+                .entry(&source_entry_path)
+                .ok_or_else(|| Error::EntryNotFound(source_entry_path.clone()))?;
+            if source_entry.kind == EntryKind::Directory {
+                return Err(Error::CannotCopyDirectory(source_entry_path));
+            }
         }
         let staged = StagedCopy {
             source_archive: source.path().to_path_buf(),
@@ -98,7 +104,10 @@ impl MergePlan {
             return Err(Error::ArchiveChanged(target.path().to_path_buf()));
         }
         ensure_target_writable(target.path())?;
-        let replacements = self.read_replacements()?;
+        let raw = self.read_replacements()?;
+        let copied_entries = raw.len();
+        let nested_rewrite = raw.keys().any(|key| crate::is_nested(key));
+        let replacements = flatten_nested_replacements(target, raw)?;
         let target_path = target.path();
         let backup_path = options.backup.then(|| backup_path_for(target_path));
         let result = if target.metadata().source_kind == ArchiveSourceKind::Directory {
@@ -106,8 +115,8 @@ impl MergePlan {
                 CommitResult {
                     rewritten_path: target_path.to_path_buf(),
                     backup_path,
-                    signature_invalidated: false,
-                    copied_entries: replacements.len(),
+                    signature_invalidated: nested_rewrite,
+                    copied_entries,
                 }
             })
         } else {
@@ -122,8 +131,8 @@ impl MergePlan {
                 .map(|_| CommitResult {
                     rewritten_path: target_path.to_path_buf(),
                     backup_path,
-                    signature_invalidated: target.metadata().signed,
-                    copied_entries: replacements.len(),
+                    signature_invalidated: target.metadata().signed || nested_rewrite,
+                    copied_entries,
                 })
                 .inspect_err(|_| {
                     fs::remove_file(&temp_path).ok();
@@ -137,14 +146,13 @@ impl MergePlan {
 
     fn read_replacements(&self) -> Result<BTreeMap<String, Vec<u8>>> {
         let mut replacements = BTreeMap::new();
+        let mut cache = NestedArchiveCache::new()?;
         for copy in &self.copies {
             if copy.source_snapshot.changed_on_disk()? {
                 return Err(Error::ArchiveChanged(copy.source_archive.clone()));
             }
-            replacements.insert(
-                copy.target_entry_path.clone(),
-                copy.source_snapshot.read_entry(&copy.source_entry_path)?,
-            );
+            let (archive, leaf) = cache.resolve(&copy.source_snapshot, &copy.source_entry_path)?;
+            replacements.insert(copy.target_entry_path.clone(), archive.read_entry(&leaf)?);
         }
         Ok(replacements)
     }
@@ -281,6 +289,64 @@ pub fn rewrite_zip_bytes(
         writer.write_all(&bytes)?;
     }
     Ok(writer.finish()?.into_inner())
+}
+
+/// Apply replacements (keys relative to `archive_bytes`, possibly nested via
+/// `!/`) to an in-memory archive, recursively repacking inner archives.
+fn apply_nested_replacements(
+    archive_bytes: &[u8],
+    replacements: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let mut direct: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut nested: BTreeMap<String, BTreeMap<String, Vec<u8>>> = BTreeMap::new();
+    for (key, bytes) in replacements {
+        match key.split_once(ARCHIVE_SEPARATOR) {
+            Some((head, rest)) => {
+                nested
+                    .entry(head.to_owned())
+                    .or_default()
+                    .insert(rest.to_owned(), bytes.clone());
+            }
+            None => {
+                direct.insert(key.clone(), bytes.clone());
+            }
+        }
+    }
+    for (child_entry, child_repls) in nested {
+        let original = read_zip_entry_from_bytes(archive_bytes, &child_entry)?;
+        let rewritten = apply_nested_replacements(&original, &child_repls)?;
+        direct.insert(child_entry, rewritten);
+    }
+    rewrite_zip_bytes(archive_bytes, &direct)
+}
+
+/// Collapse nested replacements into top-level-only replacements by reading the
+/// affected top-level archive entries from `target` and repacking them.
+fn flatten_nested_replacements(
+    target: &Archive,
+    replacements: BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut direct: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut nested: BTreeMap<String, BTreeMap<String, Vec<u8>>> = BTreeMap::new();
+    for (key, bytes) in replacements {
+        match key.split_once(ARCHIVE_SEPARATOR) {
+            Some((head, rest)) => {
+                nested
+                    .entry(head.to_owned())
+                    .or_default()
+                    .insert(rest.to_owned(), bytes);
+            }
+            None => {
+                direct.insert(key, bytes);
+            }
+        }
+    }
+    for (archive_entry, child_repls) in nested {
+        let original = target.read_entry(&archive_entry)?;
+        let rewritten = apply_nested_replacements(&original, &child_repls)?;
+        direct.insert(archive_entry, rewritten);
+    }
+    Ok(direct)
 }
 
 fn rewrite_archive(

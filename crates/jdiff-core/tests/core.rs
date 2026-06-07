@@ -683,3 +683,42 @@ fn rewrite_zip_bytes_replaces_entry() {
     assert_eq!(read_zip_entry_from_bytes(&out, "keep.txt").unwrap(), b"keep");
     assert_eq!(read_zip_entry_from_bytes(&out, "swap.txt").unwrap(), b"new");
 }
+
+#[test]
+fn commit_copies_entry_into_nested_jar() {
+    use jdiff_core::read_zip_entry_from_bytes;
+
+    let dir = tempdir().unwrap();
+
+    // SOURCE side: top-level file payload.txt to copy into target's nested jar.
+    let source_path = dir.path().join("source.jar");
+    create_zip(&source_path, &[("payload.txt", b"NEW-PAYLOAD")]);
+    let source = Archive::open(source_path.to_string_lossy()).unwrap();
+
+    // TARGET side: contains lib/inner.jar which contains docs/old.txt.
+    let inner_path = dir.path().join("inner.jar");
+    create_zip(&inner_path, &[("docs/old.txt", b"OLD")]);
+    let inner_bytes = fs::read(&inner_path).unwrap();
+    let target_path = dir.path().join("target.jar");
+    create_zip(&target_path, &[("lib/inner.jar", &inner_bytes)]);
+    let target = Archive::open(target_path.to_string_lossy()).unwrap();
+
+    // Stage: copy source payload.txt -> target lib/inner.jar!/docs/new.txt
+    let mut plan = MergePlan::new();
+    plan.stage_copy(&source, "payload.txt", "lib/inner.jar!/docs/new.txt")
+        .unwrap();
+    let result = plan.commit(&target, CommitOptions::default()).unwrap();
+    assert_eq!(result.copied_entries, 1);
+
+    // Reopen target, extract lib/inner.jar, assert it now holds docs/new.txt.
+    let rewritten = Archive::open(target_path.to_string_lossy()).unwrap();
+    let inner_after = rewritten.read_entry("lib/inner.jar").unwrap();
+    assert_eq!(
+        read_zip_entry_from_bytes(&inner_after, "docs/new.txt").unwrap(),
+        b"NEW-PAYLOAD"
+    );
+    assert_eq!(
+        read_zip_entry_from_bytes(&inner_after, "docs/old.txt").unwrap(),
+        b"OLD"
+    );
+}
