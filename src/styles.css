@@ -290,34 +290,46 @@ h1 {
   border-radius: var(--radius-lg);
 }
 .tree-row {
-  display: grid;
-  grid-template-columns: 1fr 248px 1fr;
+  display: flex;
   align-items: center;
+  gap: 6px;
   width: 100%;
-  height: auto;
-  padding: 8px 14px;
-  border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  border-radius: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
   text-align: left;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.tree-row:hover { background: rgba(255, 255, 255, 0.04); }
+.tree-row.selected { background: rgba(217, 176, 102, 0.16); }
+.tree-chevron { width: 14px; height: 14px; flex: 0 0 auto; opacity: 0.7; }
+.tree-icon { width: 15px; height: 15px; flex: 0 0 auto; opacity: 0.85; }
+.tree-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-rollup { font-size: 0.72rem; color: var(--st-diff, #e0a030); flex: 0 0 auto; }
+
+.status-chip {
+  flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 0.8rem;
-  color: var(--text-1);
-  background: transparent;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  padding: 0 6px;
+  border-radius: 3px;
+  min-width: 1.4em;
+  text-align: center;
 }
-.tree-row:hover { background: rgba(255, 255, 255, 0.025); }
-.tree-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-row > span:last-child { text-align: right; }
-.tree-row b { display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-align: center; }
-.tree-row.different b, .tree-row.differentMetadataOnly b { color: var(--st-diff); }
-.tree-row.onlyLeft b, .tree-row.onlyRight b { color: var(--st-only); }
-.tree-row.identical b { color: var(--st-same); }
-.tree-row.selected {
-  background: linear-gradient(90deg, rgba(217, 176, 102, 0.12), rgba(217, 176, 102, 0.03));
-  box-shadow: inset 2px 0 0 var(--brass);
-  color: var(--text-0);
-}
+.tree-file.different    .tree-name { color: #e0a030; }
+.tree-file.different    .status-chip { background: #3a2f1a; color: #e0a030; }
+.tree-file.differentMetadataOnly .tree-name { color: #8aabd0; }
+.tree-file.differentMetadataOnly .status-chip { background: #23304a; color: #8aabd0; }
+.tree-file.onlyLeft     .tree-name { color: #6cc99a; }
+.tree-file.onlyLeft     .status-chip { background: #1f3320; color: #6cc99a; }
+.tree-file.onlyRight    .tree-name { color: #d9997a; }
+.tree-file.onlyRight    .status-chip { background: #33231f; color: #d9997a; }
+.tree-file.identical    .tree-name { color: var(--text-2, #889); }
+.tree-file.identical    .status-chip { background: transparent; color: var(--st-same, #567); }
 .search-line-highlight { background: rgba(217, 176, 102, 0.24); }
 
 /* status & pending badges inside tree rows */
