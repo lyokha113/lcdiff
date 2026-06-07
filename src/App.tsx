@@ -38,7 +38,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -54,6 +53,7 @@ import {
 } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfigDrawer } from "@/components/ConfigDrawer";
+import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { FileTree } from "@/components/FileTree";
@@ -630,29 +630,17 @@ export function App() {
         </div>
       </header>
 
-      <section className="sources-zone">
-        <span className="zone-label">Sources</span>
-        <div className="open-grid">
-          {(["left", ...(mode === "compare" ? (["right"] as const) : [])] as const).map((side) => (
-            <div className="open-panel" key={side}>
-              <strong>{side.toUpperCase()}</strong>
-              <Input
-                value={paths[side]}
-                placeholder="~/path/to/archive.jar or folder"
-                onChange={(event) => setPaths((current) => ({ ...current, [side]: event.target.value }))}
-              />
-              <Button onClick={() => openPath(side, paths[side])}>Open</Button>
-              <div className="open-actions">
-                <Button variant="outline" onClick={() => browse(side)}>Browse file</Button>
-                <Button variant="outline" onClick={() => browseFolder(side)}>Browse folder</Button>
-                <Button variant="secondary" disabled={mode === "single"} onClick={() => save(side)}>Save staged</Button>
-              </div>
-              <small>{archives[side] ? `${archives[side].metadata.sourceKind}: ${archives[side].path}` : "No source loaded"}</small>
-              {pathErrors[side] && <small className="path-error">{pathErrors[side]}</small>}
-            </div>
-          ))}
-        </div>
-      </section>
+      <SourceChips
+        mode={mode}
+        archives={archives}
+        paths={paths}
+        pathErrors={pathErrors}
+        onPathChange={(side, value) => setPaths((current) => ({ ...current, [side]: value }))}
+        onOpenPath={(side, path) => void openPath(side, path)}
+        onBrowse={(side) => void browse(side)}
+        onBrowseFolder={(side) => void browseFolder(side)}
+        onSave={(side) => void save(side)}
+      />
 
       <SearchBar
         open={searchOpen}

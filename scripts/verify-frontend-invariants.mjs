@@ -298,8 +298,11 @@ if (copyActionGuards < 5) {
   failures.push("frontend: Single mode must disable search scope and all merge copy actions");
 }
 
-if (!frontend.includes('disabled={mode === "single"}') || !/save\(side\)/.test(frontend)) {
-  failures.push('frontend: Save staged control must call save(side) and be disabled in Single mode');
+if (!frontend.includes('disabled={mode === "single"}')) {
+  failures.push('frontend: Save staged control must be disabled in Single mode');
+}
+if (!frontend.includes('aria-label="Save staged"') || !/onSave\(side\)|save\(side\)/.test(frontend)) {
+  failures.push('frontend: Save staged control must carry aria-label and trigger save for the side');
 }
 
 if (!frontend.includes('{mode === "compare" &&') || !frontend.includes('Keep one overwritten .bak on save')) {
