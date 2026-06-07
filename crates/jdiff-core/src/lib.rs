@@ -14,7 +14,7 @@ pub use detect::EntryKind;
 pub use diff::{ArchiveDiff, ComparePair, PairStatus, compare};
 pub use error::{Error, Result};
 pub use merge::{CommitOptions, CommitResult, MergePlan, StagedCopy};
-pub use nested::{ARCHIVE_SEPARATOR, is_nested};
+pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
 pub use path::{normalize_archive_entry_path, validate_path};
 pub use sidecar_protocol::{
     DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest, SidecarResponse, read_frame,

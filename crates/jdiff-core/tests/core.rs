@@ -607,3 +607,61 @@ fn class_with_utf8(value: &str) -> Vec<u8> {
     bytes.extend_from_slice(value.as_bytes());
     bytes
 }
+
+#[test]
+fn resolves_one_and_two_level_nested_entries() {
+    use jdiff_core::NestedArchiveCache;
+
+    let dir = tempdir().unwrap();
+
+    // innermost jar
+    let inner_path = dir.path().join("inner.jar");
+    create_zip(&inner_path, &[("com/A.txt", b"hello-inner")]);
+    let inner_bytes = fs::read(&inner_path).unwrap();
+
+    // middle jar contains inner.jar
+    let middle_path = dir.path().join("middle.jar");
+    create_zip(&middle_path, &[("nested/inner.jar", &inner_bytes)]);
+    let middle_bytes = fs::read(&middle_path).unwrap();
+
+    // outer jar contains middle.jar
+    let outer_path = dir.path().join("outer.jar");
+    create_zip(&outer_path, &[("lib/middle.jar", &middle_bytes)]);
+
+    let root = Archive::open(outer_path.to_string_lossy()).unwrap();
+    let mut cache = NestedArchiveCache::new().unwrap();
+
+    // one level
+    let (arc1, leaf1) = cache.resolve(&root, "lib/middle.jar!/nested/inner.jar").unwrap();
+    assert_eq!(leaf1, "nested/inner.jar");
+    assert_eq!(arc1.read_entry("nested/inner.jar").unwrap(), inner_bytes);
+
+    // two levels
+    let (arc2, leaf2) = cache
+        .resolve(&root, "lib/middle.jar!/nested/inner.jar!/com/A.txt")
+        .unwrap();
+    assert_eq!(leaf2, "com/A.txt");
+    assert_eq!(arc2.read_entry("com/A.txt").unwrap(), b"hello-inner");
+
+    // top-level (no separator) returns root + whole path
+    let (arc0, leaf0) = cache.resolve(&root, "lib/middle.jar").unwrap();
+    assert_eq!(leaf0, "lib/middle.jar");
+    assert!(arc0.entry("lib/middle.jar").is_some());
+}
+
+#[test]
+fn resolve_archive_opens_nested_archive_directly() {
+    use jdiff_core::NestedArchiveCache;
+
+    let dir = tempdir().unwrap();
+    let inner_path = dir.path().join("inner.jar");
+    create_zip(&inner_path, &[("x.txt", b"xx")]);
+    let inner_bytes = fs::read(&inner_path).unwrap();
+    let outer_path = dir.path().join("outer.jar");
+    create_zip(&outer_path, &[("lib/inner.jar", &inner_bytes)]);
+
+    let root = Archive::open(outer_path.to_string_lossy()).unwrap();
+    let mut cache = NestedArchiveCache::new().unwrap();
+    let arc = cache.resolve_archive(&root, "lib/inner.jar").unwrap();
+    assert_eq!(arc.read_entry("x.txt").unwrap(), b"xx");
+}
