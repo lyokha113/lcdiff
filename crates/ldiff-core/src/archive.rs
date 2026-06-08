@@ -62,7 +62,10 @@ impl Archive {
         if path.is_dir() {
             return Self::open_directory(path);
         }
-        Self::open_zip(path)
+        if path_is_zip(&path)? {
+            return Self::open_zip(path);
+        }
+        Self::open_single_file(path)
     }
 
     fn open_zip(path: PathBuf) -> Result<Self> {
@@ -131,6 +134,43 @@ impl Archive {
         })
     }
 
+    fn open_single_file(path: PathBuf) -> Result<Self> {
+        let file_metadata = fs::metadata(&path)?;
+        let bytes = fs::read(&path)?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".to_owned());
+        let normalized = normalize_archive_entry_path(&name)?;
+        let mut hasher = Hasher::new();
+        hasher.update(&bytes);
+        let crc32 = hasher.finalize();
+        let entry = ArchiveEntry {
+            path: normalized.clone(),
+            kind: detect_entry_kind(&normalized, false),
+            uncompressed_size: bytes.len() as u64,
+            compressed_size: bytes.len() as u64,
+            crc32,
+        };
+        let mut entries = BTreeMap::new();
+        entries.insert(normalized.clone(), entry);
+        let mut source_paths = BTreeMap::new();
+        source_paths.insert(normalized.clone(), name);
+        Ok(Self {
+            path,
+            size: file_metadata.len(),
+            modified: file_metadata.modified().ok(),
+            entries,
+            source_paths,
+            metadata: ArchiveMetadata {
+                source_kind: ArchiveSourceKind::File,
+                signed: false,
+                multi_release: false,
+                zip64: false,
+            },
+        })
+    }
+
     fn open_directory(path: PathBuf) -> Result<Self> {
         let fingerprint = directory_fingerprint(&path)?;
         let mut entries = BTreeMap::new();
@@ -186,6 +226,9 @@ impl Archive {
                 .get(&normalized)
                 .ok_or_else(|| Error::EntryNotFound(normalized.clone()))?;
             return fs::read(self.path.join(source_path)).map_err(Error::from);
+        }
+        if self.metadata.source_kind == ArchiveSourceKind::File {
+            return fs::read(&self.path).map_err(Error::from);
         }
         if !self.entries.contains_key(&normalized) {
             return Err(Error::EntryNotFound(normalized));
@@ -344,6 +387,53 @@ mod source_kind_tests {
         let json = serde_json::to_string(&ArchiveSourceKind::File).unwrap();
         assert_eq!(json, "\"file\"");
     }
+}
+
+#[cfg(test)]
+mod open_tests {
+    use super::*;
+
+    #[test]
+    fn opens_single_text_file_as_one_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.json");
+        std::fs::write(&file, b"{\"a\":1}\n").unwrap();
+
+        let archive = Archive::open(file.to_string_lossy()).unwrap();
+        assert_eq!(archive.metadata().source_kind, ArchiveSourceKind::File);
+        let entries: Vec<_> = archive.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "config.json");
+        assert_eq!(entries[0].kind, EntryKind::Text);
+        assert_eq!(archive.read_entry("config.json").unwrap(), b"{\"a\":1}\n");
+    }
+
+    #[test]
+    fn zip_path_still_opens_as_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let jar = dir.path().join("lib.jar");
+        let file = std::fs::File::create(&jar).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("a.txt", zip::write::SimpleFileOptions::default()).unwrap();
+        use std::io::Write as _;
+        zip.write_all(b"hi").unwrap();
+        zip.finish().unwrap();
+
+        let archive = Archive::open(jar.to_string_lossy()).unwrap();
+        assert_eq!(archive.metadata().source_kind, ArchiveSourceKind::Archive);
+    }
+}
+
+/// True when the file begins with a ZIP signature (local header, EOCD, or
+/// spanned marker). Used to route archive vs single-file open.
+fn path_is_zip(path: &Path) -> Result<bool> {
+    let mut header = [0u8; 4];
+    let mut file = File::open(path)?;
+    let read = file.read(&mut header)?;
+    if read < 4 {
+        return Ok(false);
+    }
+    Ok(matches!(&header, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08"))
 }
 
 fn local_header_uses_zip64(file: &mut File, header_start: u64) -> Result<bool> {

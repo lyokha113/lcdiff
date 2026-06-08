@@ -1,8 +1,6 @@
 use std::{
     env,
     ffi::OsString,
-    fs::File,
-    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -37,22 +35,7 @@ pub fn validate_path(raw: &str) -> Result<PathBuf> {
     if !resolved.is_file() {
         return Err(Error::NotAFileOrDirectory(resolved));
     }
-    let mut file = File::open(&resolved).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::PermissionDenied {
-            Error::PermissionDenied(resolved.clone())
-        } else {
-            Error::Io(error)
-        }
-    })?;
-    let mut magic = [0_u8; 4];
-    if file.read_exact(&mut magic).is_err()
-        || !matches!(
-            magic,
-            [b'P', b'K', 3, 4] | [b'P', b'K', 5, 6] | [b'P', b'K', 7, 8]
-        )
-    {
-        return Err(Error::InvalidArchive(resolved));
-    }
+    // Allow any readable file — ZIP detection happens in open_validated.
     Ok(resolved)
 }
 
