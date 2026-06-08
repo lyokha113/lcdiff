@@ -35,6 +35,13 @@ impl Side {
             Self::Right => 1,
         }
     }
+
+    fn opposite(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
 }
 
 struct AppState {
@@ -106,7 +113,7 @@ impl AppState {
     }
 
     fn any_pending(&self) -> bool {
-        !self.left_plan.is_empty() || !self.right_plan.is_empty()
+        !self.plan(Side::Left).is_empty() || !self.plan(Side::Right).is_empty()
     }
 
     /// Legacy single-target lock: only one side may carry pending ops unless both
@@ -115,10 +122,7 @@ impl AppState {
         if self.both_sides_are_files() {
             return Ok(());
         }
-        let other = match side {
-            Side::Left => Side::Right,
-            Side::Right => Side::Left,
-        };
+        let other = side.opposite();
         if !self.plan(other).is_empty() {
             return Err(
                 "save or clear unsaved changes before editing the other side".to_owned(),
@@ -215,8 +219,8 @@ impl AppState {
     }
 
     fn clear_staged(&mut self) {
-        self.left_plan.clear();
-        self.right_plan.clear();
+        self.plan_mut(Side::Left).clear();
+        self.plan_mut(Side::Right).clear();
     }
 
     fn unstage(&mut self, entry_path: &str) -> Result<(), String> {
@@ -307,6 +311,8 @@ async fn open_archive(
         let state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
+        // Fast-path: avoid the blocking open if staging is already in progress;
+        // install_archive re-checks after the lock is re-acquired (TOCTOU guard).
         if state.any_pending() {
             return Err("save staged copies before changing an archive".to_owned());
         }
@@ -1380,6 +1386,8 @@ mod tests {
 
         state.stage_write(Side::Left, "a.txt", "a2\n").unwrap();
         state.stage_write(Side::Right, "b.txt", "b2\n").unwrap();
+        assert!(!state.plan(Side::Left).is_empty());
+        assert!(!state.plan(Side::Right).is_empty());
     }
 
     #[test]
