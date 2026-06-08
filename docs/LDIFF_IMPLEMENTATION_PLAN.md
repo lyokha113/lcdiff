@@ -12,7 +12,6 @@ text, binary, diff, search, or merge.
 
 | Phase | Scope | Status | Proof |
 | --- | --- | --- | --- |
-| P0 Harness intake | Product contract, high-risk story, decision, matrix | implemented | Harness matrix |
 | P1 Core archive safety | Path validation, lazy index/read, normalized-to-raw path mapping, duplicate normalized-path rejection, encrypted-entry rejection, CRC diff, constant-pool search, strict signed metadata, multi-release metadata, Zip64 detection/write guard, class/file stage with directory rejection, source/target change rejection, atomic save with directory/timestamp preservation, writable preflight, single overwritten backup | implemented | Rust tests and CLI smoke |
 | P2 Desktop compare/merge shell | Async Tauri IPC adapters for long operations, React shadcn/ui Tailwind panels, path preflight with inline errors, picker, OS drop, Monaco diff with whitespace toggle, detected text languages, binary size/SHA-256/CRC details plus hex fallback, pending badges, arrow/context-menu stage, per-row unstage, clear/save | implemented locally | Rust desktop state-machine tests, frontend build, macOS dev startup |
 | P3 JVM sidecar | CFR, Vineflower, ASM bytecode, typed abstract decompile options boundary, async warm start, 30-second watchdog, one retry, canonical-path, metadata, options, mode, and engine-version keyed 128 MB LRU cache, Java 17 jlink assembly | implemented locally | Java 17 bundled-runtime smoke covers ping, CFR, Vineflower, ASM |

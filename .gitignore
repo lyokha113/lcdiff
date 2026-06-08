@@ -1,8 +1,4 @@
-# Harness durable layer — each project instance generates its own data.
 .DS_Store
-harness.db
-harness.db-wal
-harness.db-shm
 
 # Local agent/index state.
 .codegraph/
@@ -14,7 +10,7 @@ harness.db-shm
 .env.*
 *.log
 
-# Rust build output for harness tooling.
+# Rust build output.
 target/
 dist/
 node_modules/
@@ -23,7 +19,3 @@ src-tauri/resources/jre/
 src-tauri/resources/jre-legal.tar.gz
 src-tauri/resources/sidecar/
 sidecar/target/
-
-# Downloaded Harness CLI binary for installed project instances.
-scripts/bin/harness-cli
-scripts/bin/harness-cli.exe

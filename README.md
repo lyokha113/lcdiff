@@ -120,7 +120,7 @@ ldiff/
   sidecar/        JVM decompiler (Maven, CFR/Vineflower/ASM)
   scripts/        build, sign, package, and verification scripts
   platform-validation/  per-platform distribution evidence reports
-  docs/           harness + product documentation
+  docs/           product documentation
 ```
 
 ## Prerequisites
@@ -262,28 +262,18 @@ These are optional and only needed for signed release builds.
 
 Product and build references:
 
-- `docs/product/ldiff-product-contract.md` — accepted MVP product contract.
+- `docs/ARCHITECTURE.md` — application shape and boundary rules.
 - `docs/LDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
 - `docs/LDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
 - `docs/PLATFORM_VALIDATION.md` — external platform validation gates.
 - `docs/OPERATIONS_MACOS.md` — macOS sign / notarize / package / verify runbook.
-- `docs/TEST_MATRIX.md` — behavior-to-proof validation map.
-- `docs/TRACE_SPEC.md` — trace and evidence specification.
-
-Agent harness references:
-
-- `docs/HARNESS.md` — human + agent collaboration model.
-- `docs/FEATURE_INTAKE.md` — tiny / normal / high-risk work classification.
-- `docs/ARCHITECTURE.md` — architecture discovery and boundary rules.
-- `docs/CONTEXT_RULES.md` — what an agent must read before changing code.
-- `docs/HARNESS_COMPONENTS.md`, `docs/HARNESS_MATURITY.md` — harness internals.
 - `docs/GLOSSARY.md` — shared terms.
 
 ## Contributing
 
-1. Read `AGENTS.md` and the harness docs before changing code.
+1. Read `CLAUDE.md` and `docs/ARCHITECTURE.md` before changing code.
 2. Run the full developer checks above, including `npm run verify:all`.
-3. Keep `docs/LDIFF_COMPLETION_AUDIT.md` and `docs/TEST_MATRIX.md` in sync with
-   new behavior; `npm run verify:docs` enforces documentation invariants.
+3. Keep `docs/LDIFF_COMPLETION_AUDIT.md` in sync with new behavior;
+   `npm run verify:docs` enforces documentation invariants.
 4. For platform-affecting changes, attach a `platform-validation/` evidence
    report from the relevant runner.

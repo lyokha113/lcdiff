@@ -8,7 +8,6 @@ const files = [
   "docs/LDIFF_IMPLEMENTATION_PLAN.md",
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
-  "docs/TEST_MATRIX.md",
 ];
 
 const failures = [];
@@ -123,38 +122,8 @@ if (!audit.includes("platform-validation/macos-distribution-*.md")) {
   failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
 }
 
-const matrix = readFileSync("docs/TEST_MATRIX.md", "utf8");
-if (!matrix.includes("Validated open for JAR/ZIP/folder")) {
-  failures.push("docs/TEST_MATRIX.md: missing folder source contract");
-}
-if (!matrix.includes("archive-to-folder staged commit")) {
-  failures.push("docs/TEST_MATRIX.md: missing folder commit evidence");
-}
-if (!matrix.includes("Playwright frontend render verifier covers visible shell controls, console-clean startup, mocked path-input validation error and clear-on-success, compare open/select/copy rendering of the pending target plus pending row badge and context-menu unstage clearing, tree-filter row visibility, scoped T2 search result click navigation, on-demand metadata-only class status, dirty mode-switch guard, clear-staged unlock into Single mode, signed-save session suppression, backup checkbox IPC propagation, Bytecode tab rendering through the disassemble IPC path, binary fallback details with SHA/CRC plus hex preview, and signed-JAR warning Dialog before confirmed Save anyway commits with a signed-invalidated message")) {
-  failures.push("docs/TEST_MATRIX.md: missing frontend render verifier evidence");
-}
-if (!matrix.includes("scripts\\verify-windows-platform.ps1")) {
-  failures.push("docs/TEST_MATRIX.md: missing Windows platform runner evidence");
-}
-if (!matrix.includes("scripts/verify-linux-display-matrix.sh")) {
-  failures.push("docs/TEST_MATRIX.md: missing Linux display runner evidence");
-}
-if (!matrix.includes("scripts/verify-macos-distribution.sh")) {
-  failures.push("docs/TEST_MATRIX.md: missing macOS distribution runner evidence");
-}
-if (!matrix.includes("platform-validation/macos-distribution-*.md")) {
-  failures.push("docs/TEST_MATRIX.md: missing macOS distribution report evidence");
-}
-
 const platformValidation = readFileSync("docs/PLATFORM_VALIDATION.md", "utf8");
 const macosOps = readFileSync("docs/OPERATIONS_MACOS.md", "utf8");
-const productContract = readFileSync("docs/product/ldiff-product-contract.md", "utf8");
-if (!productContract.includes("`.jar` files, `.zip` files, and folders")) {
-  failures.push("docs/product/ldiff-product-contract.md: missing folder input contract");
-}
-if (!productContract.includes("<folder>.bak")) {
-  failures.push("docs/product/ldiff-product-contract.md: missing folder backup contract");
-}
 if (!platformValidation.includes("scripts\\verify-windows-platform.ps1")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing Windows platform runner command");
 }
