@@ -110,6 +110,7 @@ export function App() {
   const [pathErrors, setPathErrors] = useState<Partial<Record<Side, string>>>({});
   const [archives, setArchives] = useState<Partial<Record<Side, ArchiveSummary>>>({});
   const [pairs, setPairs] = useState<ComparePair[]>([]);
+  const [nestedPairs, setNestedPairs] = useState<Record<string, ComparePair[]>>({});
   const [selected, setSelected] = useState<ComparePair>();
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
@@ -172,8 +173,19 @@ export function App() {
     try {
       const diff = await invoke<ArchiveDiff>("compute_diff");
       setPairs(diff.pairs);
+      setNestedPairs({});
     } catch {
       setPairs([]);
+      setNestedPairs({});
+    }
+  }, []);
+
+  const expandArchive = useCallback(async (fullPath: string) => {
+    try {
+      const diff = await invoke<ArchiveDiff>("compute_nested_diff", { nestedPath: fullPath });
+      setNestedPairs((prev) => ({ ...prev, [fullPath]: diff.pairs }));
+    } catch (error) {
+      setMessage(String(error));
     }
   }, []);
 
@@ -348,7 +360,7 @@ export function App() {
     if (previewRequestId.current !== requestId) return;
     setPreview(next);
     for (const side of ["left", "right"] as const) {
-      if (pair[side]?.kind === "class") {
+      if (pair[side]?.kind === "class" && !pair.path.includes("!/")) {
         void invoke("prefetch_siblings", { side, entryPath: pair.path });
       }
     }
@@ -671,10 +683,12 @@ export function App() {
                 selected={selected}
                 stagedEntries={stagedEntries}
                 mode={mode}
+                nestedPairs={nestedPairs}
                 onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                 onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
                 onCopy={(from, to, pair) => void copy(from, to, pair)}
                 onUnstage={(entryPath) => void unstage(entryPath)}
+                onExpandArchive={(fullPath) => void expandArchive(fullPath)}
               />
             </div>
             <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "diff"}>
