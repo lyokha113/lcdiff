@@ -66,10 +66,10 @@ export function DiffView({
         </div>
         {fileMerge && (
           <div className="copy-cluster">
-            <Button variant="outline" size="sm" onClick={() => onTakeAll("left")}>Take all → left</Button>
-            <Button variant="outline" size="sm" onClick={() => onTakeAll("right")}>Take all → right</Button>
-            <Button variant="outline" size="sm" onClick={() => onMoveHunk("left")}>Move hunk → left</Button>
-            <Button variant="outline" size="sm" onClick={() => onMoveHunk("right")}>Move hunk → right</Button>
+            <Button variant="outline" size="sm" aria-label="Take all to left" onClick={() => onTakeAll("left")}>Take all → left</Button>
+            <Button variant="outline" size="sm" aria-label="Take all to right" onClick={() => onTakeAll("right")}>Take all → right</Button>
+            <Button variant="outline" size="sm" aria-label="Move hunk to left" onClick={() => onMoveHunk("left")}>Move hunk → left</Button>
+            <Button variant="outline" size="sm" aria-label="Move hunk to right" onClick={() => onMoveHunk("right")}>Move hunk → right</Button>
           </div>
         )}
         <div className="view-toggle" role="group" aria-label="Diff view mode">
@@ -123,8 +123,9 @@ export function DiffView({
               if (fileMerge) {
                 const orig = editor.getOriginalEditor();
                 const mod = editor.getModifiedEditor();
-                orig.onDidBlurEditorText(() => onDiffEditEither("left", orig.getValue()));
-                mod.onDidBlurEditorText(() => onDiffEditEither("right", mod.getValue()));
+                const d1 = orig.onDidBlurEditorText(() => onDiffEditEither("left", orig.getValue()));
+                const d2 = mod.onDidBlurEditorText(() => onDiffEditEither("right", mod.getValue()));
+                editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });
               }
             }}
           />

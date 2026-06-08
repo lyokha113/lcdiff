@@ -66,6 +66,9 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
 
+const SIDE_PREFIX_RE = /^(left|right):/;
+const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
+
 // Keep in sync with EDITABLE_EXTENSIONS in crates/jdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf"];
 
@@ -524,6 +527,33 @@ export function App() {
   }
 
   async function save(targetSide: Side, signedConfirmed = false) {
+    if (isFileMerge) {
+      const dirty = (["left", "right"] as Side[]).filter((s) =>
+        Object.values(stagedEntries).some((e) => e.side === s),
+      );
+      try {
+        // Commit all dirty sides first: open_archive/openPath rejects a reopen
+        // while the other side still has pending ops.
+        for (const side of dirty) {
+          await invoke<CommitResult>("commit_merge", {
+            targetSide: side,
+            backup: backupEnabled,
+            confirmSigned: false,
+          });
+        }
+        setStagedTarget(undefined);
+        setStagedEntries({});
+        // Refresh each saved side's preview/state from disk.
+        for (const side of dirty) {
+          const path = archives[side]?.path;
+          if (path) await openPath(side, path, true);
+        }
+        setMessage(`Saved ${dirty.length} file change${dirty.length === 1 ? "" : "s"}.`);
+      } catch (error) {
+        setMessage(String(error));
+      }
+      return;
+    }
     try {
       const signed = archives[targetSide]?.metadata.signed ?? false;
       const signedPath = archives[targetSide]?.path ?? "";
@@ -575,13 +605,13 @@ export function App() {
     // unaffected. For local state removal we drop every stored entry whose bare
     // form matches — callers may hand us either the prefixed key or the bare
     // display path (MenuBar shows bare paths), so match on the bare form.
-    const bare = key.replace(/^(left|right):/, "");
+    const bare = stripSidePrefix(key);
     try {
       await invoke("unstage", { entryPath: bare });
       setStagedEntries((current) => {
         const next = { ...current };
         for (const k of Object.keys(next)) {
-          if (k.replace(/^(left|right):/, "") === bare) delete next[k];
+          if (stripSidePrefix(k) === bare) delete next[k];
         }
         if (Object.keys(next).length === 0) setStagedTarget(undefined);
         return next;
@@ -623,6 +653,7 @@ export function App() {
     try {
       await invoke("stage_write", { side, entryPath: selected.path, content });
       setStagedEntries((current) => ({ ...current, [`${side}:${selected.path}`]: { side, kind: "edit" } }));
+      setStagedTarget(side);
       setMessage(`Edited ${selected.path} on ${side} (unsaved)`);
     } catch (error) {
       setMessage(String(error));
@@ -633,6 +664,8 @@ export function App() {
     const ed = diffEditorRef.current;
     if (!ed) return undefined;
     const changes = ed.getLineChanges() ?? [];
+    // Hunk under cursor is detected from the modified (right) editor's cursor;
+    // when focus is in the left pane we fall back to the first change.
     const line = ed.getModifiedEditor().getPosition()?.lineNumber ?? 1;
     const c =
       changes.find(
@@ -652,40 +685,45 @@ export function App() {
 
   async function takeAllTo(target: Side) {
     if (!isFileMerge || !selected) return;
-    const source: Side = target === "left" ? "right" : "left";
-    const content = (source === "left" ? preview.left?.content : preview.right?.content) ?? "";
-    await stageFileSide(target, content);
     const ed = diffEditorRef.current;
-    if (ed) (target === "left" ? ed.getOriginalEditor() : ed.getModifiedEditor()).setValue(content);
+    if (!ed) return;
+    const source: Side = target === "left" ? "right" : "left";
+    const sourceEditor = source === "left" ? ed.getOriginalEditor() : ed.getModifiedEditor();
+    const targetEditor = target === "left" ? ed.getOriginalEditor() : ed.getModifiedEditor();
+    const content = sourceEditor.getValue();
+    targetEditor.setValue(content);
+    await stageFileSide(target, content);
   }
 
-  async function moveHunkTo(target: Side) {
+  function moveHunkTo(target: Side) {
     if (!isFileMerge) return;
     const ed = diffEditorRef.current;
     const hunk = currentHunkAtCursor();
     if (!ed || !hunk) return;
-    const orig = ed.getOriginalEditor().getValue();
-    const mod = ed.getModifiedEditor().getValue();
+    // Monaco: left = original, right = modified. moveHunk works in target-space;
+    // for "move right→left" we invert the hunk's target/source coordinates.
+    let tEditor: CodeEditor;
+    let sEditor: CodeEditor;
+    let resolvedHunk: Hunk;
     if (target === "left") {
-      // source = right (modified). Roles: left=original=target, right=modified=source.
-      const swapped: Hunk = {
+      tEditor = ed.getOriginalEditor();
+      sEditor = ed.getModifiedEditor();
+      resolvedHunk = {
         targetStart: hunk.sourceStart,
         targetEnd: hunk.sourceEnd,
         sourceStart: hunk.targetStart,
         sourceEnd: hunk.targetEnd,
       };
-      const res = moveHunk(orig, mod, swapped);
-      ed.getOriginalEditor().setValue(res.target);
-      ed.getModifiedEditor().setValue(res.source);
-      await stageFileSide("left", res.target);
-      await stageFileSide("right", res.source);
     } else {
-      const res = moveHunk(mod, orig, hunk);
-      ed.getModifiedEditor().setValue(res.target);
-      ed.getOriginalEditor().setValue(res.source);
-      await stageFileSide("right", res.target);
-      await stageFileSide("left", res.source);
+      tEditor = ed.getModifiedEditor();
+      sEditor = ed.getOriginalEditor();
+      resolvedHunk = hunk;
     }
+    const res = moveHunk(tEditor.getValue(), sEditor.getValue(), resolvedHunk);
+    tEditor.setValue(res.target);
+    sEditor.setValue(res.source);
+    void stageFileSide(target, res.target);
+    void stageFileSide(target === "left" ? "right" : "left", res.source);
   }
 
   async function runSearch() {
@@ -803,7 +841,7 @@ export function App() {
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
-        pendingOps={Object.entries(stagedEntries).map(([path, entry]) => ({ path: path.replace(/^(left|right):/, ""), side: entry.side, kind: entry.kind }))}
+        pendingOps={Object.entries(stagedEntries).map(([path, entry]) => ({ path: stripSidePrefix(path), side: entry.side, kind: entry.kind }))}
         onUnstageOne={(entryPath) => void unstage(entryPath)}
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
