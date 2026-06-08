@@ -10,6 +10,12 @@ const EDITABLE_EXTENSIONS: &[&str] = &[
 
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
+/// The two line-ending styles that `detect_encoding` distinguishes.
+///
+/// Only `Lf` (`\n`) and `Crlf` (`\r\n`) are recognised. Classic Mac-style
+/// files that use bare `\r` (no `\n`) are reported as `Lf`; their `\r` bytes
+/// are preserved unchanged by `encode_text`, giving a faithful round-trip.
+/// Empty input and BOM-only input also return `Lf`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LineEnding {
     Lf,
@@ -38,6 +44,8 @@ fn strip_bom(bytes: &[u8]) -> &[u8] {
 /// Whether an entry may be edited as UTF-8 text. Directories and decompiled
 /// class entries are never editable; binary payloads (null byte present, or not
 /// valid UTF-8) are rejected. Text kind or a whitelisted extension qualifies.
+/// Any content that is not valid UTF-8 after BOM strip — including
+/// UTF-16 BOM-prefixed content — is also rejected.
 pub fn editable_text(entry: &ArchiveEntry, bytes: &[u8]) -> bool {
     if matches!(entry.kind, EntryKind::Directory | EntryKind::Class) {
         return false;
@@ -51,6 +59,9 @@ pub fn editable_text(entry: &ArchiveEntry, bytes: &[u8]) -> bool {
 
 /// Detect leading UTF-8 BOM and the dominant line ending so an edit round-trips
 /// byte-faithfully apart from the user's changes.
+///
+/// Only `Lf` and `Crlf` are distinguished; see [`LineEnding`] for the full
+/// contract, including bare-`\r` and empty-input behaviour.
 pub fn detect_encoding(bytes: &[u8]) -> EntryEncoding {
     let bom = bytes.starts_with(UTF8_BOM);
     let body = strip_bom(bytes);
@@ -116,6 +127,11 @@ mod tests {
     #[test]
     fn unknown_extension_binary_is_not_editable() {
         assert!(!editable_text(&entry("blob.dat", EntryKind::Binary), b"data"));
+    }
+
+    #[test]
+    fn detect_encoding_empty_defaults_to_lf() {
+        assert_eq!(detect_encoding(b""), EntryEncoding { bom: false, line_ending: LineEnding::Lf });
     }
 
     #[test]
