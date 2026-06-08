@@ -166,6 +166,37 @@ impl MergePlan {
                     copied_entries,
                 }
             })
+        } else if target.metadata().source_kind == ArchiveSourceKind::File {
+            // Single backing file: write the one replacement's bytes atomically.
+            let bytes = replacements
+                .values()
+                .next()
+                .ok_or(Error::EmptyMergePlan)?;
+            let temp_path = temp_path_for(target_path);
+            let write = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temp_path)
+                .and_then(|mut f| {
+                    f.write_all(bytes)?;
+                    f.sync_all()
+                })
+                .map_err(Error::from)
+                .and_then(|_| {
+                    if let Some(backup_path) = &backup_path {
+                        fs::copy(target_path, backup_path)?;
+                    }
+                    atomic_replace(&temp_path, target_path)
+                })
+                .inspect_err(|_| {
+                    fs::remove_file(&temp_path).ok();
+                });
+            write.map(|_| CommitResult {
+                rewritten_path: target_path.to_path_buf(),
+                backup_path,
+                signature_invalidated: false,
+                copied_entries,
+            })
         } else {
             let temp_path = temp_path_for(target_path);
             rewrite_archive(target_path, &temp_path, &replacements)
@@ -585,6 +616,24 @@ mod stage_write_tests {
         assert_eq!(plan.staged()[0].target_entry_path(), "a.txt");
         assert!(plan.unstage("a.txt").unwrap());
         assert!(plan.staged().is_empty());
+    }
+
+    #[test]
+    fn commit_writes_file_source_in_place_with_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+
+        let target = Archive::open(path.to_string_lossy()).unwrap();
+        let mut plan = MergePlan::new();
+        plan.stage_write("notes.txt", b"new\n".to_vec()).unwrap();
+        let result = plan.commit(&target, CommitOptions { backup: true }).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert!(result.backup_path.is_some());
+        assert_eq!(std::fs::read(result.backup_path.unwrap()).unwrap(), b"old\n");
+        assert_eq!(result.copied_entries, 1);
+        assert!(!result.signature_invalidated);
     }
 
     #[test]
