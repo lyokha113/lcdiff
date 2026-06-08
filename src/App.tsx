@@ -39,12 +39,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { FileDiff, ListTree } from "lucide-react";
 import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { MenuBar } from "@/components/MenuBar";
 import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { DiffView, pairHasClass } from "@/components/DiffView";
+import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
+import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
 import { pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -61,12 +62,7 @@ function isTauriRuntime() {
 
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
-type WorkspaceTab = "tree" | "diff";
-
-function basename(path: string) {
-  const parts = path.split(/[\\/]/);
-  return parts[parts.length - 1] || path;
-}
+const MAX_DIFF_TABS = 10;
 
 function searchResultKey(result: SearchResult) {
   return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
@@ -129,7 +125,9 @@ export function App() {
   const [signedWarningSuppressions, setSignedWarningSuppressions] = useState<Record<string, boolean>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("tree");
+  const [activeTab, setActiveTab] = useState<"files" | string>("files");
+  const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
+  const focusCounter = useRef(0);
   const previewRequestId = useRef(0);
   const searchStreamId = useRef(0);
   const editorRef = useRef<CodeEditor | undefined>(undefined);
@@ -193,7 +191,8 @@ export function App() {
       setPathErrors((current) => ({ ...current, [side]: undefined }));
       setArchives((current) => ({ ...current, [side]: archive }));
       setSelected(undefined);
-      setActiveTab("tree");
+      setActiveTab("files");
+      setOpenTabs([]);
       setPreview({});
       setSearchPaths(undefined);
       setSearchResults([]);
@@ -322,6 +321,13 @@ export function App() {
     }
   }, [mode, preview.left?.content, preview.right?.content, selected?.path, selectedSearchResult]);
 
+  useEffect(() => {
+    if (activeTab === "files" || !selected) return;
+    setOpenTabs((prev) =>
+      prev.map((t) => (t.path === activeTab ? { ...t, pair: selected, preview, viewMode } : t)),
+    );
+  }, [activeTab, selected, preview, viewMode]);
+
   async function browse(side: Side) {
     const path = await chooseFile({
       multiple: false,
@@ -338,11 +344,28 @@ export function App() {
     if (path) await openPath(side, path);
   }
 
+  function focusTab(path: string) {
+    const tab = openTabs.find((t) => t.path === path);
+    if (!tab) return;
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setSelected(tab.pair);
+    setPreview(tab.preview);
+    setViewMode(tab.viewMode);
+    setActiveTab(path);
+    setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
+  }
+
   async function inspect(pair: ComparePair) {
+    const existing = openTabs.find((t) => t.path === pair.path);
+    if (existing) {
+      focusTab(pair.path);
+      return;
+    }
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
     setSelected(pair);
-    setActiveTab("diff");
+    setActiveTab(pair.path);
     setViewMode("source");
     const next: Partial<Record<Side, EntryPreview>> = {};
     for (const side of ["left", "right"] as const) {
@@ -352,6 +375,14 @@ export function App() {
     }
     if (previewRequestId.current !== requestId) return;
     setPreview(next);
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setOpenTabs((prev) =>
+      evictLru(
+        upsertTab(prev, { path: pair.path, pair, preview: next, viewMode: "source", lastFocus: stamp }),
+        MAX_DIFF_TABS,
+      ),
+    );
     for (const side of ["left", "right"] as const) {
       if (pair[side]?.kind === "class" && !pair.path.includes("!/")) {
         void invoke("prefetch_siblings", { side, entryPath: pair.path });
@@ -370,6 +401,18 @@ export function App() {
         current.map((candidate) => (candidate.path === pair.path ? metadataOnly : candidate)),
       );
     }
+  }
+
+  function closeTab(path: string) {
+    if (activeTab === path) {
+      const next = pickNeighbor(openTabs, path);
+      if (next === "files") {
+        setActiveTab("files");
+      } else {
+        focusTab(next);
+      }
+    }
+    setOpenTabs((prev) => prev.filter((t) => t.path !== path));
   }
 
   async function showBytecode() {
@@ -647,30 +690,16 @@ export function App() {
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
-          <div className="workspace-tabs" role="tablist" aria-label="Workspace view">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "tree"}
-              className={`workspace-tab${activeTab === "tree" ? " active" : ""}`}
-              onClick={() => setActiveTab("tree")}
-            >
-              <ListTree /> Files
-              {visiblePairs.length > 0 && <span className="workspace-tab-count">{visiblePairs.length}</span>}
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "diff"}
-              className={`workspace-tab${activeTab === "diff" ? " active" : ""}`}
-              disabled={!selected}
-              onClick={() => selected && setActiveTab("diff")}
-            >
-              <FileDiff /> {selected ? basename(selected.path) : "Diff"}
-            </button>
-          </div>
+          <WorkspaceTabs
+            fileCount={visiblePairs.length}
+            activeId={activeTab}
+            tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+            onSelectFiles={() => setActiveTab("files")}
+            onSelectTab={(path) => focusTab(path)}
+            onCloseTab={(path) => closeTab(path)}
+          />
           <div className="workspace-tabpanels">
-            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "tree"}>
+            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
               <FileTree
                 visiblePairs={visiblePairs}
                 selected={selected}
@@ -685,7 +714,7 @@ export function App() {
                 onExpandArchive={(fullPath) => void expandArchive(fullPath)}
               />
             </div>
-            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "diff"}>
+            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab === "files"}>
               <DiffView
                 mode={mode}
                 selected={selected}
