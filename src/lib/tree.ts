@@ -23,11 +23,20 @@ function newFolder(name: string, path: string): MutableFolder {
   return { kind: "folder", name, path, children: [], diffCount: 0, childMap: new Map() };
 }
 
+export function isDirectoryPair(pair: ComparePair): boolean {
+  return (
+    pair.path.endsWith("/") ||
+    pair.left?.kind === "directory" ||
+    pair.right?.kind === "directory"
+  );
+}
+
 export function buildTree(pairs: ComparePair[]): TreeNode[] {
   const root = newFolder("", "");
   const fileLists = new Map<MutableFolder, TreeFile[]>();
 
   for (const pair of pairs) {
+    if (isDirectoryPair(pair)) continue;
     const segments = pair.path.split("/").filter(Boolean);
     let folder = root;
     for (let i = 0; i < segments.length - 1; i += 1) {

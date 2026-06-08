@@ -14,11 +14,10 @@ interface SourceChipsProps {
   onOpenPath: (side: Side, path: string) => void;
   onBrowse: (side: Side) => void;
   onBrowseFolder: (side: Side) => void;
-  onSave: (side: Side) => void;
 }
 
 export function SourceChips({
-  mode, archives, paths, pathErrors, onPathChange, onOpenPath, onBrowse, onBrowseFolder, onSave,
+  mode, archives, paths, pathErrors, onPathChange, onOpenPath, onBrowse, onBrowseFolder,
 }: SourceChipsProps) {
   const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
   return (
@@ -46,7 +45,10 @@ export function SourceChips({
               </Tooltip>
               <PopoverContent>
                 <div className="repick">
-                  <strong>{side.toUpperCase()}</strong>
+                  <div className="repick-head">
+                    <strong>{side.toUpperCase()}</strong>
+                    {archive && <span className="repick-kind">{archive.metadata.sourceKind}</span>}
+                  </div>
                   <Input
                     value={paths[side]}
                     placeholder="~/path/to/archive.jar or folder"
@@ -56,10 +58,8 @@ export function SourceChips({
                   <div className="repick-actions">
                     <Button variant="outline" onClick={() => onBrowse(side)}><FileText /> Browse file</Button>
                     <Button variant="outline" onClick={() => onBrowseFolder(side)}><Folder /> Browse folder</Button>
-                    <Button variant="secondary" aria-label="Save staged"
-                      disabled={mode === "single"} onClick={() => onSave(side)}>Save staged</Button>
                   </div>
-                  <small>{archive ? `${archive.metadata.sourceKind}: ${archive.path}` : "No source loaded"}</small>
+                  <small>{archive ? archive.path : "No source loaded"}</small>
                   {pathErrors[side] && <small className="path-error">{pathErrors[side]}</small>}
                 </div>
               </PopoverContent>

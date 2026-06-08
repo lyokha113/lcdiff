@@ -1,28 +1,32 @@
-import { Save, Search, Settings, Trash2 } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, Pencil, RefreshCw, Save, Search, Settings, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Mode, Side } from "@/lib/types";
 
 interface MenuBarProps {
   mode: Mode;
   stagedTarget?: Side;
-  stagedCount: number;
+  pendingOps: Array<{ path: string; side: Side; kind: "copy" | "edit" }>;
   searchOpen: boolean;
   drawerOpen: boolean;
+  canRefresh: boolean;
   onChangeMode: (mode: Mode) => void;
   onSave: (side: Side) => void;
+  onRefresh: () => void;
   onClearStaged: () => void;
+  onUnstageOne: (entryPath: string) => void;
   onToggleSearch: () => void;
   onToggleDrawer: () => void;
 }
 
 export function MenuBar({
-  mode, stagedTarget, stagedCount, searchOpen, drawerOpen,
-  onChangeMode, onSave, onClearStaged, onToggleSearch, onToggleDrawer,
+  mode, stagedTarget, pendingOps, searchOpen, drawerOpen, canRefresh,
+  onChangeMode, onSave, onRefresh, onClearStaged, onUnstageOne, onToggleSearch, onToggleDrawer,
 }: MenuBarProps) {
   return (
     <header className="menu-bar">
@@ -34,21 +38,57 @@ export function MenuBar({
         <Select value={mode} onValueChange={(value) => onChangeMode(value as Mode)}>
           <SelectTrigger aria-label="Mode"><SelectValue /></SelectTrigger>
           <SelectContent><SelectGroup>
-            <SelectItem value="single">Single</SelectItem>
+            <SelectItem value="single">View</SelectItem>
             <SelectItem value="compare">Compare</SelectItem>
           </SelectGroup></SelectContent>
         </Select>
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
-              <Button variant="secondary" size="icon" aria-label="Save staged"
-                disabled={mode === "single" || !stagedTarget} onClick={() => stagedTarget && onSave(stagedTarget)}>
-                <Save />
+              <Button variant="outline" size="icon" aria-label="Refresh sources"
+                disabled={!canRefresh} onClick={onRefresh}>
+                <RefreshCw />
               </Button>
             </span>
           </TooltipTrigger>
-          <TooltipContent><p>Save staged copies to their target archive</p></TooltipContent>
+          <TooltipContent>
+            <p>{mode === "compare" ? "Reload both sources from disk" : "Reload the source from disk"}</p>
+          </TooltipContent>
         </Tooltip>
+        <div className="pending-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            aria-label={`Save to archive (${pendingOps.length})`}
+            disabled={!stagedTarget}
+            onClick={() => stagedTarget && onSave(stagedTarget)}>
+            <Save /> Save to archive ({pendingOps.length})
+          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Show pending changes"
+                disabled={!stagedTarget}>
+                <ChevronDown />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="pending-popover">
+              <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
+              <ul>
+                {pendingOps.map((op) => (
+                  <li key={op.path}>
+                    {op.kind === "edit" ? <Pencil size={14} /> : <ArrowRightLeft size={14} />}
+                    <span className="pending-path">{op.path}</span>
+                    <Button variant="ghost" size="icon" aria-label={`Unstage ${op.path}`}
+                      onClick={() => onUnstageOne(op.path)}><X size={14} /></Button>
+                  </li>
+                ))}
+              </ul>
+            </PopoverContent>
+          </Popover>
+          {stagedTarget && (
+            <Badge variant="secondary">{pendingOps.length} unsaved → {stagedTarget}</Badge>
+          )}
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
@@ -59,7 +99,6 @@ export function MenuBar({
           </TooltipTrigger>
           <TooltipContent><p>Discard all staged copies</p></TooltipContent>
         </Tooltip>
-        {stagedTarget && <Badge variant="secondary">{stagedCount} → {stagedTarget}</Badge>}
         <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
           <Search />
         </Button>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, isArchiveKind, type TreeFolder, type TreeFile } from "@/lib/tree";
+import { buildTree, isArchiveKind, isDirectoryPair, type TreeFolder, type TreeFile } from "@/lib/tree";
 import type { ComparePair } from "@/lib/types";
 
 const pairs: ComparePair[] = [
@@ -43,6 +43,27 @@ describe("buildTree", () => {
     const top = tree.find((n) => n.name === "top.txt") as TreeFile;
     expect(top.kind).toBe("file");
     expect(top.path).toBe("top.txt");
+  });
+
+  it("does not render a directory entry as a leaf file alongside its folder", () => {
+    // backend emits a directory entry (path ends '/') plus a file inside it
+    const withDir: ComparePair[] = [
+      { path: "Lib/TTLCustomer/", status: "onlyLeft", left: { path: "Lib/TTLCustomer/", kind: "directory" } },
+      { path: "Lib/TTLCustomer/ttl.jar", status: "onlyLeft", left: { path: "Lib/TTLCustomer/ttl.jar", kind: "archive" } },
+    ];
+    const tree = buildTree(withDir);
+    const lib = tree.find((n) => n.name === "Lib") as TreeFolder;
+    const matches = lib.children.filter((n) => n.name === "TTLCustomer");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].kind).toBe("folder");
+  });
+});
+
+describe("isDirectoryPair", () => {
+  it("detects trailing-slash paths and directory-kind entries", () => {
+    expect(isDirectoryPair({ path: "a/b/", status: "onlyLeft", left: { path: "a/b/", kind: "directory" } })).toBe(true);
+    expect(isDirectoryPair({ path: "a/b", status: "onlyLeft", left: { path: "a/b", kind: "directory" } })).toBe(true);
+    expect(isDirectoryPair({ path: "a/b.txt", status: "onlyLeft", left: { path: "a/b.txt", kind: "text" } })).toBe(false);
   });
 });
 

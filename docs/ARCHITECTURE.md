@@ -24,7 +24,15 @@ start, a 30-second watchdog, canonical-path, metadata, typed-options, mode, and
 engine-version keyed 128 MB LRU source/bytecode cache, and one restart/retry.
 Dedicated deep-search and
 low-priority prefetch JVM workers share that cache without blocking interactive
-class navigation. ZIP open/diff/read/search/save and sidecar read operations
+class navigation. The desktop view renders a hierarchical foldable file tree
+with per-node status, a multi-tab diff workspace (capped at 10 tabs with LRU
+eviction and per-tab view-mode/preview state), a Config drawer for engine and
+diff options, and a startup splash while the sidecar warms. Nested archives
+(jar/zip/war/ear inside an archive) expand lazily through the
+`compute_nested_diff` command using the `parent!/inner` path separator, extract
+to cached temp files on demand, and merge by flattening staged replacements back
+into their parent archives. ZIP open/diff/read/search/save and sidecar read
+operations
 use async Tauri commands with blocking work offloaded from the IPC thread. The
 Java sidecar
 implements CFR decompile, a reflective Vineflower adapter, and ASM Textifier.

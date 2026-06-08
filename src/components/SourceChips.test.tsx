@@ -15,7 +15,7 @@ function setup(overrides = {}) {
   const props = {
     mode: "compare" as const, archives: { left: leftArchive }, paths: { left: "", right: "" },
     pathErrors: {}, onPathChange: vi.fn(), onOpenPath: vi.fn(), onBrowse: vi.fn(),
-    onBrowseFolder: vi.fn(), onSave: vi.fn(),
+    onBrowseFolder: vi.fn(),
     ...overrides,
   };
   render(
@@ -36,9 +36,10 @@ describe("SourceChips", () => {
     await userEvent.click(screen.getByRole("button", { name: /change left source/i }));
     expect(screen.getByRole("button", { name: /Browse file/i })).toBeInTheDocument();
   });
-  it("disables Save staged in single mode", async () => {
-    setup({ mode: "single" });
+  it("browses for a file from the popover", async () => {
+    const props = setup();
     await userEvent.click(screen.getByRole("button", { name: /change left source/i }));
-    expect(screen.getByLabelText("Save staged")).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /Browse file/i }));
+    expect(props.onBrowse).toHaveBeenCalledWith("left");
   });
 });

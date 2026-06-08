@@ -20,6 +20,7 @@ import type {
   SearchScope,
   SearchTier,
   Side,
+  StagedEntry,
   TreeFilter,
   ViewMode,
 } from "@/lib/types";
@@ -47,7 +48,7 @@ import { DiffView, pairHasClass } from "@/components/DiffView";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
-import { pairPassesTreeFilter } from "@/lib/tree";
+import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
 import {
   type HistoryEntry,
@@ -63,6 +64,9 @@ function isTauriRuntime() {
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
+
+// Keep in sync with EDITABLE_EXTENSIONS in crates/jdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
+const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf"];
 
 function searchResultKey(result: SearchResult) {
   return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
@@ -117,7 +121,8 @@ export function App() {
   const [ignoreTrimWhitespace, setIgnoreTrimWhitespace] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("source");
   const [stagedTarget, setStagedTarget] = useState<Side>();
-  const [stagedEntries, setStagedEntries] = useState<Record<string, Side>>({});
+  const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
+  const [editBuffer, setEditBuffer] = useState<string>("");
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
@@ -156,6 +161,7 @@ export function App() {
     () =>
       displayedPairs.filter(
         (pair) =>
+          !isDirectoryPair(pair) &&
           pairPassesTreeFilter(pair, treeFilter) &&
           (!searchPaths || searchPaths.has(pair.path)),
       ),
@@ -258,7 +264,7 @@ export function App() {
     window
       .onCloseRequested((event) => {
         event.preventDefault();
-        if (!globalThis.confirm("Discard staged archive copies and close LDiff?")) return;
+        if (!globalThis.confirm("Discard unsaved changes and close LDiff?")) return;
         void invoke("clear_staged").then(() => window.destroy());
       })
       .then((stop) => {
@@ -354,6 +360,14 @@ export function App() {
     if (path) await openPath(side, path);
   }
 
+  function refreshSources() {
+    const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
+    for (const side of sides) {
+      const current = archives[side]?.path;
+      if (current) void openPath(side, current, true);
+    }
+  }
+
   function focusTab(path: string) {
     const tab = openTabs.find((t) => t.path === path);
     if (!tab) return;
@@ -361,6 +375,7 @@ export function App() {
     const stamp = focusCounter.current;
     setSelected(tab.pair);
     setPreview(tab.preview);
+    setEditBuffer(tab.preview.left?.content ?? "");
     setViewMode(tab.viewMode);
     setActiveTab(path);
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
@@ -385,6 +400,7 @@ export function App() {
     }
     if (previewRequestId.current !== requestId) return;
     setPreview(next);
+    setEditBuffer(next.left?.content ?? "");
     focusCounter.current += 1;
     const stamp = focusCounter.current;
     setOpenTabs((prev) =>
@@ -484,7 +500,7 @@ export function App() {
 
   function changeMode(next: Mode) {
     if (next === "single" && stagedTarget) {
-      setMessage("Save or clear staged copies before switching to Single mode.");
+      setMessage("Save or clear unsaved changes before switching to Single mode.");
       return;
     }
     if (mode === "compare" && next === "single") {
@@ -499,7 +515,7 @@ export function App() {
     try {
       await invoke("stage_copy", { from, to, entryPath: pair.path });
       setStagedTarget(to);
-      setStagedEntries((current) => ({ ...current, [pair.path]: to }));
+      setStagedEntries((current) => ({ ...current, [pair.path]: { side: to, kind: "copy" } }));
       setMessage(`Staged ${pair.path}: ${from} -> ${to}`);
     } catch (error) {
       setMessage(String(error));
@@ -547,7 +563,7 @@ export function App() {
     await invoke("clear_staged");
     setStagedTarget(undefined);
     setStagedEntries({});
-    setMessage("Cleared staged copies.");
+    setMessage("Cleared unsaved changes.");
   }
 
   async function unstage(entryPath: string) {
@@ -560,6 +576,30 @@ export function App() {
         return next;
       });
       setMessage(`Unstaged ${entryPath}.`);
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }
+
+  async function stageEdit(entryPath: string, content: string) {
+    const original = preview.left?.content ?? "";
+    if (content === original) {
+      if (stagedEntries[entryPath]?.kind === "edit") {
+        await invoke("unstage", { entryPath });
+        setStagedEntries((current) => {
+          const next = { ...current };
+          delete next[entryPath];
+          if (Object.keys(next).length === 0) setStagedTarget(undefined);
+          return next;
+        });
+      }
+      return;
+    }
+    try {
+      await invoke("stage_write", { side: "left", entryPath, content });
+      setStagedEntries((current) => ({ ...current, [entryPath]: { side: "left", kind: "edit" } }));
+      setStagedTarget("left");
+      setMessage(`Edited ${entryPath} (unsaved)`);
     } catch (error) {
       setMessage(String(error));
     }
@@ -661,17 +701,28 @@ export function App() {
     );
   }
 
+  const isEditableEntry =
+    mode === "single" &&
+    viewMode === "source" &&
+    !!preview.left &&
+    preview.left.kind !== "class" &&
+    (preview.left.kind === "text" ||
+      EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
+
   return (
     <TooltipProvider>
     <main className="app-shell">
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
-        stagedCount={Object.keys(stagedEntries).length}
+        pendingOps={Object.entries(stagedEntries).map(([path, entry]) => ({ path, side: entry.side, kind: entry.kind }))}
+        onUnstageOne={(entryPath) => void unstage(entryPath)}
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
+        canRefresh={Boolean(archives.left || archives.right)}
         onChangeMode={changeMode}
         onSave={(side) => void save(side)}
+        onRefresh={refreshSources}
         onClearStaged={clearStaged}
         onToggleSearch={() => setSearchOpen((o) => !o)}
         onToggleDrawer={() => setDrawerOpen((o) => !o)}
@@ -686,7 +737,6 @@ export function App() {
         onOpenPath={(side, path) => void openPath(side, path)}
         onBrowse={(side) => void browse(side)}
         onBrowseFolder={(side) => void browseFolder(side)}
-        onSave={(side) => void save(side)}
       />
 
       <SearchBar
@@ -736,6 +786,10 @@ export function App() {
                 onShowBytecode={showBytecode}
                 onEditorMount={handleEditorMount}
                 onDiffMount={handleDiffMount}
+                editable={isEditableEntry}
+                editValue={editBuffer}
+                onEditChange={(value) => setEditBuffer(value ?? "")}
+                onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
               />
             </div>
           </div>

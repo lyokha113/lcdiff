@@ -22,6 +22,7 @@ function setup(overrides = {}) {
     viewMode: "source" as const, ignoreTrimWhitespace: true,
     onCopy: vi.fn(), onShowSource: vi.fn(), onShowBytecode: vi.fn(),
     onEditorMount: vi.fn(), onDiffMount: vi.fn(),
+    editable: false, editValue: "", onEditChange: vi.fn(), onEditBlur: vi.fn(),
     ...overrides,
   };
   render(<TooltipProvider><DiffView {...props} /></TooltipProvider>);

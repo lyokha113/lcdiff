@@ -8,7 +8,7 @@ use std::{
 
 use ldiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, CommitOptions, CommitResult,
-    DecompileEngine, EntryKind, MergePlan, NestedArchiveCache, compare, search_constant_pool,
+    DecompileEngine, EntryKind, MergePlan, NestedArchiveCache, compare, edit, search_constant_pool,
     validate_path as validate_archive_path,
 };
 use serde::{Deserialize, Serialize};
@@ -121,6 +121,32 @@ impl AppState {
         Ok(())
     }
 
+    fn stage_write(&mut self, side: Side, entry_path: &str, content: &str) -> Result<(), String> {
+        if self.staged_target.is_some_and(|target| target != side) {
+            return Err("save unsaved changes before editing the other archive".to_owned());
+        }
+        let archive = archive(self, side)
+            .ok_or("archive is not loaded")?
+            .clone();
+        let entry = archive
+            .entry(entry_path)
+            .ok_or("entry is not indexed")?
+            .clone();
+        let original = archive
+            .read_entry(entry_path)
+            .map_err(|error| error.to_string())?;
+        if !edit::editable_text(&entry, &original) {
+            return Err("entry is not an editable text file".to_owned());
+        }
+        let encoding = edit::detect_encoding(&original);
+        let new_bytes = edit::encode_text(content, &encoding);
+        self.merge_plan
+            .stage_write(entry_path, new_bytes)
+            .map_err(|error| error.to_string())?;
+        self.staged_target = Some(side);
+        Ok(())
+    }
+
     fn commit_merge(
         &mut self,
         target_side: Side,
@@ -172,7 +198,7 @@ impl AppState {
             .unstage(entry_path)
             .map_err(|error| error.to_string())?
         {
-            return Err("staged copy is not found".to_owned());
+            return Err("staged entry is not found".to_owned());
         }
         if self.merge_plan.staged().is_empty() {
             self.staged_target = None;
@@ -481,6 +507,19 @@ fn stage_copy(
         .lock()
         .map_err(|_| "state lock is poisoned".to_owned())?;
     state.stage_copy(from, to, &entry_path)
+}
+
+#[tauri::command]
+fn stage_write(
+    side: Side,
+    entry_path: String,
+    content: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    let mut state = state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?;
+    state.stage_write(side, &entry_path, &content)
 }
 
 #[tauri::command]
@@ -899,6 +938,7 @@ fn main() {
             set_engine,
             disassemble,
             stage_copy,
+            stage_write,
             commit_merge,
             clear_staged,
             unstage,
@@ -1277,5 +1317,49 @@ mod tests {
         bytes.extend_from_slice(&(value.len() as u16).to_be_bytes());
         bytes.extend_from_slice(value.as_bytes());
         bytes
+    }
+
+    #[test]
+    fn stage_write_locks_target_and_rejects_other_side() {
+        let dir = tempdir().unwrap();
+        let left = dir.path().join("left.jar");
+        create_zip(&left, &[("config.xml", b"<old/>")]);
+        let mut state = AppState::default();
+        state.load_archive(left.to_str().unwrap(), Side::Left).unwrap();
+        let right = dir.path().join("right.jar");
+        create_zip(&right, &[("config.xml", b"<r/>")]);
+        state.load_archive(right.to_str().unwrap(), Side::Right).unwrap();
+
+        state.stage_write(Side::Left, "config.xml", "<new/>").unwrap();
+        assert_eq!(state.staged_target, Some(Side::Left));
+
+        let err = state.stage_write(Side::Right, "config.xml", "<x/>").unwrap_err();
+        assert!(err.contains("other archive"));
+    }
+
+    #[test]
+    fn stage_write_rejects_binary_entry() {
+        let dir = tempdir().unwrap();
+        let left = dir.path().join("b.jar");
+        create_zip(&left, &[("blob.bin", &[0u8, 1, 2, 3])]);
+        let mut state = AppState::default();
+        state.load_archive(left.to_str().unwrap(), Side::Left).unwrap();
+        let err = state.stage_write(Side::Left, "blob.bin", "text").unwrap_err();
+        assert!(err.contains("editable"));
+    }
+
+    #[test]
+    fn unstage_last_write_unlocks_archive_switch() {
+        let dir = tempdir().unwrap();
+        let left = dir.path().join("left.jar");
+        create_zip(&left, &[("a.txt", b"old")]);
+        let mut state = AppState::default();
+        state.load_archive(left.to_str().unwrap(), Side::Left).unwrap();
+        state.stage_write(Side::Left, "a.txt", "new").unwrap();
+
+        state.unstage("a.txt").unwrap();
+
+        assert!(state.merge_plan.staged().is_empty());
+        assert_eq!(state.staged_target, None);
     }
 }

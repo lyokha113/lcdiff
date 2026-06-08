@@ -337,7 +337,7 @@ try {
   await copyRightButton.click();
   await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await showFilesTab();
-  await mockedPage.locator("text=pending → right").waitFor({ timeout: 10_000 });
+  await mockedPage.locator("text=copy → right").waitFor({ timeout: 10_000 });
 
   // Unstage via context menu: badges disappear.
   await showFilesTab();
@@ -349,7 +349,7 @@ try {
   if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
     throw new Error("MenuBar staged badge still present after unstage");
   }
-  await mockedPage.locator("text=pending → right").waitFor({ state: "detached", timeout: 5_000 });
+  await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
 
   // Re-stage. The copy button is enabled only once the pair is selected, so a
   // plain (non-forced) click auto-waits for that precondition.
@@ -358,7 +358,7 @@ try {
   await copyRightButton.click();
   await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await showFilesTab();
-  await mockedPage.locator("text=pending → right").waitFor({ timeout: 10_000 });
+  await mockedPage.locator("text=copy → right").waitFor({ timeout: 10_000 });
 
   // Binary preview details + hex dump.
   await showFilesTab();
@@ -371,20 +371,20 @@ try {
 
   // Single-mode switch guard: blocked while staged.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
-  await mockedPage.getByRole("option", { name: "Single" }).click();
-  await mockedPage.locator("text=Save or clear staged copies before switching to Single mode.").waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("option", { name: "View" }).click();
+  await mockedPage.locator("text=Save or clear unsaved changes before switching to Single mode.").waitFor({ timeout: 5_000 });
 
   // Clear staged (MenuBar icon button): badges gone.
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
-  await mockedPage.locator("text=Cleared staged copies.").waitFor({ timeout: 5_000 });
+  await mockedPage.locator("text=Cleared unsaved changes.").waitFor({ timeout: 5_000 });
   if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
     throw new Error("MenuBar staged badge still present after clear staged");
   }
-  await mockedPage.locator("text=pending → right").waitFor({ state: "detached", timeout: 5_000 });
+  await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
 
   // Now the switch to Single succeeds; SourceChips renders only the left chip.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
-  await mockedPage.getByRole("option", { name: "Single" }).click();
+  await mockedPage.getByRole("option", { name: "View" }).click();
   await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
     throw new Error("Single mode still rendered the right source chip");
@@ -396,7 +396,7 @@ try {
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
-  const menuBarSaveStaged = mockedPage.getByRole("button", { name: "Save staged", exact: true });
+  const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });
   const compareAppRow = mockedPage.locator(".tree-file.different", { hasText: "App.class" });
   // Selecting an entry and waiting for the copy button to enable is the precondition
   // for staging; a save reloads the archive and resets the selection, so re-select

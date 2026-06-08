@@ -19,11 +19,16 @@ interface DiffViewProps {
   onShowBytecode: () => void;
   onEditorMount: OnMount;
   onDiffMount: DiffOnMount;
+  editable: boolean;
+  editValue: string;
+  onEditChange: (value: string | undefined) => void;
+  onEditBlur: (content: string) => void;
 }
 
 export function DiffView({
   mode, selected, preview, viewMode, ignoreTrimWhitespace,
   onCopy, onShowSource, onShowBytecode, onEditorMount, onDiffMount,
+  editable, editValue, onEditChange, onEditBlur,
 }: DiffViewProps) {
   return (
     <div className="editor-panel">
@@ -96,10 +101,14 @@ export function DiffView({
           <Editor
             height="100%"
             language={preview.left?.language ?? "plaintext"}
-            value={preview.left?.content ?? ""}
+            value={editable ? editValue : (preview.left?.content ?? "")}
             theme="vs-dark"
-            options={{ readOnly: true, minimap: { enabled: false }, automaticLayout: true }}
-            onMount={onEditorMount}
+            options={{ readOnly: !editable, minimap: { enabled: false }, automaticLayout: true }}
+            onChange={(value) => editable && onEditChange(value)}
+            onMount={(editor, monaco) => {
+              onEditorMount(editor, monaco);
+              editor.onDidBlurEditorText(() => editable && onEditBlur(editor.getValue()));
+            }}
           />
         )}
       </div>

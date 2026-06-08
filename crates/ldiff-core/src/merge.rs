@@ -15,11 +15,40 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct StagedCopy {
-    pub source_archive: PathBuf,
-    pub source_entry_path: String,
-    pub target_entry_path: String,
-    source_snapshot: Archive,
+pub enum StagedOp {
+    Copy {
+        source_archive: PathBuf,
+        source_entry_path: String,
+        target_entry_path: String,
+        source_snapshot: Archive,
+    },
+    Write {
+        target_entry_path: String,
+        new_bytes: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StagedKind {
+    Copy,
+    Write,
+}
+
+impl StagedOp {
+    pub fn target_entry_path(&self) -> &str {
+        match self {
+            StagedOp::Copy { target_entry_path, .. } => target_entry_path,
+            StagedOp::Write { target_entry_path, .. } => target_entry_path,
+        }
+    }
+
+    pub fn kind(&self) -> StagedKind {
+        match self {
+            StagedOp::Copy { .. } => StagedKind::Copy,
+            StagedOp::Write { .. } => StagedKind::Write,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,12 +67,24 @@ pub struct CommitResult {
 
 #[derive(Debug, Default)]
 pub struct MergePlan {
-    copies: Vec<StagedCopy>,
+    ops: Vec<StagedOp>,
 }
 
 impl MergePlan {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    fn replace_or_push(&mut self, target_entry_path: &str, op: StagedOp) {
+        if let Some(existing) = self
+            .ops
+            .iter_mut()
+            .find(|existing| existing.target_entry_path() == target_entry_path)
+        {
+            *existing = op;
+        } else {
+            self.ops.push(op);
+        }
     }
 
     pub fn stage_copy(
@@ -62,42 +103,48 @@ impl MergePlan {
                 return Err(Error::CannotCopyDirectory(source_entry_path));
             }
         }
-        let staged = StagedCopy {
+        let op = StagedOp::Copy {
             source_archive: source.path().to_path_buf(),
             source_entry_path,
             target_entry_path: target_entry_path.clone(),
             source_snapshot: source.clone(),
         };
-        if let Some(copy) = self
-            .copies
-            .iter_mut()
-            .find(|copy| copy.target_entry_path == target_entry_path)
-        {
-            *copy = staged;
-        } else {
-            self.copies.push(staged);
-        }
+        self.replace_or_push(&target_entry_path, op);
         Ok(())
     }
 
-    pub fn staged(&self) -> &[StagedCopy] {
-        &self.copies
+    pub fn stage_write(&mut self, target_entry_path: &str, new_bytes: Vec<u8>) -> Result<()> {
+        let target_entry_path = normalize_archive_entry_path(target_entry_path)?;
+        let op = StagedOp::Write {
+            target_entry_path: target_entry_path.clone(),
+            new_bytes,
+        };
+        self.replace_or_push(&target_entry_path, op);
+        Ok(())
+    }
+
+    pub fn staged(&self) -> &[StagedOp] {
+        &self.ops
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ops.is_empty()
     }
 
     pub fn unstage(&mut self, target_entry_path: &str) -> Result<bool> {
         let target_entry_path = normalize_archive_entry_path(target_entry_path)?;
-        let previous_len = self.copies.len();
-        self.copies
-            .retain(|copy| copy.target_entry_path != target_entry_path);
-        Ok(self.copies.len() != previous_len)
+        let previous_len = self.ops.len();
+        self.ops
+            .retain(|op| op.target_entry_path() != target_entry_path);
+        Ok(self.ops.len() != previous_len)
     }
 
     pub fn clear(&mut self) {
-        self.copies.clear();
+        self.ops.clear();
     }
 
     pub fn commit(&mut self, target: &Archive, options: CommitOptions) -> Result<CommitResult> {
-        if self.copies.is_empty() {
+        if self.ops.is_empty() {
             return Err(Error::EmptyMergePlan);
         }
         if target.changed_on_disk()? {
@@ -147,12 +194,27 @@ impl MergePlan {
     fn read_replacements(&self) -> Result<BTreeMap<String, Vec<u8>>> {
         let mut replacements = BTreeMap::new();
         let mut cache = NestedArchiveCache::new()?;
-        for copy in &self.copies {
-            if copy.source_snapshot.changed_on_disk()? {
-                return Err(Error::ArchiveChanged(copy.source_archive.clone()));
+        for op in &self.ops {
+            match op {
+                StagedOp::Copy {
+                    source_archive,
+                    source_entry_path,
+                    target_entry_path,
+                    source_snapshot,
+                } => {
+                    if source_snapshot.changed_on_disk()? {
+                        return Err(Error::ArchiveChanged(source_archive.clone()));
+                    }
+                    let (archive, leaf) = cache.resolve(source_snapshot, source_entry_path)?;
+                    replacements.insert(target_entry_path.clone(), archive.read_entry(&leaf)?);
+                }
+                StagedOp::Write {
+                    target_entry_path,
+                    new_bytes,
+                } => {
+                    replacements.insert(target_entry_path.clone(), new_bytes.clone());
+                }
             }
-            let (archive, leaf) = cache.resolve(&copy.source_snapshot, &copy.source_entry_path)?;
-            replacements.insert(copy.target_entry_path.clone(), archive.read_entry(&leaf)?);
         }
         Ok(replacements)
     }
@@ -462,4 +524,84 @@ fn backup_path_for(path: &Path) -> PathBuf {
     let mut backup = path.as_os_str().to_owned();
     backup.push(".bak");
     PathBuf::from(backup)
+}
+
+#[cfg(test)]
+mod stage_write_tests {
+    use super::*;
+    use crate::Archive;
+
+    fn write_zip(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let path = dir.join(name);
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for (entry, bytes) in entries {
+            zip.start_file(*entry, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn stage_write_replaces_entry_bytes_on_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_zip(dir.path(), "t.jar", &[("config.xml", b"<old/>")]);
+        let target = Archive::open(path.to_str().unwrap()).unwrap();
+
+        let mut plan = MergePlan::new();
+        plan.stage_write("config.xml", b"<new/>".to_vec()).unwrap();
+        let result = plan.commit(&target, CommitOptions::default()).unwrap();
+        assert_eq!(result.copied_entries, 1);
+
+        let reopened = Archive::open(path.to_str().unwrap()).unwrap();
+        assert_eq!(reopened.read_entry("config.xml").unwrap(), b"<new/>");
+    }
+
+    #[test]
+    fn mixed_copy_and_write_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = write_zip(dir.path(), "src.jar", &[("Main.class", b"CLASSBYTES")]);
+        let tgt = write_zip(dir.path(), "tgt.jar", &[("Main.class", b"OLD"), ("a.txt", b"x")]);
+        let source = Archive::open(src.to_str().unwrap()).unwrap();
+        let target = Archive::open(tgt.to_str().unwrap()).unwrap();
+
+        let mut plan = MergePlan::new();
+        plan.stage_copy(&source, "Main.class", "Main.class").unwrap();
+        plan.stage_write("a.txt", b"y".to_vec()).unwrap();
+        assert_eq!(plan.staged().len(), 2);
+        plan.commit(&target, CommitOptions::default()).unwrap();
+
+        let reopened = Archive::open(tgt.to_str().unwrap()).unwrap();
+        assert_eq!(reopened.read_entry("Main.class").unwrap(), b"CLASSBYTES");
+        assert_eq!(reopened.read_entry("a.txt").unwrap(), b"y");
+    }
+
+    #[test]
+    fn unstage_removes_a_write_and_kind_is_reported() {
+        let mut plan = MergePlan::new();
+        plan.stage_write("a.txt", b"y".to_vec()).unwrap();
+        assert_eq!(plan.staged()[0].kind(), StagedKind::Write);
+        assert_eq!(plan.staged()[0].target_entry_path(), "a.txt");
+        assert!(plan.unstage("a.txt").unwrap());
+        assert!(plan.staged().is_empty());
+    }
+
+    #[test]
+    fn restaging_same_target_replaces_regardless_of_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = write_zip(dir.path(), "src.jar", &[("a.txt", b"FROM_SOURCE")]);
+        let source = Archive::open(src.to_str().unwrap()).unwrap();
+
+        let mut plan = MergePlan::new();
+        plan.stage_write("a.txt", b"edited".to_vec()).unwrap();
+        plan.stage_copy(&source, "a.txt", "a.txt").unwrap();
+        assert_eq!(plan.staged().len(), 1);
+        assert_eq!(plan.staged()[0].kind(), StagedKind::Copy);
+
+        // re-stage the other way: copy then write -> Write wins
+        plan.stage_write("a.txt", b"edited2".to_vec()).unwrap();
+        assert_eq!(plan.staged().len(), 1);
+        assert_eq!(plan.staged()[0].kind(), StagedKind::Write);
+    }
 }

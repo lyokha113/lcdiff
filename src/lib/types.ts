@@ -1,6 +1,11 @@
 import type { DiffOnMount, OnMount } from "@monaco-editor/react";
 
 export type Side = "left" | "right";
+export type StagedKind = "copy" | "edit";
+export interface StagedEntry {
+  side: Side;
+  kind: StagedKind;
+}
 export type PairStatus = "onlyLeft" | "onlyRight" | "identical" | "different" | "differentMetadataOnly";
 export type EntryKind = "directory" | "class" | "text" | "archive" | "binary";
 export type Engine = "cfr" | "vineflower";
