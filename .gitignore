@@ -27,3 +27,6 @@ sidecar/target/
 # Downloaded Harness CLI binary for installed project instances.
 scripts/bin/harness-cli
 scripts/bin/harness-cli.exe
+
+# Claude Code runtime lock (machine-local)
+.claude/scheduled_tasks.lock
