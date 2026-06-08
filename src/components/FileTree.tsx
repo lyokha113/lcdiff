@@ -124,7 +124,11 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
               {open ? <ChevronDown className="tree-chevron" /> : <ChevronRight className="tree-chevron" />}
               <FileArchive className="tree-icon" />
               <span className="tree-name">{node.name}</span>
-              {stagedEntries[fullPath] && <Badge variant="secondary">pending → {stagedEntries[fullPath].side}</Badge>}
+              {stagedEntries[fullPath] && (
+                <Badge variant={stagedEntries[fullPath].kind === "edit" ? "default" : "secondary"}>
+                  {stagedEntries[fullPath].kind === "edit" ? "edited" : "copy"} → {stagedEntries[fullPath].side}
+                </Badge>
+              )}
               {mode !== "single" && <span className="status-chip" title={pres.label} aria-label={pres.label}>{pres.glyph}</span>}
             </button>
           </ContextMenuTrigger>
@@ -169,7 +173,11 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
         >
           <File className="tree-icon" />
           <span className="tree-name">{node.name}</span>
-          {stagedEntries[fullPath] && <Badge variant="secondary">pending → {stagedEntries[fullPath].side}</Badge>}
+          {stagedEntries[fullPath] && (
+            <Badge variant={stagedEntries[fullPath].kind === "edit" ? "default" : "secondary"}>
+              {stagedEntries[fullPath].kind === "edit" ? "edited" : "copy"} → {stagedEntries[fullPath].side}
+            </Badge>
+          )}
           {mode !== "single" && <span className="status-chip" title={pres.label} aria-label={pres.label}>{pres.glyph}</span>}
         </button>
       </ContextMenuTrigger>
