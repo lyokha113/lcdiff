@@ -4,6 +4,7 @@ use crate::{ArchiveEntry, EntryKind};
 
 /// Extensions treated as editable text even when content sniffing labelled the
 /// entry binary. Lower-case, compared case-insensitively.
+/// Keep in sync with EDIT_EXTENSIONS in src/App.tsx (this list is the authority; the JS list only controls the editor read-only affordance in the UI).
 const EDITABLE_EXTENSIONS: &[&str] = &[
     "xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf",
 ];

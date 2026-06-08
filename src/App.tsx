@@ -65,6 +65,7 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
 
+// Keep in sync with EDITABLE_EXTENSIONS in crates/jdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf"];
 
 function searchResultKey(result: SearchResult) {
@@ -263,7 +264,7 @@ export function App() {
     window
       .onCloseRequested((event) => {
         event.preventDefault();
-        if (!globalThis.confirm("Discard staged archive copies and close jdiff?")) return;
+        if (!globalThis.confirm("Discard unsaved changes and close jdiff?")) return;
         void invoke("clear_staged").then(() => window.destroy());
       })
       .then((stop) => {
@@ -374,6 +375,7 @@ export function App() {
     const stamp = focusCounter.current;
     setSelected(tab.pair);
     setPreview(tab.preview);
+    setEditBuffer(tab.preview.left?.content ?? "");
     setViewMode(tab.viewMode);
     setActiveTab(path);
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
@@ -498,7 +500,7 @@ export function App() {
 
   function changeMode(next: Mode) {
     if (next === "single" && stagedTarget) {
-      setMessage("Save or clear staged copies before switching to Single mode.");
+      setMessage("Save or clear unsaved changes before switching to Single mode.");
       return;
     }
     if (mode === "compare" && next === "single") {
@@ -561,7 +563,7 @@ export function App() {
     await invoke("clear_staged");
     setStagedTarget(undefined);
     setStagedEntries({});
-    setMessage("Cleared staged copies.");
+    setMessage("Cleared unsaved changes.");
   }
 
   async function unstage(entryPath: string) {
@@ -701,7 +703,9 @@ export function App() {
 
   const isEditableEntry =
     mode === "single" &&
+    viewMode === "source" &&
     !!preview.left &&
+    preview.left.kind !== "class" &&
     (preview.left.kind === "text" ||
       EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
 
