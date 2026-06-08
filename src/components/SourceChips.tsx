@@ -19,54 +19,55 @@ interface SourceChipsProps {
 export function SourceChips({
   mode, archives, paths, pathErrors, onPathChange, onOpenPath, onBrowse, onBrowseFolder,
 }: SourceChipsProps) {
-  const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
+  const renderChip = (side: Side) => {
+    const archive = archives[side];
+    return (
+      <span className={`chip-wrap chip-wrap-${side}`} key={side}>
+        <Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className={`source-chip${side === "right" ? " source-chip-right" : ""}`} aria-label={`Change ${side} source`}>
+                  <Package />
+                  <span className="source-chip-path">
+                    {archive ? archive.path : `${side.toUpperCase()} — no source`}
+                  </span>
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="source-chip-tip">{archive ? archive.path : `${side.toUpperCase()} — no source loaded`}</p>
+            </TooltipContent>
+          </Tooltip>
+          <PopoverContent className="w-96">
+            <div className="repick">
+              <div className="repick-head">
+                <strong>{side.toUpperCase()}</strong>
+                {archive && <span className="repick-kind">{archive.metadata.sourceKind}</span>}
+              </div>
+              <Input
+                value={paths[side]}
+                placeholder="~/path/to/archive.jar or folder"
+                onChange={(e) => onPathChange(side, e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") onOpenPath(side, paths[side]); }}
+              />
+              <div className="repick-actions">
+                <Button variant="outline" onClick={() => onBrowse(side)}><FileText /> Browse file</Button>
+                <Button variant="outline" onClick={() => onBrowseFolder(side)}><Folder /> Browse folder</Button>
+              </div>
+              {pathErrors[side] && <small className="path-error">{pathErrors[side]}</small>}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </span>
+    );
+  };
+
   return (
-    <div className="source-chips">
-      {sides.map((side, index) => {
-        const archive = archives[side];
-        return (
-          <span className="chip-wrap" key={side}>
-            {index === 1 && <ArrowLeftRight className="chip-sep" aria-hidden="true" />}
-            <Popover>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" className="source-chip" aria-label={`Change ${side} source`}>
-                      <Package />
-                      <span className="source-chip-path">
-                        {archive ? archive.path : `${side.toUpperCase()} — no source`}
-                      </span>
-                    </Button>
-                  </PopoverTrigger>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="source-chip-tip">{archive ? archive.path : `${side.toUpperCase()} — no source loaded`}</p>
-                </TooltipContent>
-              </Tooltip>
-              <PopoverContent>
-                <div className="repick">
-                  <div className="repick-head">
-                    <strong>{side.toUpperCase()}</strong>
-                    {archive && <span className="repick-kind">{archive.metadata.sourceKind}</span>}
-                  </div>
-                  <Input
-                    value={paths[side]}
-                    placeholder="~/path/to/archive.jar or folder"
-                    onChange={(e) => onPathChange(side, e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") onOpenPath(side, paths[side]); }}
-                  />
-                  <div className="repick-actions">
-                    <Button variant="outline" onClick={() => onBrowse(side)}><FileText /> Browse file</Button>
-                    <Button variant="outline" onClick={() => onBrowseFolder(side)}><Folder /> Browse folder</Button>
-                  </div>
-                  <small>{archive ? archive.path : "No source loaded"}</small>
-                  {pathErrors[side] && <small className="path-error">{pathErrors[side]}</small>}
-                </div>
-              </PopoverContent>
-            </Popover>
-          </span>
-        );
-      })}
+    <div className="source-chips" data-mode={mode}>
+      {renderChip("left")}
+      {mode === "compare" && <ArrowLeftRight className="chip-sep" aria-hidden="true" />}
+      {mode === "compare" && renderChip("right")}
     </div>
   );
 }

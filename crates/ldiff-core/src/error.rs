@@ -4,7 +4,7 @@ use std::path::PathBuf;
 pub enum Error {
     #[error("path is empty")]
     EmptyPath,
-    #[error("file not found: {0}")]
+    #[error("File/Folder not found: {0}")]
     FileNotFound(PathBuf),
     #[error("path is not a file: {0}")]
     NotAFile(PathBuf),
