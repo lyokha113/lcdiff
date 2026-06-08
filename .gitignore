@@ -1,6 +1,7 @@
 .DS_Store
 
 # Local agent/index state.
+.claude/
 .codegraph/
 .serena/
 .superpowers/
