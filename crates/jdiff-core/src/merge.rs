@@ -586,4 +586,22 @@ mod stage_write_tests {
         assert!(plan.unstage("a.txt").unwrap());
         assert!(plan.staged().is_empty());
     }
+
+    #[test]
+    fn restaging_same_target_replaces_regardless_of_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = write_zip(dir.path(), "src.jar", &[("a.txt", b"FROM_SOURCE")]);
+        let source = Archive::open(src.to_str().unwrap()).unwrap();
+
+        let mut plan = MergePlan::new();
+        plan.stage_write("a.txt", b"edited".to_vec()).unwrap();
+        plan.stage_copy(&source, "a.txt", "a.txt").unwrap();
+        assert_eq!(plan.staged().len(), 1);
+        assert_eq!(plan.staged()[0].kind(), StagedKind::Copy);
+
+        // re-stage the other way: copy then write -> Write wins
+        plan.stage_write("a.txt", b"edited2".to_vec()).unwrap();
+        assert_eq!(plan.staged().len(), 1);
+        assert_eq!(plan.staged()[0].kind(), StagedKind::Write);
+    }
 }
