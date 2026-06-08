@@ -325,7 +325,7 @@ if (!frontend.includes('{mode === "compare" &&') || !frontend.includes('Keep one
 const changeModeBody = app.match(/function changeMode\(next: Mode\) {([\s\S]*?)\n  }/)?.[1] ?? "";
 if (
   !changeModeBody.includes('next === "single" && stagedTarget') ||
-  !changeModeBody.includes("Save or clear staged copies before switching to Single mode.") ||
+  !changeModeBody.includes("Save or clear unsaved changes before switching to Single mode.") ||
   !changeModeBody.includes("diffEditorRef.current?.setModel(null);") ||
   !changeModeBody.includes("setMode(next);")
 ) {
