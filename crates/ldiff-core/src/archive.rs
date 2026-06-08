@@ -136,20 +136,18 @@ impl Archive {
 
     fn open_single_file(path: PathBuf) -> Result<Self> {
         let file_metadata = fs::metadata(&path)?;
-        let bytes = fs::read(&path)?;
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "file".to_owned());
         let normalized = normalize_archive_entry_path(&name)?;
-        let mut hasher = Hasher::new();
-        hasher.update(&bytes);
-        let crc32 = hasher.finalize();
+        let crc32 = crc32_for_file(&path)?;
+        let size = file_metadata.len();
         let entry = ArchiveEntry {
             path: normalized.clone(),
             kind: detect_entry_kind(&normalized, false),
-            uncompressed_size: bytes.len() as u64,
-            compressed_size: bytes.len() as u64,
+            uncompressed_size: size,
+            compressed_size: size,
             crc32,
         };
         let mut entries = BTreeMap::new();
@@ -229,9 +227,6 @@ impl Archive {
         }
         if self.metadata.source_kind == ArchiveSourceKind::File {
             return fs::read(&self.path).map_err(Error::from);
-        }
-        if !self.entries.contains_key(&normalized) {
-            return Err(Error::EntryNotFound(normalized));
         }
         let source_path = self
             .source_paths
@@ -378,6 +373,18 @@ fn map_zip_entry_error(error: ZipError, entry: String) -> Error {
     }
 }
 
+/// True when the file begins with a ZIP signature (local header, EOCD, or
+/// spanned marker). Used to route archive vs single-file open.
+fn path_is_zip(path: &Path) -> Result<bool> {
+    let mut header = [0u8; 4];
+    let mut file = File::open(path)?;
+    let read = file.read(&mut header)?;
+    if read < 4 {
+        return Ok(false);
+    }
+    Ok(matches!(&header, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08"))
+}
+
 #[cfg(test)]
 mod source_kind_tests {
     use super::*;
@@ -422,18 +429,6 @@ mod open_tests {
         let archive = Archive::open(jar.to_string_lossy()).unwrap();
         assert_eq!(archive.metadata().source_kind, ArchiveSourceKind::Archive);
     }
-}
-
-/// True when the file begins with a ZIP signature (local header, EOCD, or
-/// spanned marker). Used to route archive vs single-file open.
-fn path_is_zip(path: &Path) -> Result<bool> {
-    let mut header = [0u8; 4];
-    let mut file = File::open(path)?;
-    let read = file.read(&mut header)?;
-    if read < 4 {
-        return Ok(false);
-    }
-    Ok(matches!(&header, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08"))
 }
 
 fn local_header_uses_zip64(file: &mut File, header_start: u64) -> Result<bool> {
