@@ -17,8 +17,8 @@ assembly, sidecar smoke, Tauri .app build, inside-out signing, optional
 Developer ID notarization when Apple credentials are present, final app
 promotion, and DMG packaging.
 
-Set JDIFF_JLINK_<TARGET> (for example
-JDIFF_JLINK_X86_64_APPLE_DARWIN) to provide a target-specific JDK when
+Set LDIFF_JLINK_<TARGET> (for example
+LDIFF_JLINK_X86_64_APPLE_DARWIN) to provide a target-specific JDK when
 cross-building. The runner verifies the JDK java binary, app executable, and
 bundled JRE all match the requested Mach-O architecture.
 USAGE
@@ -139,26 +139,26 @@ require_command ditto
 require_command xcrun
 
 EXPECTED_ARCH="$(expected_macho_arch "$TARGET")"
-TARGET_JLINK_ENV="JDIFF_JLINK_$(printf '%s' "$TARGET" | tr '[:lower:]-' '[:upper:]_')"
+TARGET_JLINK_ENV="LDIFF_JLINK_$(printf '%s' "$TARGET" | tr '[:lower:]-' '[:upper:]_')"
 TARGET_JLINK="${!TARGET_JLINK_ENV:-}"
 if [[ -n "$TARGET_JLINK" ]]; then
-  export JDIFF_JLINK="$TARGET_JLINK"
+  export LDIFF_JLINK="$TARGET_JLINK"
 fi
 
-if [[ -z "${JDIFF_JLINK:-}" ]]; then
+if [[ -z "${LDIFF_JLINK:-}" ]]; then
   if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/jlink" ]]; then
-    export JDIFF_JLINK="$JAVA_HOME/bin/jlink"
+    export LDIFF_JLINK="$JAVA_HOME/bin/jlink"
   elif command -v jlink >/dev/null 2>&1; then
-    export JDIFF_JLINK="$(command -v jlink)"
+    export LDIFF_JLINK="$(command -v jlink)"
   else
-    printf 'JDIFF_JLINK is unset and jlink was not found. Install Java 17 or set JDIFF_JLINK.\n' >&2
+    printf 'LDIFF_JLINK is unset and jlink was not found. Install Java 17 or set LDIFF_JLINK.\n' >&2
     exit 1
   fi
 fi
 
-JLINK_JAVA="$(dirname "$JDIFF_JLINK")/java"
+JLINK_JAVA="$(dirname "$LDIFF_JLINK")/java"
 step "verify jlink architecture"
-assert_macho_arch "JDIFF_JLINK java" "$JLINK_JAVA" "$EXPECTED_ARCH"
+assert_macho_arch "LDIFF_JLINK java" "$JLINK_JAVA" "$EXPECTED_ARCH"
 
 if [[ "$SKIP_INSTALL" == "0" ]]; then
   step "npm ci"
@@ -181,12 +181,12 @@ if [[ "$SKIP_BUILD" == "0" ]]; then
 fi
 BUILD_STATUS="$([[ "$SKIP_BUILD" == "0" ]] && printf executed || printf skipped)"
 
-APP_PATH="target/$TARGET/release/bundle/macos/jdiff.app"
-DMG_PATH="target/$TARGET/release/bundle/dmg/jdiff-$TARGET.dmg"
+APP_PATH="target/$TARGET/release/bundle/macos/LDiff.app"
+DMG_PATH="target/$TARGET/release/bundle/dmg/LDiff-$TARGET.dmg"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-VALIDATION_DIR="${TMPDIR:-/tmp}/jdiff-macos-validation-$TARGET-$timestamp"
-SIGNED_APP_PATH="$VALIDATION_DIR/jdiff-signed.app"
-FINAL_APP_PATH="$VALIDATION_DIR/jdiff.app"
+VALIDATION_DIR="${TMPDIR:-/tmp}/ldiff-macos-validation-$TARGET-$timestamp"
+SIGNED_APP_PATH="$VALIDATION_DIR/LDiff-signed.app"
+FINAL_APP_PATH="$VALIDATION_DIR/LDiff.app"
 mkdir -p "$OUTPUT_DIR"
 rm -rf "$VALIDATION_DIR"
 mkdir -p "$VALIDATION_DIR"
@@ -197,7 +197,7 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-APP_EXECUTABLE="$APP_PATH/Contents/MacOS/jdiff-desktop"
+APP_EXECUTABLE="$APP_PATH/Contents/MacOS/ldiff-desktop"
 BUNDLED_JAVA="$APP_PATH/Contents/Resources/resources/jre/bin/java"
 
 step "verify macOS bundle architecture"
@@ -239,7 +239,7 @@ codesign --verify --deep --strict --verbose=2 "$FINAL_APP_PATH"
 codesign -d --entitlements - "$FINAL_APP_PATH"
 
 step "verify mounted macOS DMG app"
-MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jdiff-dmg-mount.XXXXXX")"
+MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ldiff-dmg-mount.XXXXXX")"
 cleanup_mount() {
   if mount | grep -F "$MOUNT_DIR" >/dev/null 2>&1; then
     hdiutil detach "$MOUNT_DIR" >/dev/null
@@ -248,9 +248,9 @@ cleanup_mount() {
 }
 trap cleanup_mount EXIT
 hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_DIR" -nobrowse -readonly >/dev/null
-test -d "$MOUNT_DIR/jdiff.app"
+test -d "$MOUNT_DIR/LDiff.app"
 test -L "$MOUNT_DIR/Applications"
-codesign --verify --deep --strict --verbose=2 "$MOUNT_DIR/jdiff.app"
+codesign --verify --deep --strict --verbose=2 "$MOUNT_DIR/LDiff.app"
 cleanup_mount
 trap - EXIT
 
@@ -272,7 +272,7 @@ cat > "$REPORT_PATH" <<REPORT
 - Validation app: \`$FINAL_APP_PATH\`
 - DMG: \`$DMG_PATH\`
 - Target-specific JLINK env: \`$TARGET_JLINK_ENV\`
-- JLINK: \`$JDIFF_JLINK\`
+- JLINK: \`$LDIFF_JLINK\`
 - Expected Mach-O arch: \`$EXPECTED_ARCH\`
 - Timestamp UTC: \`$timestamp\`
 
@@ -297,9 +297,9 @@ cat > "$REPORT_PATH" <<REPORT
 - \`clean_bundle_xattrs "$FINAL_APP_PATH"\` after DMG packaging
 - post-DMG \`codesign --verify --deep --strict --verbose=2 "$FINAL_APP_PATH"\`
 - post-DMG \`codesign -d --entitlements - "$FINAL_APP_PATH"\`
-- mounted DMG contains \`jdiff.app\`
+- mounted DMG contains \`LDiff.app\`
 - mounted DMG contains \`Applications\` symlink
-- mounted DMG \`codesign --verify --deep --strict --verbose=2 jdiff.app\`
+- mounted DMG \`codesign --verify --deep --strict --verbose=2 LDiff.app\`
 - post-mount \`clean_bundle_xattrs "$FINAL_APP_PATH"\`
 - post-mount \`codesign --verify --deep --strict --verbose=2 "$FINAL_APP_PATH"\`
 - post-mount \`codesign -d --entitlements - "$FINAL_APP_PATH"\`

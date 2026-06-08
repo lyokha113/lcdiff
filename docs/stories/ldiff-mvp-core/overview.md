@@ -18,7 +18,7 @@ the core can be exercised before the desktop shell is complete.
 
 ## Affected Product Docs
 
-- `docs/product/jdiff-product-contract.md`
+- `docs/product/ldiff-product-contract.md`
 
 ## Non-Goals
 

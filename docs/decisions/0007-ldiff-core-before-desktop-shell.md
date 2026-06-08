@@ -1,4 +1,4 @@
-# Decision 0007: Build jdiff Core Before Desktop Shell
+# Decision 0007: Build LDiff Core Before Desktop Shell
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The jdiff specification selects Tauri v2, React, a Rust backend, and a JVM
+The LDiff specification selects Tauri v2, React, a Rust backend, and a JVM
 sidecar. The destructive operation is archive replacement after staged merge.
 The repository starts with no application code.
 
@@ -14,7 +14,7 @@ The repository starts with no application code.
 
 Implement archive rules as a framework-independent Rust crate before wiring
 Tauri. Keep archive indexing, diff, search, staged merge, and atomic save in
-`jdiff-core`. Expose a small CLI for deterministic smoke verification.
+`ldiff-core`. Expose a small CLI for deterministic smoke verification.
 
 ## Consequences
 

@@ -6,10 +6,10 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-APP="${1:?usage: scripts/package-macos-dmg.sh /path/to/jdiff.app /path/to/output.dmg [volume-name]}"
-DMG="${2:?usage: scripts/package-macos-dmg.sh /path/to/jdiff.app /path/to/output.dmg [volume-name]}"
-VOLUME_NAME="${3:-jdiff}"
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/jdiff-dmg.XXXXXX")"
+APP="${1:?usage: scripts/package-macos-dmg.sh /path/to/LDiff.app /path/to/output.dmg [volume-name]}"
+DMG="${2:?usage: scripts/package-macos-dmg.sh /path/to/LDiff.app /path/to/output.dmg [volume-name]}"
+VOLUME_NAME="${3:-LDiff}"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ldiff-dmg.XXXXXX")"
 STAGING_DIR="$WORK_DIR/staging"
 
 clean_app_xattrs() {

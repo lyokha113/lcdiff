@@ -1,14 +1,14 @@
-# jdiff JVM Sidecar
+# LDiff JVM Sidecar
 
 Build:
 
 ```bash
-rtk mvn -f sidecar/pom.xml package
+mvn -f sidecar/pom.xml package
 ```
 
-The shaded artifact is `sidecar/target/jdiff-sidecar-0.1.0.jar`. It uses the
+The shaded artifact is `sidecar/target/ldiff-sidecar-0.1.0.jar`. It uses the
 same `[u32 big-endian length][JSON]` framing as
-`jdiff-core::sidecar_protocol`.
+`ldiff-core::sidecar_protocol`.
 
 Actions:
 
@@ -24,8 +24,8 @@ also be smoke-tested on older development runtimes.
 Build the runtime with a Java 17+ `jlink` executable:
 
 ```bash
-JDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
-  rtk scripts/assemble-sidecar-resources.sh
-JDIFF_JAVA=src-tauri/resources/jre/bin/java \
-  rtk scripts/test-sidecar-smoke.sh
+LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+  scripts/assemble-sidecar-resources.sh
+LDIFF_JAVA=src-tauri/resources/jre/bin/java \
+  scripts/test-sidecar-smoke.sh
 ```

@@ -36,12 +36,12 @@ describe("loadHistory", () => {
   });
 
   it("returns [] on malformed JSON instead of throwing", () => {
-    localStorage.setItem("jdiff.history", "{not json");
+    localStorage.setItem("ldiff.history", "{not json");
     expect(loadHistory()).toEqual([]);
   });
 
   it("returns [] when stored value is not an array", () => {
-    localStorage.setItem("jdiff.history", JSON.stringify({ nope: true }));
+    localStorage.setItem("ldiff.history", JSON.stringify({ nope: true }));
     expect(loadHistory()).toEqual([]);
   });
 });

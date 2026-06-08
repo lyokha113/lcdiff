@@ -8,7 +8,7 @@ NO_LAUNCH=0
 
 usage() {
   cat <<'USAGE'
-usage: scripts/verify-linux-display-matrix.sh --app /path/to/jdiff [--sample /path/to/sample.jar] [--output-dir platform-validation] [--no-launch]
+usage: scripts/verify-linux-display-matrix.sh --app /path/to/LDiff [--sample /path/to/sample.jar] [--output-dir platform-validation] [--no-launch]
 
 Runs the Linux display-server validation checklist for the current compositor
 session and writes a Markdown evidence report. This script records manual
@@ -58,7 +58,7 @@ if [[ -z "$APP" ]]; then
 fi
 
 if [[ ! -x "$APP" ]]; then
-  printf 'jdiff executable not found or not executable: %s\n' "$APP" >&2
+  printf 'LDiff executable not found or not executable: %s\n' "$APP" >&2
   exit 1
 fi
 
@@ -93,12 +93,12 @@ launch_app() {
   fi
 
   if [[ "$mode" == "xwayland" ]]; then
-    JDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh "$APP" &
+    LDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh "$APP" &
   else
     "$APP" &
   fi
   app_pid="$!"
-  printf 'Launched jdiff (%s) with pid %s. Use the window for the checks below.\n' "$mode" "$app_pid"
+  printf 'Launched LDiff (%s) with pid %s. Use the window for the checks below.\n' "$mode" "$app_pid"
   sleep 2
 }
 
@@ -159,7 +159,7 @@ if [[ -n "$wayland_display" ]]; then
 | --- | --- | --- |
 REPORT
   launch_app "xwayland"
-  printf '\nWayland detected. XWayland fallback checks with JDIFF_FORCE_XWAYLAND=1.\n'
+  printf '\nWayland detected. XWayland fallback checks with LDIFF_FORCE_XWAYLAND=1.\n'
   ask_result "XWayland fallback launch"
   ask_result "XWayland Browse open"
   ask_result "XWayland path input open"

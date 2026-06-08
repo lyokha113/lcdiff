@@ -1,17 +1,17 @@
 # Architecture
 
-## jdiff Application Shape
+## LDiff Application Shape
 
 ```text
 React + shadcn/ui + Tailwind v4 + Monaco desktop view
   -> Tauri IPC adapter
-    -> jdiff-core Rust domain/application crate
+    -> ldiff-core Rust domain/application crate
       -> lazy ZIP/JAR reads and atomic rewrite
       -> length-prefixed JSON sidecar protocol
         -> bundled JVM service: CFR, Vineflower, ASM Textifier
 ```
 
-`jdiff-core` owns archive metadata, normalized entries, CRC diff, class
+`ldiff-core` owns archive metadata, normalized entries, CRC diff, class
 constant-pool search, staged changes, and save semantics. Frontend and CLI code
 are adapters. Decompiled Java is a view only and must never enter merge writes.
 
@@ -31,9 +31,8 @@ implements CFR decompile, a reflective Vineflower adapter, and ASM Textifier.
 `scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
 and copies the shaded sidecar JAR into Tauri resources. Release verification is
 split between local invariants and external platform gates. Locally,
-`npm run verify:release-workflow` checks the release matrix, signing guards, and
-artifact order; `npm run verify:packaging-scripts` checks the macOS/Windows
-helper-script contracts that cannot all execute on one host.
+`npm run verify:packaging-scripts` checks the macOS/Windows helper-script
+contracts that cannot all execute on one host.
 `scripts/sign-macos-bundle.sh` stages a clean copy outside FileProvider
 directories, signs JRE Mach-O children inside-out, signs the outer `.app`,
 verifies the result, and can copy the signed app back to a deterministic output

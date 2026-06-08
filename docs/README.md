@@ -1,6 +1,6 @@
 # Documentation Map
 
-This directory holds the project harness and the `jdiff` product contract
+This directory holds the project harness and the `LDiff` product contract
 derived from the input spec.
 
 ## Main Files
@@ -16,7 +16,7 @@ derived from the input spec.
 
 ## Folders
 
-- `product/`: current product truth — holds `jdiff-product-contract.md`.
+- `product/`: current product truth — holds `ldiff-product-contract.md`.
 - `stories/`: feature packets and backlog.
 - `decisions/`: durable decisions and tradeoffs.
 - `demo/`: concrete walkthroughs that show how the harness transforms input
@@ -26,8 +26,8 @@ derived from the input spec.
 
 ## Current State
 
-`jdiff` is implemented: Rust `jdiff-core` + `jdiff-cli`, a Tauri v2 desktop
+`LDiff` is implemented: Rust `ldiff-core` + `ldiff-cli`, a Tauri v2 desktop
 shell, and a JVM decompiler sidecar. These docs describe the product contract,
 architecture, validation, and the agent harness that operate it. See
 `../README.md` for the build and platform-validation commands and
-`JDIFF_COMPLETION_AUDIT.md` for proof evidence.
+`LDIFF_COMPLETION_AUDIT.md` for proof evidence.

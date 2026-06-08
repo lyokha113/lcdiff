@@ -1,5 +1,5 @@
 [package]
-name = "jdiff-cli"
+name = "ldiff-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-jdiff-core = { path = "../jdiff-core" }
+ldiff-core = { path = "../ldiff-core" }
 serde_json.workspace = true
 
 [dev-dependencies]

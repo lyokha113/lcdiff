@@ -6,7 +6,7 @@
 
 **Architecture:** Approach A — temp-extract on demand. A new `EntryKind::Archive` marks expandable entries. A `NestedArchiveCache` (per side, in `AppState`) extracts a nested archive's bytes to a temp file and opens it as a real `Archive`, so existing path-based machinery (`compare`, `read_entry`, decompile sidecar, search) keeps working. Nested entry paths use the JAR `!/` boundary marker. Merge commit recursively repacks: inner replacements rebuild the nested jar bytes, which become the parent's top-level replacement.
 
-**Tech Stack:** Rust (`jdiff-core`, `src-tauri` Tauri commands, `zip` crate, `tempfile`), TypeScript/React frontend (Vitest).
+**Tech Stack:** Rust (`ldiff-core`, `src-tauri` Tauri commands, `zip` crate, `tempfile`), TypeScript/React frontend (Vitest).
 
 **Conventions:** TDD per task. Every commit message ends with the trailer:
 ```
@@ -18,7 +18,7 @@ Work happens on branch `feat/nested-archive-expand`.
 
 ## File Structure
 
-**Core (`crates/jdiff-core/`):**
+**Core (`crates/ldiff-core/`):**
 - `src/detect.rs` — add `EntryKind::Archive`; map `jar|zip|war|ear` to it.
 - `src/nested.rs` — **NEW**: `ARCHIVE_SEPARATOR`, `is_nested`, `NestedArchiveCache` (extraction).
 - `src/merge.rs` — bytes-based zip helpers + recursive `apply_nested_replacements` + `flatten_nested_replacements`; nested-aware `read_replacements`; relax `stage_copy` for nested; wire into `commit`.
@@ -45,12 +45,12 @@ Work happens on branch `feat/nested-archive-expand`.
 ### Task 1: Add `EntryKind::Archive`
 
 **Files:**
-- Modify: `crates/jdiff-core/src/detect.rs`
-- Test: `crates/jdiff-core/src/detect.rs` (inline `#[cfg(test)] mod tests`)
+- Modify: `crates/ldiff-core/src/detect.rs`
+- Test: `crates/ldiff-core/src/detect.rs` (inline `#[cfg(test)] mod tests`)
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/jdiff-core/src/detect.rs`:
+Append to `crates/ldiff-core/src/detect.rs`:
 
 ```rust
 #[cfg(test)]
@@ -71,12 +71,12 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p jdiff-core detect`
+Run: `cargo test -p ldiff-core detect`
 Expected: FAIL — `no variant named Archive found for enum EntryKind`.
 
 - [ ] **Step 3: Implement**
 
-In `crates/jdiff-core/src/detect.rs`, add `Archive` to the enum and a match arm:
+In `crates/ldiff-core/src/detect.rs`, add `Archive` to the enum and a match arm:
 
 ```rust
 pub enum EntryKind {
@@ -98,18 +98,18 @@ In `detect_entry_kind`, add before the `Some("class")` arm or alongside the text
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p jdiff-core detect`
+Run: `cargo test -p ldiff-core detect`
 Expected: PASS.
 
 - [ ] **Step 5: Fix exhaustive matches**
 
-Run: `cargo build -p jdiff-core`
-Expected: may FAIL where `EntryKind` is matched exhaustively. Known site: `crates/jdiff-core/src/archive.rs` `read_entry` only checks `== EntryKind::Directory` (no exhaustive match — OK). If the build reports a non-exhaustive match anywhere in `jdiff-core`, add an `EntryKind::Archive => …` arm mirroring `EntryKind::Binary`. Re-run `cargo build -p jdiff-core` until green.
+Run: `cargo build -p ldiff-core`
+Expected: may FAIL where `EntryKind` is matched exhaustively. Known site: `crates/ldiff-core/src/archive.rs` `read_entry` only checks `== EntryKind::Directory` (no exhaustive match — OK). If the build reports a non-exhaustive match anywhere in `ldiff-core`, add an `EntryKind::Archive => …` arm mirroring `EntryKind::Binary`. Re-run `cargo build -p ldiff-core` until green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/jdiff-core/src/detect.rs
+git add crates/ldiff-core/src/detect.rs
 git commit -m "feat(core): add EntryKind::Archive for jar/zip/war/ear
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -120,13 +120,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 2: Nested path utilities
 
 **Files:**
-- Create: `crates/jdiff-core/src/nested.rs`
-- Modify: `crates/jdiff-core/src/lib.rs`
-- Test: in `crates/jdiff-core/src/nested.rs`
+- Create: `crates/ldiff-core/src/nested.rs`
+- Modify: `crates/ldiff-core/src/lib.rs`
+- Test: in `crates/ldiff-core/src/nested.rs`
 
 - [ ] **Step 1: Write the failing test + module skeleton**
 
-Create `crates/jdiff-core/src/nested.rs`:
+Create `crates/ldiff-core/src/nested.rs`:
 
 ```rust
 //! On-demand extraction of nested archives to temp files.
@@ -154,7 +154,7 @@ mod tests {
 
 - [ ] **Step 2: Register the module**
 
-In `crates/jdiff-core/src/lib.rs`, add `mod nested;` (alphabetical, after `mod merge;`) and export:
+In `crates/ldiff-core/src/lib.rs`, add `mod nested;` (alphabetical, after `mod merge;`) and export:
 
 ```rust
 pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
@@ -164,13 +164,13 @@ pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
 
 - [ ] **Step 3: Run test to verify it passes**
 
-Run: `cargo test -p jdiff-core nested`
+Run: `cargo test -p ldiff-core nested`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/jdiff-core/src/nested.rs crates/jdiff-core/src/lib.rs
+git add crates/ldiff-core/src/nested.rs crates/ldiff-core/src/lib.rs
 git commit -m "feat(core): nested archive path helpers
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -183,11 +183,11 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 3: Promote `tempfile` to a runtime dependency
 
 **Files:**
-- Modify: `crates/jdiff-core/Cargo.toml`
+- Modify: `crates/ldiff-core/Cargo.toml`
 
 - [ ] **Step 1: Edit Cargo.toml**
 
-In `crates/jdiff-core/Cargo.toml`, add to `[dependencies]` (keep alphabetical):
+In `crates/ldiff-core/Cargo.toml`, add to `[dependencies]` (keep alphabetical):
 
 ```toml
 tempfile.workspace = true
@@ -197,13 +197,13 @@ It is already under `[dev-dependencies]`; leave that line too (harmless duplicat
 
 - [ ] **Step 2: Verify it builds**
 
-Run: `cargo build -p jdiff-core`
+Run: `cargo build -p ldiff-core`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/jdiff-core/Cargo.toml
+git add crates/ldiff-core/Cargo.toml
 git commit -m "build(core): make tempfile a runtime dependency
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -214,18 +214,18 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 4: `NestedArchiveCache` extraction
 
 **Files:**
-- Modify: `crates/jdiff-core/src/nested.rs`
-- Modify: `crates/jdiff-core/src/lib.rs`
-- Test: `crates/jdiff-core/tests/core.rs`
+- Modify: `crates/ldiff-core/src/nested.rs`
+- Modify: `crates/ldiff-core/src/lib.rs`
+- Test: `crates/ldiff-core/tests/core.rs`
 
 - [ ] **Step 1: Write the failing integration test**
 
-First note the existing test helper `create_zip(path, &[(name, bytes)])` in `crates/jdiff-core/tests/core.rs`. Append this test (it builds an outer jar containing an inner jar as a stored entry):
+First note the existing test helper `create_zip(path, &[(name, bytes)])` in `crates/ldiff-core/tests/core.rs`. Append this test (it builds an outer jar containing an inner jar as a stored entry):
 
 ```rust
 #[test]
 fn resolves_one_and_two_level_nested_entries() {
-    use jdiff_core::NestedArchiveCache;
+    use ldiff_core::NestedArchiveCache;
     use std::io::Read as _;
 
     let dir = tempdir().unwrap();
@@ -269,7 +269,7 @@ fn resolves_one_and_two_level_nested_entries() {
 
 #[test]
 fn resolve_archive_opens_nested_archive_directly() {
-    use jdiff_core::NestedArchiveCache;
+    use ldiff_core::NestedArchiveCache;
 
     let dir = tempdir().unwrap();
     let inner_path = dir.path().join("inner.jar");
@@ -289,12 +289,12 @@ If `create_zip` in `tests/core.rs` does not accept `&[u8]` slices of varying sou
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p jdiff-core --test core resolves_one_and_two_level`
+Run: `cargo test -p ldiff-core --test core resolves_one_and_two_level`
 Expected: FAIL — `NestedArchiveCache` / `resolve` not found.
 
 - [ ] **Step 3: Implement `NestedArchiveCache`**
 
-In `crates/jdiff-core/src/nested.rs`, add above the `#[cfg(test)]` block:
+In `crates/ldiff-core/src/nested.rs`, add above the `#[cfg(test)]` block:
 
 ```rust
 use std::{collections::HashMap, fs, path::PathBuf};
@@ -371,11 +371,11 @@ impl NestedArchiveCache {
 }
 ```
 
-`Archive::open_validated` is already `pub` (used in `archive.rs`); confirm with `grep -n "pub fn open_validated" crates/jdiff-core/src/archive.rs`. If it is not `pub`, make it `pub`.
+`Archive::open_validated` is already `pub` (used in `archive.rs`); confirm with `grep -n "pub fn open_validated" crates/ldiff-core/src/archive.rs`. If it is not `pub`, make it `pub`.
 
 - [ ] **Step 4: Export it**
 
-In `crates/jdiff-core/src/lib.rs`, extend the nested export to:
+In `crates/ldiff-core/src/lib.rs`, extend the nested export to:
 
 ```rust
 pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
@@ -383,7 +383,7 @@ pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p jdiff-core --test core nested ; cargo test -p jdiff-core --test core resolve`
+Run: `cargo test -p ldiff-core --test core nested ; cargo test -p ldiff-core --test core resolve`
 Expected: PASS for `resolves_one_and_two_level_nested_entries` and `resolve_archive_opens_nested_archive_directly`.
 
 (If the `let _ = (&mut cache, Read::read);` line causes a warning/error, delete it and the `use std::io::Read as _;` line — they are only there to avoid an unused-import lint; remove if unused.)
@@ -391,7 +391,7 @@ Expected: PASS for `resolves_one_and_two_level_nested_entries` and `resolve_arch
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/jdiff-core/src/nested.rs crates/jdiff-core/src/lib.rs crates/jdiff-core/tests/core.rs
+git add crates/ldiff-core/src/nested.rs crates/ldiff-core/src/lib.rs crates/ldiff-core/tests/core.rs
 git commit -m "feat(core): NestedArchiveCache extracts nested archives on demand
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -404,17 +404,17 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 5: Bytes-based zip read/rewrite helpers
 
 **Files:**
-- Modify: `crates/jdiff-core/src/merge.rs`
-- Test: `crates/jdiff-core/tests/core.rs`
+- Modify: `crates/ldiff-core/src/merge.rs`
+- Test: `crates/ldiff-core/tests/core.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/jdiff-core/tests/core.rs`:
+Append to `crates/ldiff-core/tests/core.rs`:
 
 ```rust
 #[test]
 fn rewrite_zip_bytes_replaces_entry() {
-    use jdiff_core::{read_zip_entry_from_bytes, rewrite_zip_bytes};
+    use ldiff_core::{read_zip_entry_from_bytes, rewrite_zip_bytes};
     use std::collections::BTreeMap;
 
     let dir = tempdir().unwrap();
@@ -433,12 +433,12 @@ fn rewrite_zip_bytes_replaces_entry() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p jdiff-core --test core rewrite_zip_bytes`
+Run: `cargo test -p ldiff-core --test core rewrite_zip_bytes`
 Expected: FAIL — functions not found.
 
 - [ ] **Step 3: Implement helpers in `merge.rs`**
 
-Add to `crates/jdiff-core/src/merge.rs` (and to imports: `use std::io::Cursor;` and `use crate::{... , nested::ARCHIVE_SEPARATOR}` will be needed in Task 6; for now just `Cursor`). Add these public functions:
+Add to `crates/ldiff-core/src/merge.rs` (and to imports: `use std::io::Cursor;` and `use crate::{... , nested::ARCHIVE_SEPARATOR}` will be needed in Task 6; for now just `Cursor`). Add these public functions:
 
 ```rust
 /// Read a single entry's bytes from an in-memory zip.
@@ -498,7 +498,7 @@ pub fn rewrite_zip_bytes(
 
 - [ ] **Step 4: Export the helpers**
 
-In `crates/jdiff-core/src/lib.rs`, extend the merge export line to include them:
+In `crates/ldiff-core/src/lib.rs`, extend the merge export line to include them:
 
 ```rust
 pub use merge::{
@@ -509,13 +509,13 @@ pub use merge::{
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cargo test -p jdiff-core --test core rewrite_zip_bytes`
+Run: `cargo test -p ldiff-core --test core rewrite_zip_bytes`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/jdiff-core/src/merge.rs crates/jdiff-core/src/lib.rs crates/jdiff-core/tests/core.rs
+git add crates/ldiff-core/src/merge.rs crates/ldiff-core/src/lib.rs crates/ldiff-core/tests/core.rs
 git commit -m "feat(core): in-memory zip read/rewrite helpers
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -526,17 +526,17 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ### Task 6: Recursive repack + nested-aware commit
 
 **Files:**
-- Modify: `crates/jdiff-core/src/merge.rs`
-- Test: `crates/jdiff-core/tests/core.rs`
+- Modify: `crates/ldiff-core/src/merge.rs`
+- Test: `crates/ldiff-core/tests/core.rs`
 
 - [ ] **Step 1: Write the failing integration test**
 
-Append to `crates/jdiff-core/tests/core.rs`:
+Append to `crates/ldiff-core/tests/core.rs`:
 
 ```rust
 #[test]
 fn commit_copies_entry_into_nested_jar() {
-    use jdiff_core::read_zip_entry_from_bytes;
+    use ldiff_core::read_zip_entry_from_bytes;
 
     let dir = tempdir().unwrap();
 
@@ -577,12 +577,12 @@ fn commit_copies_entry_into_nested_jar() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p jdiff-core --test core commit_copies_entry_into_nested_jar`
+Run: `cargo test -p ldiff-core --test core commit_copies_entry_into_nested_jar`
 Expected: FAIL — `stage_copy` rejects the nested target (entry not found) or commit produces wrong bytes.
 
 - [ ] **Step 3: Relax `stage_copy` for nested paths**
 
-In `crates/jdiff-core/src/merge.rs`, add `use crate::{... is_nested}` (extend the existing `use crate::{...}` line to include `is_nested`). Change `MergePlan::stage_copy` so the source-entry existence/directory check is skipped for nested source paths:
+In `crates/ldiff-core/src/merge.rs`, add `use crate::{... is_nested}` (extend the existing `use crate::{...}` line to include `is_nested`). Change `MergePlan::stage_copy` so the source-entry existence/directory check is skipped for nested source paths:
 
 ```rust
     pub fn stage_copy(
@@ -622,7 +622,7 @@ In `crates/jdiff-core/src/merge.rs`, add `use crate::{... is_nested}` (extend th
 
 - [ ] **Step 4: Make `read_replacements` resolve nested sources**
 
-In `crates/jdiff-core/src/merge.rs`, add `use crate::NestedArchiveCache;` (or `crate::nested::NestedArchiveCache`). Replace `read_replacements`:
+In `crates/ldiff-core/src/merge.rs`, add `use crate::NestedArchiveCache;` (or `crate::nested::NestedArchiveCache`). Replace `read_replacements`:
 
 ```rust
     fn read_replacements(&self) -> Result<BTreeMap<String, Vec<u8>>> {
@@ -641,7 +641,7 @@ In `crates/jdiff-core/src/merge.rs`, add `use crate::NestedArchiveCache;` (or `c
 
 - [ ] **Step 5: Add recursive repack + flatten**
 
-In `crates/jdiff-core/src/merge.rs`, add these free functions (near `rewrite_archive`):
+In `crates/ldiff-core/src/merge.rs`, add these free functions (near `rewrite_archive`):
 
 ```rust
 /// Apply replacements (keys relative to `archive_bytes`, possibly nested via
@@ -746,13 +746,13 @@ and the archive branch:
 
 - [ ] **Step 7: Run tests to verify they pass**
 
-Run: `cargo test -p jdiff-core`
+Run: `cargo test -p ldiff-core`
 Expected: PASS, including `commit_copies_entry_into_nested_jar` and all pre-existing merge tests (verify no regression — the non-nested path now flows through `flatten_nested_replacements`, which is a no-op when no key contains `!/`).
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/jdiff-core/src/merge.rs crates/jdiff-core/tests/core.rs
+git add crates/ldiff-core/src/merge.rs crates/ldiff-core/tests/core.rs
 git commit -m "feat(core): recursive repack to commit copies into nested archives
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -771,7 +771,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 In `src-tauri/src/main.rs`:
 
-1. Extend the `jdiff_core` import to add `NestedArchiveCache, compute as _?` — specifically add `NestedArchiveCache` and `ArchiveDiff` is already imported. Add `NestedArchiveCache` to the `use jdiff_core::{...}` list.
+1. Extend the `ldiff_core` import to add `NestedArchiveCache, compute as _?` — specifically add `NestedArchiveCache` and `ArchiveDiff` is already imported. Add `NestedArchiveCache` to the `use ldiff_core::{...}` list.
 2. Add fields to `struct AppState`:
 
 ```rust
@@ -834,7 +834,7 @@ fn resolve_side_entry(
 
 - [ ] **Step 3: Verify it builds (commands not yet using it)**
 
-Run: `cargo build -p jdiff-tauri 2>/dev/null || cargo build --manifest-path src-tauri/Cargo.toml`
+Run: `cargo build -p ldiff-tauri 2>/dev/null || cargo build --manifest-path src-tauri/Cargo.toml`
 Expected: PASS (the helper may warn as unused — acceptable for this step; it is used in Task 8 next).
 
 - [ ] **Step 4: Commit**
@@ -968,7 +968,7 @@ fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Op
 }
 
 fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
-    use jdiff_core::{ComparePair, PairStatus};
+    use ldiff_core::{ComparePair, PairStatus};
     let pairs = archive
         .entries()
         .map(|entry| {
@@ -993,7 +993,7 @@ fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
 }
 ```
 
-Add `ComparePair, PairStatus` to the `jdiff_core` import (or use the inline `use` as shown). Ensure `compare` and `ArchiveDiff` are imported (they are).
+Add `ComparePair, PairStatus` to the `ldiff_core` import (or use the inline `use` as shown). Ensure `compare` and `ArchiveDiff` are imported (they are).
 
 - [ ] **Step 5: Register the command**
 
@@ -1397,7 +1397,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Workspace build + all tests**
 
 Run: `cargo test && npm test`
-Expected: PASS across `jdiff-core`, `src-tauri`, and Vitest.
+Expected: PASS across `ldiff-core`, `src-tauri`, and Vitest.
 
 - [ ] **Step 2: Lint/format if the repo enforces it**
 

@@ -2,11 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${JDIFF_JRE_OUT:-$ROOT/src-tauri/resources/jre}"
-JLINK="${JDIFF_JLINK:-jlink}"
+OUT="${LDIFF_JRE_OUT:-$ROOT/src-tauri/resources/jre}"
+JLINK="${LDIFF_JLINK:-jlink}"
 
 if ! command -v "$JLINK" >/dev/null 2>&1; then
-  printf 'jlink not found. Set JDIFF_JLINK to a Java 17+ jlink executable.\n' >&2
+  printf 'jlink not found. Set LDIFF_JLINK to a Java 17+ jlink executable.\n' >&2
   exit 1
 fi
 

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import { chromium } from "playwright";
 
-const port = Number(process.env.JDIFF_FRONTEND_RENDER_PORT ?? 5174);
+const port = Number(process.env.LDIFF_FRONTEND_RENDER_PORT ?? 5174);
 const url = `http://127.0.0.1:${port}`;
 
 function waitForServer() {
@@ -53,7 +53,7 @@ try {
     messages.push(`pageerror: ${error.stack || error.message}`);
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
-  await page.locator("h1", { hasText: "jdiff" }).waitFor({ timeout: 5_000 });
+  await page.locator("h1", { hasText: "LDiff" }).waitFor({ timeout: 5_000 });
   await page.getByRole("button", { name: /Compare \/ Merge/ }).click();
   await page.locator("text=Open a JAR, ZIP, or folder on each side.").waitFor({ timeout: 5_000 });
   const buttonCount = await page.locator("button").count();
@@ -243,7 +243,7 @@ try {
     };
   });
   await mockedPage.goto(url, { waitUntil: "domcontentloaded" });
-  await mockedPage.locator("h1", { hasText: "jdiff" }).waitFor({ timeout: 5_000 });
+  await mockedPage.locator("h1", { hasText: "LDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: /Compare \/ Merge/ }).click();
 
   // Helpers for the new chip-based source UI. The path Input only renders while

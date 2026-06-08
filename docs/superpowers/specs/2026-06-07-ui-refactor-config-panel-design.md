@@ -26,7 +26,7 @@ Refactor so the main view is clean and the **File Tree + Diff dominate the cente
 
 ```
 ┌─ MenuBar ───────────────────────────────────────────────┐
-│ ⬦ jdiff   [Single|Compare]   💾 Save  🗑 Clear  ·2↦   🔍 ⚙ │
+│ ⬦ LDiff   [Single|Compare]   💾 Save  🗑 Clear  ·2↦   🔍 ⚙ │
 ├─ SourceChips (compact, 1 line; click chip → re-pick) ────┤
 │ 📦 app.jar      ⇄      📦 app2.jar                        │
 ├─ SearchBar (collapsible; expands inline, pushes layout) ─┤

@@ -27,7 +27,7 @@ export function MenuBar({
   return (
     <header className="menu-bar">
       <div className="brand">
-        <h1>jdiff</h1>
+        <h1>LDiff</h1>
         <span className="tagline">archive diff · merge</span>
       </div>
       <div className="topbar-controls">

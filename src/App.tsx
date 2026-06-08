@@ -258,7 +258,7 @@ export function App() {
     window
       .onCloseRequested((event) => {
         event.preventDefault();
-        if (!globalThis.confirm("Discard staged archive copies and close jdiff?")) return;
+        if (!globalThis.confirm("Discard staged archive copies and close LDiff?")) return;
         void invoke("clear_staged").then(() => window.destroy());
       })
       .then((stop) => {

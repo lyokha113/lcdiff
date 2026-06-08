@@ -16,7 +16,7 @@ stage_copy -> MergePlan -> commit -> temp rewrite -> fsync -> atomic replace
 
 ## Interface Contract
 
-The initial interface is the `jdiff-core` Rust API and `jdiff-cli`. A Tauri
+The initial interface is the `ldiff-core` Rust API and `ldiff-cli`. A Tauri
 adapter will map the same operations to IPC commands without moving business
 rules into the shell.
 

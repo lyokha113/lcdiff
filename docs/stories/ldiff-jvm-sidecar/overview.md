@@ -12,5 +12,5 @@ work.
 
 ## Affected Product Docs
 
-- `docs/product/jdiff-product-contract.md`
+- `docs/product/ldiff-product-contract.md`
 

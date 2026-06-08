@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use jdiff_core::{
+use ldiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, CommitOptions, CommitResult,
     DecompileEngine, EntryKind, MergePlan, NestedArchiveCache, compare, search_constant_pool,
     validate_path as validate_archive_path,
@@ -314,7 +314,7 @@ fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Op
 }
 
 fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
-    use jdiff_core::{ComparePair, PairStatus};
+    use ldiff_core::{ComparePair, PairStatus};
     let pairs = archive
         .entries()
         .map(|entry| {
@@ -908,7 +908,7 @@ fn main() {
             prefetch_siblings
         ])
         .run(tauri::generate_context!())
-        .expect("error while running jdiff");
+        .expect("error while running LDiff");
 }
 
 #[cfg(test)]
@@ -922,7 +922,7 @@ mod tests {
         AppState, Side, SidecarClient, class_source_path, deep_search_hit, is_prefetch_sibling,
         language_for_path, platform_hints_from, read_entry_preview, search_archive, validate_path,
     };
-    use jdiff_core::{Archive, DecompileEngine};
+    use ldiff_core::{Archive, DecompileEngine};
 
     #[test]
     fn staged_target_lock_blocks_switching_target_and_archive() {
@@ -1177,7 +1177,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(preview.kind, jdiff_core::EntryKind::Directory);
+        assert_eq!(preview.kind, ldiff_core::EntryKind::Directory);
         assert_eq!(preview.language, "plaintext");
         assert_eq!(preview.details, None);
         assert_eq!(preview.content, "");

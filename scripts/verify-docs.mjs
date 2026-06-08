@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 const files = [
   "README.md",
   "docs/OPERATIONS_MACOS.md",
-  "docs/JDIFF_COMPLETION_AUDIT.md",
-  "docs/JDIFF_IMPLEMENTATION_PLAN.md",
+  "docs/LDIFF_COMPLETION_AUDIT.md",
+  "docs/LDIFF_IMPLEMENTATION_PLAN.md",
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
   "docs/TEST_MATRIX.md",
@@ -23,10 +23,10 @@ for (const file of files) {
 
 const readme = readFileSync("README.md", "utf8");
 const macOrder = [
-  "rtk scripts/sign-macos-bundle.sh",
-  "rtk scripts/notarize-macos-app.sh",
-  "rtk scripts/package-macos-dmg.sh",
-  "rtk scripts/verify-macos-distribution.sh",
+  "scripts/sign-macos-bundle.sh",
+  "scripts/notarize-macos-app.sh",
+  "scripts/package-macos-dmg.sh",
+  "scripts/verify-macos-distribution.sh",
 ];
 let cursor = -1;
 for (const marker of macOrder) {
@@ -41,11 +41,11 @@ for (const marker of macOrder) {
   cursor = index;
 }
 
-if (!readme.includes("rtk npm run verify:all")) {
+if (!readme.includes("npm run verify:all")) {
   failures.push("README.md: missing aggregate verifier command in Developer checks");
 }
 
-if (!readme.includes("rtk npm run verify:frontend-render")) {
+if (!readme.includes("npm run verify:frontend-render")) {
   failures.push("README.md: missing frontend render verifier command in Developer checks");
 }
 if (!readme.includes("docs/OPERATIONS_MACOS.md")) {
@@ -60,73 +60,67 @@ if (!readme.includes("scripts\\verify-windows-platform.ps1")) {
 if (!readme.includes("scripts/verify-linux-display-matrix.sh")) {
   failures.push("README.md: missing Linux display validation runner command");
 }
-if (!readme.includes("scripts/verify-remote-release-workflow.sh")) {
-  failures.push("README.md: missing remote release workflow runner command");
-}
 
-const audit = readFileSync("docs/JDIFF_COMPLETION_AUDIT.md", "utf8");
+const audit = readFileSync("docs/LDIFF_COMPLETION_AUDIT.md", "utf8");
 if (!audit.includes("Open JAR/ZIP/folder")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing folder-open audit row");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing folder-open audit row");
 }
 if (!audit.includes("folder target temp-file replacement")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing folder target merge evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing folder target merge evidence");
 }
 if (!audit.includes("Playwright render verifier boots the Vite shell")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing Playwright render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Playwright render verifier evidence");
 }
 if (!audit.includes("exercise path-input validation error and clear-on-success")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing path-input render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing path-input render verifier evidence");
 }
 if (!audit.includes("pending target plus pending row badge")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing staged-copy render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing staged-copy render verifier evidence");
 }
 if (!audit.includes("unstage through the row context menu")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing context-menu unstage render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing context-menu unstage render verifier evidence");
 }
 if (!audit.includes("verify tree-filter row visibility")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing tree-filter render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing tree-filter render verifier evidence");
 }
 if (!audit.includes("click a scoped T2 search result")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing search-result render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing search-result render verifier evidence");
 }
 if (!audit.includes("verify on-demand metadata-only class status")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing metadata-only render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing metadata-only render verifier evidence");
 }
 if (!audit.includes("verify dirty mode-switch blocking")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing dirty mode-switch render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing dirty mode-switch render verifier evidence");
 }
 if (!audit.includes("clear staged changes and switch into Single mode without Monaco lifecycle errors")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing clear-staged Single-mode render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing clear-staged Single-mode render verifier evidence");
 }
 if (!audit.includes("verify signed-save session suppression")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing signed-save suppression render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing signed-save suppression render verifier evidence");
 }
 if (!audit.includes("prove backup checkbox IPC propagation")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing backup checkbox render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing backup checkbox render verifier evidence");
 }
 if (!audit.includes("render the Bytecode tab through `disassemble`")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing bytecode render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing bytecode render verifier evidence");
 }
 if (!audit.includes("render binary fallback SHA/CRC details plus hex preview")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing binary fallback render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing binary fallback render verifier evidence");
 }
 if (!audit.includes("signed-JAR warning Dialog before a confirmed Save anyway commits")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing signed-save render verifier evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing signed-save render verifier evidence");
 }
 if (!audit.includes("Windows platform validation runner")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing Windows platform runner evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Windows platform runner evidence");
 }
 if (!audit.includes("Linux display-matrix validation runner")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing Linux display runner evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Linux display runner evidence");
 }
 if (!audit.includes("macOS distribution validation runner")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing macOS distribution runner evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution runner evidence");
 }
 if (!audit.includes("platform-validation/macos-distribution-*.md")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
-}
-if (!audit.includes("remote release workflow validation runner")) {
-  failures.push("docs/JDIFF_COMPLETION_AUDIT.md: missing remote release workflow runner evidence");
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
 }
 
 const matrix = readFileSync("docs/TEST_MATRIX.md", "utf8");
@@ -151,18 +145,15 @@ if (!matrix.includes("scripts/verify-macos-distribution.sh")) {
 if (!matrix.includes("platform-validation/macos-distribution-*.md")) {
   failures.push("docs/TEST_MATRIX.md: missing macOS distribution report evidence");
 }
-if (!matrix.includes("scripts/verify-remote-release-workflow.sh")) {
-  failures.push("docs/TEST_MATRIX.md: missing remote release workflow runner evidence");
-}
 
 const platformValidation = readFileSync("docs/PLATFORM_VALIDATION.md", "utf8");
 const macosOps = readFileSync("docs/OPERATIONS_MACOS.md", "utf8");
-const productContract = readFileSync("docs/product/jdiff-product-contract.md", "utf8");
+const productContract = readFileSync("docs/product/ldiff-product-contract.md", "utf8");
 if (!productContract.includes("`.jar` files, `.zip` files, and folders")) {
-  failures.push("docs/product/jdiff-product-contract.md: missing folder input contract");
+  failures.push("docs/product/ldiff-product-contract.md: missing folder input contract");
 }
 if (!productContract.includes("<folder>.bak")) {
-  failures.push("docs/product/jdiff-product-contract.md: missing folder backup contract");
+  failures.push("docs/product/ldiff-product-contract.md: missing folder backup contract");
 }
 if (!platformValidation.includes("scripts\\verify-windows-platform.ps1")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing Windows platform runner command");
@@ -176,22 +167,19 @@ if (!platformValidation.includes("scripts/verify-macos-distribution.sh")) {
 if (!platformValidation.includes("platform-validation/macos-distribution-*.md")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing macOS distribution report requirement");
 }
-if (!platformValidation.includes("scripts/verify-remote-release-workflow.sh")) {
-  failures.push("docs/PLATFORM_VALIDATION.md: missing remote release workflow runner command");
-}
 if (!platformValidation.includes("docs/OPERATIONS_MACOS.md")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing macOS operations runbook link");
 }
 
 for (const marker of [
   "scripts/verify-macos-distribution.sh",
-  "JDIFF_JLINK_X86_64_APPLE_DARWIN",
+  "LDIFF_JLINK_X86_64_APPLE_DARWIN",
   "platform-validation/macos-distribution-*.md",
   "MACOS_SIGN_IDENTITY",
   "APPLE_ID",
   "codesign --verify --deep --strict",
   "hdiutil verify",
-  "jdiff-aarch64-apple-darwin.dmg",
+  "LDiff-aarch64-apple-darwin.dmg",
 ]) {
   if (!macosOps.includes(marker)) {
     failures.push(`docs/OPERATIONS_MACOS.md: missing ${marker}`);

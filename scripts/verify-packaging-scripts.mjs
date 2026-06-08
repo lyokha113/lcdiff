@@ -44,7 +44,7 @@ requireText("scripts/verify-windows-platform.ps1", "Set-StrictMode -Version Late
 requireText("scripts/verify-windows-platform.ps1", 'if (-not $IsWindows)', "Windows host guard");
 requireText("scripts/verify-windows-platform.ps1", 'Require-Command "bash"', "Git Bash requirement");
 requireText("scripts/verify-windows-platform.ps1", 'throw "JAVA_HOME must point to a Java 17 installation."', "JAVA_HOME requirement");
-requireText("scripts/verify-windows-platform.ps1", '$env:JDIFF_JLINK = $jlink', "JLINK env export");
+requireText("scripts/verify-windows-platform.ps1", '$env:LDIFF_JLINK = $jlink', "JLINK env export");
 requireText("scripts/verify-windows-platform.ps1", "cargo fmt --all -- --check", "cargo fmt gate");
 requireText("scripts/verify-windows-platform.ps1", "cargo test --workspace", "cargo test gate");
 requireText("scripts/verify-windows-platform.ps1", "cargo clippy --workspace --all-targets -- -D warnings", "cargo clippy gate");
@@ -57,7 +57,7 @@ requireText("scripts/verify-windows-platform.ps1", "scripts/sign-windows-bundles
 requireText("scripts/verify-linux-display-matrix.sh", "set -euo pipefail", "strict mode");
 requireText("scripts/verify-linux-display-matrix.sh", 'if [[ "$(uname -s)" != "Linux" ]]', "Linux host guard");
 requireText("scripts/verify-linux-display-matrix.sh", "scripts/launch-linux-xwayland.sh \"$APP\"", "XWayland fallback launcher");
-requireText("scripts/verify-linux-display-matrix.sh", "JDIFF_FORCE_XWAYLAND=1", "XWayland env guard");
+requireText("scripts/verify-linux-display-matrix.sh", "LDIFF_FORCE_XWAYLAND=1", "XWayland env guard");
 requireText("scripts/verify-linux-display-matrix.sh", "platform-validation", "default report directory");
 requireText("scripts/verify-linux-display-matrix.sh", "Linux Display Matrix Evidence", "Markdown report title");
 requireText("scripts/verify-linux-display-matrix.sh", "Browse open", "Browse check");
@@ -73,8 +73,8 @@ requireText("scripts/verify-macos-distribution.sh", "scripts/test-sidecar-smoke.
 requireText("scripts/verify-macos-distribution.sh", 'npm run tauri -- build --target "$TARGET" --bundles "$BUNDLES"', "macOS app build");
 requireText("scripts/verify-macos-distribution.sh", "expected_macho_arch", "target architecture mapping");
 requireText("scripts/verify-macos-distribution.sh", "file -b \"$path\"", "architecture guard ignores path names");
-requireText("scripts/verify-macos-distribution.sh", "TARGET_JLINK_ENV=\"JDIFF_JLINK_$(printf '%s' \"$TARGET\" | tr '[:lower:]-' '[:upper:]_')\"", "target-specific JLINK env");
-requireText("scripts/verify-macos-distribution.sh", "assert_macho_arch \"JDIFF_JLINK java\" \"$JLINK_JAVA\" \"$EXPECTED_ARCH\"", "JLINK architecture guard");
+requireText("scripts/verify-macos-distribution.sh", "TARGET_JLINK_ENV=\"LDIFF_JLINK_$(printf '%s' \"$TARGET\" | tr '[:lower:]-' '[:upper:]_')\"", "target-specific JLINK env");
+requireText("scripts/verify-macos-distribution.sh", "assert_macho_arch \"LDIFF_JLINK java\" \"$JLINK_JAVA\" \"$EXPECTED_ARCH\"", "JLINK architecture guard");
 requireText("scripts/verify-macos-distribution.sh", "assert_macho_arch \"app executable\" \"$APP_EXECUTABLE\" \"$EXPECTED_ARCH\"", "app executable architecture guard");
 requireText("scripts/verify-macos-distribution.sh", "assert_macho_arch \"bundled Java runtime\" \"$BUNDLED_JAVA\" \"$EXPECTED_ARCH\"", "bundled JRE architecture guard");
 requireText("scripts/verify-macos-distribution.sh", "scripts/sign-macos-bundle.sh", "inside-out signing");
@@ -88,13 +88,13 @@ requireText("scripts/verify-macos-distribution.sh", "scripts/notarize-macos-app.
 requireText("scripts/verify-macos-distribution.sh", "clean_bundle_xattrs \"$FINAL_APP_PATH\"", "final app xattr cleanup");
 requireText("scripts/verify-macos-distribution.sh", "codesign --verify --deep --strict --verbose=2 \"$FINAL_APP_PATH\"", "final app codesign verification");
 requireText("scripts/verify-macos-distribution.sh", "codesign -d --entitlements - \"$FINAL_APP_PATH\"", "final app entitlement dump");
-requireText("scripts/verify-macos-distribution.sh", "FINAL_APP_PATH=\"$VALIDATION_DIR/jdiff.app\"", "temporary final validation app");
+requireText("scripts/verify-macos-distribution.sh", "FINAL_APP_PATH=\"$VALIDATION_DIR/LDiff.app\"", "temporary final validation app");
 requireText("scripts/verify-macos-distribution.sh", "scripts/package-macos-dmg.sh \"$FINAL_APP_PATH\" \"$DMG_PATH\"", "DMG packaging");
 requireText("scripts/verify-macos-distribution.sh", "post-DMG \\`codesign --verify --deep --strict --verbose=2 \"$FINAL_APP_PATH\"\\`", "post-DMG final app verification report");
 requireText("scripts/verify-macos-distribution.sh", "hdiutil attach \"$DMG_PATH\" -mountpoint \"$MOUNT_DIR\" -nobrowse -readonly", "mounted DMG verification");
-requireText("scripts/verify-macos-distribution.sh", "test -d \"$MOUNT_DIR/jdiff.app\"", "mounted app guard");
+requireText("scripts/verify-macos-distribution.sh", "test -d \"$MOUNT_DIR/LDiff.app\"", "mounted app guard");
 requireText("scripts/verify-macos-distribution.sh", "test -L \"$MOUNT_DIR/Applications\"", "mounted Applications symlink guard");
-requireText("scripts/verify-macos-distribution.sh", "codesign --verify --deep --strict --verbose=2 \"$MOUNT_DIR/jdiff.app\"", "mounted app codesign verification");
+requireText("scripts/verify-macos-distribution.sh", "codesign --verify --deep --strict --verbose=2 \"$MOUNT_DIR/LDiff.app\"", "mounted app codesign verification");
 requireText("scripts/verify-macos-distribution.sh", "post-mount \\`codesign --verify --deep --strict --verbose=2 \"$FINAL_APP_PATH\"\\`", "post-mount final app verification report");
 requireText("scripts/verify-macos-distribution.sh", "platform-validation", "default report directory");
 requireText("scripts/verify-macos-distribution.sh", "macOS Distribution Evidence", "Markdown report title");

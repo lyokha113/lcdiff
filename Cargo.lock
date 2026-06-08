@@ -1658,45 +1658,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jdiff-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "jdiff-core",
- "serde_json",
- "tempfile",
- "zip",
-]
-
-[[package]]
-name = "jdiff-core"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "windows-sys 0.61.2",
- "zip",
-]
-
-[[package]]
-name = "jdiff-desktop"
-version = "0.1.0"
-dependencies = [
- "jdiff-core",
- "serde",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tempfile",
- "zip",
-]
-
-[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1783,6 +1744,45 @@ dependencies = [
  "bitflags 2.11.1",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "ldiff-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ldiff-core",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
+name = "ldiff-core"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "windows-sys 0.61.2",
+ "zip",
+]
+
+[[package]]
+name = "ldiff-desktop"
+version = "0.1.0"
+dependencies = [
+ "ldiff-core",
+ "serde",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]

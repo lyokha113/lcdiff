@@ -1,4 +1,4 @@
-# jdiff Implementation Plan
+# LDiff Implementation Plan
 
 Source: `/Users/lyo/Downloads/SPEC.md` Draft SPEC v0.1.
 
@@ -17,7 +17,7 @@ text, binary, diff, search, or merge.
 | P2 Desktop compare/merge shell | Async Tauri IPC adapters for long operations, React shadcn/ui Tailwind panels, path preflight with inline errors, picker, OS drop, Monaco diff with whitespace toggle, detected text languages, binary size/SHA-256/CRC details plus hex fallback, pending badges, arrow/context-menu stage, per-row unstage, clear/save | implemented locally | Rust desktop state-machine tests, frontend build, macOS dev startup |
 | P3 JVM sidecar | CFR, Vineflower, ASM bytecode, typed abstract decompile options boundary, async warm start, 30-second watchdog, one retry, canonical-path, metadata, options, mode, and engine-version keyed 128 MB LRU cache, Java 17 jlink assembly | implemented locally | Java 17 bundled-runtime smoke covers ping, CFR, Vineflower, ASM |
 | P4 Search/polish | T1 Monaco find, T2 path/text/constant-pool search without binary inflation, T3 cached deep source search on a dedicated background worker with left/right/both scope, tagged clickable streaming results including match kind and line, progress/cancel with sidecar preemption, bytecode tab, tree filters, dirty-close guard, dark Monaco theme, on-demand metadata-only class status, separate low-priority prefetch worker | implemented locally | frontend build, Tauri debug build, macOS empty-shell screenshot |
-| P5 Distribution | Windows atomic replace implementation, CI matrix, active Tauri bundle config, per-arch release workflow with optional macOS signing/notarization plus Windows Authenticode signing, macOS `.app` and final-app DMG packaging, local release-workflow and packaging-script invariant verifiers, ad-hoc inside-out signing with deterministic signed-app output, notarization script, and Linux XWayland fallback launcher added; Wayland matrix and real signing/notarization pending | in progress | local signed `.app` startup uses bundled JRE/JAR; `npm run verify:release-workflow`; `npm run verify:packaging-scripts` |
+| P5 Distribution | Windows atomic replace implementation, active Tauri bundle config, per-arch local build with optional macOS signing/notarization plus Windows Authenticode signing, macOS `.app` and final-app DMG packaging, local packaging-script invariant verifier, ad-hoc inside-out signing with deterministic signed-app output, notarization script, and Linux XWayland fallback launcher added; Wayland matrix and real signing/notarization pending | in progress | local signed `.app` startup uses bundled JRE/JAR; `npm run verify:packaging-scripts` |
 
 ## Immediate Next Story: Release Hardening
 

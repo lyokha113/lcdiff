@@ -1,7 +1,7 @@
 # macOS Operations Runbook
 
 This runbook is the macOS-first build, verification, signing, notarization, and
-packaging path for `jdiff`.
+packaging path for `LDiff`.
 
 ## Current Scope
 
@@ -9,7 +9,7 @@ packaging path for `jdiff`.
 - The latest local arm64 distribution evidence is
   `platform-validation/macos-distribution-aarch64-apple-darwin-20260606T051217Z.md`.
 - macOS `x86_64-apple-darwin` requires an Intel JDK/jlink path through
-  `JDIFF_JLINK_X86_64_APPLE_DARWIN`.
+  `LDIFF_JLINK_X86_64_APPLE_DARWIN`.
 - Developer ID notarization requires Apple certificate and notary credentials.
   Without those credentials, local validation uses ad-hoc signing and records
   notarization as skipped.
@@ -22,7 +22,6 @@ Install or expose:
 - Node.js/npm.
 - Java 17 JDK with `jlink`.
 - Xcode Command Line Tools: `codesign`, `hdiutil`, `xcrun`, and `ditto`.
-- The repo-local Harness runner: run commands with `rtk`.
 
 For Apple Developer ID release signing, provide:
 
@@ -37,26 +36,26 @@ For Apple Developer ID release signing, provide:
 ## Fast Local Development
 
 ```bash
-rtk npm ci
-rtk npm run verify:all
-JDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
-  rtk scripts/assemble-sidecar-resources.sh
-rtk scripts/test-sidecar-smoke.sh
-rtk npm run tauri -- dev
+npm ci
+npm run verify:all
+LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+  scripts/assemble-sidecar-resources.sh
+scripts/test-sidecar-smoke.sh
+npm run tauri -- dev
 ```
 
 ## Build A Debug App Bundle
 
 ```bash
-JDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
-  rtk scripts/assemble-sidecar-resources.sh
-rtk npm run tauri -- build --debug --bundles app
+LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+  scripts/assemble-sidecar-resources.sh
+npm run tauri -- build --debug --bundles app
 ```
 
 Expected debug bundle:
 
 ```text
-target/debug/bundle/macos/jdiff.app
+target/debug/bundle/macos/LDiff.app
 ```
 
 ## Full macOS Distribution Validation
@@ -64,7 +63,7 @@ target/debug/bundle/macos/jdiff.app
 Run the full macOS arm64 path:
 
 ```bash
-rtk scripts/verify-macos-distribution.sh \
+scripts/verify-macos-distribution.sh \
   --target aarch64-apple-darwin \
   --skip-install
 ```
@@ -73,7 +72,7 @@ If an app bundle already exists and only signing/DMG/report validation is being
 rechecked:
 
 ```bash
-rtk scripts/verify-macos-distribution.sh \
+scripts/verify-macos-distribution.sh \
   --target aarch64-apple-darwin \
   --skip-install \
   --skip-build
@@ -82,8 +81,8 @@ rtk scripts/verify-macos-distribution.sh \
 Run the Intel target only with an Intel JDK/jlink:
 
 ```bash
-JDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
-  rtk scripts/verify-macos-distribution.sh \
+LDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
+  scripts/verify-macos-distribution.sh \
     --target x86_64-apple-darwin \
     --skip-install
 ```
@@ -97,10 +96,10 @@ platform-validation/macos-distribution-*.md
 Expected release outputs:
 
 ```text
-target/aarch64-apple-darwin/release/bundle/macos/jdiff.app
-target/aarch64-apple-darwin/release/bundle/dmg/jdiff-aarch64-apple-darwin.dmg
-target/x86_64-apple-darwin/release/bundle/macos/jdiff.app
-target/x86_64-apple-darwin/release/bundle/dmg/jdiff-x86_64-apple-darwin.dmg
+target/aarch64-apple-darwin/release/bundle/macos/LDiff.app
+target/aarch64-apple-darwin/release/bundle/dmg/LDiff-aarch64-apple-darwin.dmg
+target/x86_64-apple-darwin/release/bundle/macos/LDiff.app
+target/x86_64-apple-darwin/release/bundle/dmg/LDiff-x86_64-apple-darwin.dmg
 ```
 
 When the repo is under a File Provider managed path such as `Documents`, macOS
@@ -113,7 +112,7 @@ under `/tmp`, then writes the DMG and report back to the workspace.
 Ad-hoc local signing is the default:
 
 ```bash
-rtk scripts/verify-macos-distribution.sh \
+scripts/verify-macos-distribution.sh \
   --target aarch64-apple-darwin \
   --sign-identity - \
   --skip-install
@@ -123,7 +122,7 @@ Developer ID signing:
 
 ```bash
 MACOS_SIGN_IDENTITY="Developer ID Application: Example Corp (TEAMID1234)" \
-  rtk scripts/verify-macos-distribution.sh \
+  scripts/verify-macos-distribution.sh \
     --target aarch64-apple-darwin \
     --skip-install
 ```
@@ -134,23 +133,23 @@ Notarization runs automatically only when `APPLE_ID`, `APPLE_TEAM_ID`,
 Manual script order, when debugging the distribution path:
 
 ```bash
-rtk scripts/sign-macos-bundle.sh \
-  "$PWD/target/debug/bundle/macos/jdiff.app" \
+scripts/sign-macos-bundle.sh \
+  "$PWD/target/debug/bundle/macos/LDiff.app" \
   - \
-  "$PWD/target/debug/bundle/macos/jdiff-signed.app"
+  "$PWD/target/debug/bundle/macos/LDiff-signed.app"
 APPLE_ID=you@example.com \
 APPLE_TEAM_ID=TEAMID1234 \
 APPLE_APP_PASSWORD=app-specific-password \
-  rtk scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/jdiff-signed.app"
-rtk scripts/package-macos-dmg.sh \
-  "$PWD/target/debug/bundle/macos/jdiff-signed.app" \
-  "$PWD/target/debug/bundle/dmg/jdiff-signed.dmg"
+  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+scripts/package-macos-dmg.sh \
+  "$PWD/target/debug/bundle/macos/LDiff-signed.app" \
+  "$PWD/target/debug/bundle/dmg/LDiff-signed.dmg"
 ```
 
 ## Verification Checklist
 
-- `rtk npm run verify:all` passes.
-- `rtk scripts/test-sidecar-smoke.sh` passes after JRE assembly.
+- `npm run verify:all` passes.
+- `scripts/test-sidecar-smoke.sh` passes after JRE assembly.
 - Selected JDK `java`, app executable, and bundled `jre/bin/java` are Mach-O
   binaries matching the requested target architecture.
 - `codesign --verify --deep --strict` passes for the signed app, final app, and
@@ -160,14 +159,14 @@ rtk scripts/package-macos-dmg.sh \
   - `com.apple.security.cs.allow-unsigned-executable-memory`
   - `com.apple.security.cs.disable-library-validation`
 - `hdiutil verify` passes for the DMG.
-- Mounted DMG contains `jdiff.app` and an `Applications` symlink.
+- Mounted DMG contains `LDiff.app` and an `Applications` symlink.
 - Developer ID releases also pass notarization, stapling, and Gatekeeper
   assessment through `scripts/notarize-macos-app.sh`.
 
 ## Troubleshooting
 
-- `expected JDIFF_JLINK java to be a Mach-O x86_64 binary`: the Intel build is
-  using an arm64 JDK. Set `JDIFF_JLINK_X86_64_APPLE_DARWIN` to an Intel JDK's
+- `expected LDIFF_JLINK java to be a Mach-O x86_64 binary`: the Intel build is
+  using an arm64 JDK. Set `LDIFF_JLINK_X86_64_APPLE_DARWIN` to an Intel JDK's
   `bin/jlink`.
 - Notarization is skipped: confirm `APPLE_ID`, `APPLE_TEAM_ID`,
   `APPLE_APP_PASSWORD`, and a non-`-` `MACOS_SIGN_IDENTITY`.

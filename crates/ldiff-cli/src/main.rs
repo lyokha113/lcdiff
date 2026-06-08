@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use jdiff_core::{Archive, CommitOptions, EntryKind, MergePlan, compare, search_constant_pool};
+use ldiff_core::{Archive, CommitOptions, EntryKind, MergePlan, compare, search_constant_pool};
 
 #[derive(Debug, Parser)]
-#[command(name = "jdiff", about = "Inspect, compare, and merge JAR/ZIP archives")]
+#[command(name = "ldiff", about = "Inspect, compare, and merge JAR/ZIP archives")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

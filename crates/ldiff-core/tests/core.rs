@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use jdiff_core::{
+use ldiff_core::{
     Archive, ArchiveSourceKind, CommitOptions, DecompileEngine, DecompileOptions, EntryKind,
     MergePlan, PairStatus, SidecarAction, SidecarRequest, compare, read_frame,
     search_constant_pool, validate_path, write_frame,
@@ -245,7 +245,7 @@ fn failed_backup_before_atomic_replace_leaves_target_untouched_and_temp_removed(
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            name.contains(".jdiff-") && name.ends_with(".tmp")
+            name.contains(".ldiff-") && name.ends_with(".tmp")
         })
         .count();
     assert_eq!(temp_leftovers, 0);
@@ -610,7 +610,7 @@ fn class_with_utf8(value: &str) -> Vec<u8> {
 
 #[test]
 fn resolves_one_and_two_level_nested_entries() {
-    use jdiff_core::NestedArchiveCache;
+    use ldiff_core::NestedArchiveCache;
 
     let dir = tempdir().unwrap();
 
@@ -653,7 +653,7 @@ fn resolves_one_and_two_level_nested_entries() {
 
 #[test]
 fn resolve_archive_opens_nested_archive_directly() {
-    use jdiff_core::NestedArchiveCache;
+    use ldiff_core::NestedArchiveCache;
 
     let dir = tempdir().unwrap();
     let inner_path = dir.path().join("inner.jar");
@@ -670,7 +670,7 @@ fn resolve_archive_opens_nested_archive_directly() {
 
 #[test]
 fn rewrite_zip_bytes_replaces_entry() {
-    use jdiff_core::{read_zip_entry_from_bytes, rewrite_zip_bytes};
+    use ldiff_core::{read_zip_entry_from_bytes, rewrite_zip_bytes};
     use std::collections::BTreeMap;
 
     let dir = tempdir().unwrap();
@@ -691,7 +691,7 @@ fn rewrite_zip_bytes_replaces_entry() {
 
 #[test]
 fn commit_copies_entry_into_nested_jar() {
-    use jdiff_core::read_zip_entry_from_bytes;
+    use ldiff_core::read_zip_entry_from_bytes;
 
     let dir = tempdir().unwrap();
 
@@ -730,7 +730,7 @@ fn commit_copies_entry_into_nested_jar() {
 
 #[test]
 fn commit_copies_entry_two_levels_deep() {
-    use jdiff_core::read_zip_entry_from_bytes;
+    use ldiff_core::read_zip_entry_from_bytes;
 
     let dir = tempdir().unwrap();
 

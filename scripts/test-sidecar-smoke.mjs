@@ -5,9 +5,9 @@ import { spawn, spawnSync } from "node:child_process";
 
 const root = new URL("..", import.meta.url).pathname;
 const bundledJava = join(root, "src-tauri", "resources", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
-const java = process.env.JDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
-const jar = process.env.JDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "jdiff-sidecar-0.1.0.jar");
-const tmp = mkdtempSync(join(tmpdir(), "jdiff-sidecar-smoke-"));
+const java = process.env.LDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
+const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.1.0.jar");
+const tmp = mkdtempSync(join(tmpdir(), "ldiff-sidecar-smoke-"));
 
 try {
   mkdirSync(join(tmp, "demo"));
@@ -17,7 +17,7 @@ try {
     [
       "package demo;",
       "public class Hello {",
-      '  public String greet() { return "hello-jdiff"; }',
+      '  public String greet() { return "hello-ldiff"; }',
       '  public Runnable anonymous() { return new Runnable() { public void run() { System.out.println("anon"); } }; }',
       '  public static class Inner { public String value() { return "inner"; } }',
       "}",
@@ -56,7 +56,7 @@ try {
       classpath: [archive],
       entry: "demo/Hello.class",
     }),
-    "hello-jdiff",
+    "hello-ldiff",
   );
   assertIncludes(
     await request(child, pending, {
@@ -95,7 +95,7 @@ try {
       classpath: [archive],
       entry: "demo/Hello.class",
     }),
-    "hello-jdiff",
+    "hello-ldiff",
   );
   const malformed = await request(child, pending, {
     id: "malformed",

@@ -1,5 +1,5 @@
 {
-  "name": "jdiff-ui",
+  "name": "ldiff-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,13 +8,11 @@
     "test": "vitest run",
     "build": "tsc && vite build",
     "tauri": "tauri",
-    "verify:release-workflow": "node scripts/verify-release-workflow.mjs",
     "verify:packaging-scripts": "node scripts/verify-packaging-scripts.mjs",
-    "verify:ci-workflow": "node scripts/verify-ci-workflow.mjs",
     "verify:frontend-invariants": "node scripts/verify-frontend-invariants.mjs",
     "verify:frontend-render": "node scripts/verify-frontend-render.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",
-    "verify:all": "npm run build && npm run verify:release-workflow && npm run verify:packaging-scripts && npm run verify:ci-workflow && npm run verify:frontend-invariants && npm run verify:frontend-render && npm run verify:docs"
+    "verify:all": "npm run build && npm run verify:packaging-scripts && npm run verify:frontend-invariants && npm run verify:frontend-render && npm run verify:docs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",

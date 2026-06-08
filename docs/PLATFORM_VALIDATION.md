@@ -31,8 +31,6 @@ Configure repository secrets:
 - `WINDOWS_CERTIFICATE_PASSWORD`
 - Optional `WINDOWS_TIMESTAMP_URL`
 
-Then run the release workflow on `windows-2022`.
-
 For a local signed Windows validation run after bundles are built:
 
 ```powershell
@@ -61,7 +59,7 @@ Run the same Tauri bundle on:
 On each environment, record evidence with:
 
 ```bash
-scripts/verify-linux-display-matrix.sh --app /path/to/jdiff --sample /path/to/sample.jar
+scripts/verify-linux-display-matrix.sh --app /path/to/LDiff --sample /path/to/sample.jar
 ```
 
 The script writes a timestamped Markdown report under `platform-validation/`.
@@ -69,7 +67,7 @@ The script writes a timestamped Markdown report under `platform-validation/`.
 For Wayland fallback runs:
 
 ```bash
-JDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/jdiff
+LDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LDiff
 ```
 
 Pass evidence:
@@ -79,7 +77,7 @@ Pass evidence:
 - Browse and path input open a valid `.jar` or `.zip` on every environment.
 - If OS file drop fails on native Wayland, record the compositor/session and
   verify that Browse/path input still work.
-- If `JDIFF_FORCE_XWAYLAND=1` is supported by the environment, record whether
+- If `LDIFF_FORCE_XWAYLAND=1` is supported by the environment, record whether
   OS file drop recovers under XWayland.
 
 ## macOS Developer ID Notarization
@@ -98,8 +96,6 @@ Configure repository secrets:
 - `APPLE_TEAM_ID`
 - `APPLE_APP_PASSWORD`
 
-Then run the release workflow on macOS targets.
-
 For local macOS distribution validation:
 
 ```bash
@@ -108,17 +104,17 @@ scripts/verify-macos-distribution.sh --target x86_64-apple-darwin
 ```
 
 When cross-building on macOS, provide a target-specific JDK/jlink path if the
-default `JDIFF_JLINK` does not match the requested target:
+default `LDIFF_JLINK` does not match the requested target:
 
 ```bash
-JDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
+LDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
   scripts/verify-macos-distribution.sh --target x86_64-apple-darwin
 ```
 
 The runner signs inside-out, strips extended attributes before strict signature
 verification, notarizes when Developer ID and Apple notary credentials are
-present, promotes the final `jdiff.app`, packages the DMG, verifies the
-post-DMG app, mounts the DMG, verifies the mounted `jdiff.app`, and writes
+present, promotes the final `LDiff.app`, packages the DMG, verifies the
+post-DMG app, mounts the DMG, verifies the mounted `LDiff.app`, and writes
 `platform-validation/macos-distribution-*.md`.
 
 Pass evidence:
@@ -129,47 +125,32 @@ Pass evidence:
 - The selected JDK `java`, app executable, and bundled `jre/bin/java` are Mach-O
   binaries matching the requested target architecture (`arm64` for
   `aarch64-apple-darwin`, `x86_64` for `x86_64-apple-darwin`).
-- `scripts/sign-macos-bundle.sh` produces `jdiff-signed.app`.
+- `scripts/sign-macos-bundle.sh` produces `LDiff-signed.app`.
 - `codesign --verify --deep --strict` passes.
-- `codesign -d --entitlements - jdiff-signed.app` includes:
+- `codesign -d --entitlements - LDiff-signed.app` includes:
   `com.apple.security.cs.allow-jit`,
   `com.apple.security.cs.allow-unsigned-executable-memory`, and
   `com.apple.security.cs.disable-library-validation`.
 - The final app still passes `codesign --verify --deep --strict` after DMG
   packaging.
-- The mounted DMG contains `jdiff.app`, an `Applications` symlink, and the
+- The mounted DMG contains `LDiff.app`, an `Applications` symlink, and the
   mounted app passes `codesign --verify --deep --strict`.
-- `scripts/notarize-macos-app.sh jdiff-signed.app` completes, staples the
+- `scripts/notarize-macos-app.sh LDiff-signed.app` completes, staples the
   ticket, and `spctl --assess --type execute --verbose=4` passes.
-- `scripts/package-macos-dmg.sh` creates the uploaded `.dmg` from
-  `jdiff.app` after the release workflow promotes `jdiff-signed.app` over that
-  final upload path when signing is enabled; unsigned macOS releases keep the
-  unsigned `.app`.
+- `scripts/package-macos-dmg.sh` creates the `.dmg` from `LDiff.app`; when
+  signing is enabled, package from the promoted `LDiff-signed.app`. Unsigned
+  builds keep the unsigned `.app`.
 - Mounted `.dmg` contains the `.app` bundle and an `Applications` symlink at the
   volume root.
 
-## Remote Release Workflow
+## Distribution Artifacts
 
-Run `.github/workflows/release.yml` with `workflow_dispatch`.
+Local builds produce these per platform:
 
-Use the GitHub CLI runner to dispatch and record evidence:
-
-```bash
-scripts/verify-remote-release-workflow.sh --dispatch --ref main
-```
-
-The runner writes `platform-validation/remote-release-*.md` with run metadata
-and uploaded artifact names.
-
-Pass evidence:
-
-- `scripts/verify-remote-release-workflow.sh --dispatch --ref <ref>` passes.
-- macOS arm64 and x64 app/dmg artifacts upload.
-- Signed macOS workflows upload one final `jdiff.app` bundle path, not both a
-  signed and unsigned app bundle.
-- Linux AppImage/deb/rpm artifacts upload.
-- Windows NSIS/MSI artifacts upload.
-- Optional signing/notarization steps run only when their secrets are present;
-  unsigned builds still upload when secrets are absent.
-- macOS signing steps require the full certificate secret set before importing
-  or signing; notarization additionally requires the Apple notary credentials.
+- macOS arm64 and x64 `.app` plus `.dmg` bundles.
+- Linux AppImage/deb/rpm bundles.
+- Windows NSIS/MSI installers.
+- Optional signing/notarization runs only when its secrets are present; unsigned
+  builds are still produced when secrets are absent.
+- macOS signing requires the full certificate secret set before importing or
+  signing; notarization additionally requires the Apple notary credentials.

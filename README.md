@@ -1,120 +1,80 @@
-# jdiff
+# LDiff
 
-`jdiff` is a Tauri desktop tool for inspecting, comparing, and staging merges
-between JAR/ZIP archives and folders. Decompiled Java is always read-only;
-merge copies the original entry bytes.
+**LDiff** is a Tauri desktop tool for inspecting, comparing, and staging merges
+between JAR/ZIP archives and folders. Decompiled Java is always read-only; a
+merge copies the original entry bytes, never the decompiled view.
 
-Current implementation:
+- **Inspect** — open a `.jar`, `.zip`, or folder and browse its entry tree with
+  lazy index/read, detected text languages, and binary size/CRC/SHA-256 detail.
+- **Compare** — CRC tree diff between two archives or folders with aligned diff
+  rows, Monaco source/bytecode diff, and text/hex preview.
+- **Merge** — stage original entry bytes from one side to the other, review
+  pending changes, then save atomically with an optional `.bak` backup.
+- **Decompile** — CFR / Vineflower source and ASM bytecode through an isolated
+  JVM sidecar that may degrade independently when the JVM is absent.
 
-- Rust `jdiff-core`: validated open for JAR/ZIP files and folders, lazy
-  index/read, CRC tree diff, normalized-path duplicate rejection, constant-pool
-  search, text search, staged copy, signed-JAR detection, atomic archive save,
-  folder target copy, `.bak`.
-- Rust `jdiff-cli`: list, diff, read, search, and copy smoke adapter.
-- Tauri + React + shadcn/ui + Tailwind v4 shell: active bundle config, app
-  icon, path preflight with per-panel inline errors, native picker, file drop,
-  resizable tree/editor panels, shadcn context-menu merge actions, aligned diff
-  rows, Monaco `DiffEditor`, text/hex preview, detected text languages, binary
-  size/CRC details, staged copy, signed-save Dialog confirmation with
-  per-session suppression, action tooltips, and async adapters for
-  ZIP/folder/decompiler long operations.
-- JVM decompiler sidecar: CFR decompile, Vineflower adapter, ASM bytecode,
-  framed stdio, async warm start, 30-second watchdog, one retry, 128 MB
-  canonical-path, metadata, options, mode, and engine-version keyed LRU cache,
-  typed decompile-options boundary, and bundled Java 17 jlink JRE assembly.
-- Search: path/text/constant-pool tier plus opt-in cached deep source search with
-  left/right/both scope, tagged clickable streaming results, progress, cancel,
-  binary payload skipping in the cheap tier, and a dedicated background JVM
-  worker.
-- Navigation prefetch: a low-priority JVM worker warms the shared cache without
-  blocking interactive decompile requests.
-- Save safety: staged batches, dirty-close confirmation, changed-on-disk
-  rejection, directory-copy guard, writable-target preflight, optional `.bak`,
-  archive atomic replacement, and folder target file replacement.
-- Merge UI: arrow buttons and a row context menu stage original entry bytes;
-  pending badges show the current target before explicit save, and rows can be
-  unstaged individually.
+> This README has two parts. **[For Users](#for-users)** if you just want to
+> install and run LDiff. **[For Developers](#for-developers)** if you want to
+> build it from source or contribute.
 
-macOS-first build status:
+---
 
-- The primary local target is `aarch64-apple-darwin`.
-- The latest local arm64 distribution report is
-  `platform-validation/macos-distribution-aarch64-apple-darwin-20260606T051217Z.md`.
-- The macOS operator runbook is `docs/OPERATIONS_MACOS.md`.
-- Intel macOS builds require `JDIFF_JLINK_X86_64_APPLE_DARWIN` to point at an
-  x86_64 JDK/jlink.
-- Developer ID notarization requires Apple certificate and notary credentials;
-  otherwise local validation uses ad-hoc signing and records notarization as
-  skipped.
+# For Users
 
-Developer checks:
+You do not need Rust, Node, or Java installed — the released app bundles its own
+JVM runtime.
 
-```bash
-rtk cargo fmt --all -- --check
-rtk cargo test --workspace
-rtk cargo clippy --workspace --all-targets -- -D warnings
-rtk npm run verify:all
-rtk npm run verify:frontend-render
-rtk mvn -f sidecar/pom.xml clean package -DskipTests
-JDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
-  rtk scripts/assemble-sidecar-resources.sh
-rtk scripts/test-sidecar-smoke.sh
-rtk npm run tauri -- dev
-rtk npm run tauri -- build --debug --bundles app
-rtk scripts/sign-macos-bundle.sh \
-  "$PWD/target/debug/bundle/macos/jdiff.app" \
-  - \
-  "$PWD/target/debug/bundle/macos/jdiff-signed.app"
-APPLE_ID=you@example.com \
-APPLE_TEAM_ID=TEAMID1234 \
-APPLE_APP_PASSWORD=app-specific-password \
-  rtk scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/jdiff-signed.app"
-rtk scripts/package-macos-dmg.sh \
-  "$PWD/target/debug/bundle/macos/jdiff-signed.app" \
-  "$PWD/target/debug/bundle/dmg/jdiff-signed.dmg"
-rtk scripts/verify-macos-distribution.sh --skip-install
-```
+## Install
 
-Windows platform validation:
+Download the latest installer for your platform from the project's **Releases**
+page, then:
 
-```powershell
-scripts\verify-windows-platform.ps1
-scripts\verify-windows-platform.ps1 -SkipInstall -SignIfSecretsPresent
-```
+### macOS
 
-Remote release workflow validation:
+1. Download `LDiff-<arch>.dmg` (`aarch64` for Apple Silicon, `x86_64` for Intel).
+2. Open the DMG and drag **LDiff** into `Applications`.
+3. First launch: right-click **LDiff** → **Open** to clear Gatekeeper if the
+   build is not notarized.
 
-```bash
-rtk scripts/verify-remote-release-workflow.sh --dispatch --ref main
-```
+### Windows
 
-Linux Wayland file-drop fallback:
+1. Download the LDiff installer (`.msi` or `.exe`).
+2. Run it and follow the prompts.
 
-```bash
-JDIFF_FORCE_XWAYLAND=1 \
-  rtk scripts/launch-linux-xwayland.sh /path/to/jdiff
-rtk scripts/verify-linux-display-matrix.sh --app /path/to/jdiff --sample /path/to/sample.jar
-```
+### Linux
 
-This sets `GDK_BACKEND=x11` only when a Wayland session is detected. Browse and
-path input remain the primary reliable open paths. The display-matrix verifier
-writes per-compositor/session evidence under `platform-validation/`.
+1. Download the LDiff AppImage (or the `.deb` for Debian/Ubuntu).
+2. Make it executable and run it:
 
-Optional macOS release signing secrets:
+   ```bash
+   chmod +x LDiff-*.AppImage
+   ./LDiff-*.AppImage
+   ```
 
-- `MACOS_CERTIFICATE_BASE64`: base64-encoded Developer ID Application `.p12`.
-- `MACOS_CERTIFICATE_PASSWORD`: password for that `.p12`.
-- `MACOS_KEYCHAIN_PASSWORD`: temporary CI keychain password.
-- `MACOS_SIGN_IDENTITY`: Developer ID Application identity name.
-- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`: `notarytool`
-  credentials.
+   On Wayland, Browse and path input are the most reliable ways to open files.
+   If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
 
-Optional Windows release signing secrets:
+## Using LDiff
 
-- `WINDOWS_CERTIFICATE_BASE64`: base64-encoded Authenticode `.pfx`.
-- `WINDOWS_CERTIFICATE_PASSWORD`: password for that `.pfx`.
-- `WINDOWS_TIMESTAMP_URL`: timestamp server URL; defaults to DigiCert when
-  omitted.
+1. **Open** — use **Browse**, paste a path, or drag a `.jar` / `.zip` / folder
+   onto a panel.
+2. **Inspect (Single mode)** — click an entry to preview decompiled source,
+   bytecode, or a text/hex view. Java sources are read-only.
+3. **Compare mode** — open a second archive/folder on the right; matching entries
+   align and changed rows are highlighted with a CRC tree diff.
+4. **Search** — fast path/text/constant-pool search, plus an opt-in deep source
+   search (left / right / both) with clickable streaming results.
+5. **Merge** — use the arrow buttons or row context menu to stage original bytes
+   from one side to the other. Pending changes show a badge until you save.
+6. **Save** — writes atomically. Enable the backup option to keep a `.bak`.
+   LDiff warns before saving over a signed JAR and before discarding staged
+   changes.
+
+---
+
+# For Developers
+
+Everything below is for building LDiff from source and contributing.
 
 ## Architecture
 
@@ -123,23 +83,38 @@ React + shadcn/ui + Tailwind + Monaco   (view + intent emitter)
         |  Tauri IPC
 Rust src-tauri  (commands, async adapters)
         |
-Rust jdiff-core  (archive state, staged bytes, CRC diff, search, save)
+Rust ldiff-core  (archive state, staged bytes, CRC diff, search, save)
         |  framed stdio
 JVM decompiler sidecar  (CFR / Vineflower / ASM, jlink Java 17)
 ```
 
 The frontend never owns bytes. Rust owns archive state, staged changes, and the
 atomic save path. Decompilation lives behind the sidecar boundary and may
-degrade independently when the JVM sidecar is absent. See `docs/ARCHITECTURE.md`
-for boundary rules.
+degrade independently when the JVM sidecar is absent. See
+`docs/ARCHITECTURE.md` for the boundary rules.
+
+LDiff is built from four layers:
+
+- **Rust `ldiff-core`** — validated open for JAR/ZIP files and folders, lazy
+  index/read, CRC tree diff, normalized-path duplicate rejection, constant-pool
+  search, text search, staged copy, signed-JAR detection, atomic archive save,
+  folder target copy, and `.bak` backup.
+- **Rust `ldiff-cli`** — headless `list`, `diff`, `read`, `search`, and `copy`
+  smoke adapter over `ldiff-core`.
+- **Tauri + React shell** — shadcn/ui + Tailwind v4 + Monaco UI with native
+  picker, file drop, resizable tree/editor panels, context-menu merge actions,
+  staged copy, signed-save confirmation, and async adapters for
+  ZIP/folder/decompiler long operations.
+- **JVM decompiler sidecar** — CFR / Vineflower / ASM over framed stdio with a
+  versioned LRU cache and a bundled Java 17 jlink JRE.
 
 ## Repository Layout
 
 ```text
-jdiff/
+ldiff/
   crates/
-    jdiff-core/   Rust archive engine (open, diff, search, stage, save)
-    jdiff-cli/    headless smoke adapter over jdiff-core
+    ldiff-core/   Rust archive engine (open, diff, search, stage, save)
+    ldiff-cli/    headless smoke adapter over ldiff-core
   src-tauri/      Tauri v2 host: IPC commands, bundle config, capabilities
   src/            React + Monaco frontend (App.tsx, components, lib)
   sidecar/        JVM decompiler (Maven, CFR/Vineflower/ASM)
@@ -148,13 +123,148 @@ jdiff/
   docs/           harness + product documentation
 ```
 
+## Prerequisites
+
+- **Rust** toolchain with the target you intend to build
+  (`aarch64-apple-darwin` is the primary local target).
+- **Node.js / npm** for the frontend and verifier scripts.
+- **Java 17 JDK** with `jlink` for the decompiler sidecar and bundled runtime.
+- **macOS only:** Xcode Command Line Tools (`codesign`, `hdiutil`, `xcrun`,
+  `ditto`) for signing, packaging, and verification.
+
+## Getting Started
+
+Install dependencies and run the desktop app in development mode:
+
+```bash
+npm install
+npm run tauri -- dev
+```
+
+The headless Rust CLI is useful for quick checks without the desktop shell:
+
+```bash
+cargo run -p ldiff-cli -- list path/to/archive.jar
+cargo run -p ldiff-cli -- diff path/to/left.jar path/to/right.jar
+```
+
+## Developer Checks
+
+Run these before sending changes. They mirror what CI enforces.
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+npm run verify:all
+npm run verify:frontend-render
+```
+
+- `npm run verify:all` runs the frontend build plus the release, packaging, CI,
+  frontend-invariant, frontend-render, and docs verifiers.
+- `npm run verify:frontend-render` boots the Vite shell under Playwright and
+  fails on any browser page error.
+
+Build the JVM sidecar and assemble its bundled resources:
+
+```bash
+mvn -f sidecar/pom.xml clean package -DskipTests
+LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+  scripts/assemble-sidecar-resources.sh
+scripts/test-sidecar-smoke.sh
+```
+
+## Building and Packaging (macOS)
+
+The primary local target is `aarch64-apple-darwin`. Build a debug app bundle:
+
+```bash
+npm run tauri -- build --debug --bundles app
+```
+
+Intel macOS builds require `LDIFF_JLINK_X86_64_APPLE_DARWIN` to point at an
+x86_64 JDK/jlink.
+
+Sign, notarize, and package the bundle **in this order** (signing first,
+notarization second, DMG packaging last):
+
+```bash
+scripts/sign-macos-bundle.sh \
+  "$PWD/target/debug/bundle/macos/LDiff.app" \
+  - \
+  "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+
+APPLE_ID=you@example.com \
+APPLE_TEAM_ID=TEAMID1234 \
+APPLE_APP_PASSWORD=app-specific-password \
+  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+
+scripts/package-macos-dmg.sh \
+  "$PWD/target/debug/bundle/macos/LDiff-signed.app" \
+  "$PWD/target/debug/bundle/dmg/LDiff-signed.dmg"
+
+scripts/verify-macos-distribution.sh --skip-install
+```
+
+Developer ID notarization requires Apple certificate and notary credentials;
+without them, local validation uses ad-hoc signing and records notarization as
+skipped. The full macOS operator runbook is `docs/OPERATIONS_MACOS.md`.
+
+## Platform Validation
+
+Each platform has an external validation runner that writes evidence under
+`platform-validation/`. The latest local arm64 distribution report is
+`platform-validation/macos-distribution-aarch64-apple-darwin-20260606T051217Z.md`.
+
+**macOS distribution:**
+
+```bash
+scripts/verify-macos-distribution.sh --skip-install
+```
+
+**Windows platform:**
+
+```powershell
+scripts\verify-windows-platform.ps1
+scripts\verify-windows-platform.ps1 -SkipInstall -SignIfSecretsPresent
+```
+
+**Linux display matrix** (the Wayland file-drop fallback forces
+`GDK_BACKEND=x11` only when a Wayland session is detected; Browse and path input
+remain the primary reliable open paths):
+
+```bash
+LDIFF_FORCE_XWAYLAND=1 \
+  scripts/launch-linux-xwayland.sh /path/to/LDiff
+scripts/verify-linux-display-matrix.sh --app /path/to/LDiff --sample /path/to/sample.jar
+```
+
+## Release Signing Secrets
+
+These are optional and only needed for signed release builds.
+
+**macOS:**
+
+- `MACOS_CERTIFICATE_BASE64` — base64-encoded Developer ID Application `.p12`.
+- `MACOS_CERTIFICATE_PASSWORD` — password for that `.p12`.
+- `MACOS_KEYCHAIN_PASSWORD` — temporary CI keychain password.
+- `MACOS_SIGN_IDENTITY` — Developer ID Application identity name.
+- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` — `notarytool` credentials.
+
+**Windows:**
+
+- `WINDOWS_CERTIFICATE_BASE64` — base64-encoded Authenticode `.pfx`.
+- `WINDOWS_CERTIFICATE_PASSWORD` — password for that `.pfx`.
+- `WINDOWS_TIMESTAMP_URL` — timestamp server URL; defaults to DigiCert when
+  omitted.
+
 ## Documentation Map
 
 Product and build references:
 
-- `docs/product/jdiff-product-contract.md` — accepted MVP product contract.
-- `docs/JDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
-- `docs/JDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
+- `docs/product/ldiff-product-contract.md` — accepted MVP product contract.
+- `docs/LDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
+- `docs/LDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
 - `docs/PLATFORM_VALIDATION.md` — external platform validation gates.
 - `docs/OPERATIONS_MACOS.md` — macOS sign / notarize / package / verify runbook.
 - `docs/TEST_MATRIX.md` — behavior-to-proof validation map.
@@ -169,25 +279,11 @@ Agent harness references:
 - `docs/HARNESS_COMPONENTS.md`, `docs/HARNESS_MATURITY.md` — harness internals.
 - `docs/GLOSSARY.md` — shared terms.
 
-## Agent Harness
-
-This repo is operated as an agent-ready workspace. Agents start from `AGENTS.md`,
-then read the harness docs above. The Rust Harness CLI is the main operational
-tool:
-
-```bash
-scripts/bin/harness-cli query matrix     # macOS/Linux
-.\scripts\bin\harness-cli.exe query matrix  # Windows
-```
-
-`docs/HARNESS.md` explains the collaboration model; `docs/FEATURE_INTAKE.md`
-classifies incoming work before any code changes.
-
 ## Contributing
 
 1. Read `AGENTS.md` and the harness docs before changing code.
-2. Run the full developer checks above, including `rtk npm run verify:all`.
-3. Keep `docs/JDIFF_COMPLETION_AUDIT.md` and `docs/TEST_MATRIX.md` in sync with
+2. Run the full developer checks above, including `npm run verify:all`.
+3. Keep `docs/LDIFF_COMPLETION_AUDIT.md` and `docs/TEST_MATRIX.md` in sync with
    new behavior; `npm run verify:docs` enforces documentation invariants.
 4. For platform-affecting changes, attach a `platform-validation/` evidence
    report from the relevant runner.
