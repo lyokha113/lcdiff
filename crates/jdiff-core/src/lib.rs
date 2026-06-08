@@ -2,6 +2,7 @@ mod archive;
 mod class_search;
 mod detect;
 mod diff;
+pub mod edit;
 mod error;
 mod merge;
 mod nested;
