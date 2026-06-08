@@ -273,25 +273,74 @@ async fn compute_diff(state: State<'_, SharedState>) -> Result<ArchiveDiff, Stri
 }
 
 #[tauri::command]
+async fn compute_nested_diff(
+    nested_path: String,
+    state: State<'_, SharedState>,
+) -> Result<ArchiveDiff, String> {
+    let left = nested_side_archive(&state, Side::Left, &nested_path);
+    let right = nested_side_archive(&state, Side::Right, &nested_path);
+    match (left, right) {
+        (None, None) => Err("nested archive is not present on either side".to_owned()),
+        (Some(left), Some(right)) => {
+            tauri::async_runtime::spawn_blocking(move || Ok(compare(&left, &right)))
+                .await
+                .map_err(|error| error.to_string())?
+        }
+        (Some(only), None) => Ok(one_sided_diff(&only, Side::Left)),
+        (None, Some(only)) => Ok(one_sided_diff(&only, Side::Right)),
+    }
+}
+
+fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Option<Archive> {
+    let mut state = state.lock().ok()?;
+    let root = archive(&state, side)?.clone();
+    nested_cache_mut(&mut state, side)
+        .resolve_archive(&root, nested_path)
+        .ok()
+}
+
+fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
+    use jdiff_core::{ComparePair, PairStatus};
+    let pairs = archive
+        .entries()
+        .map(|entry| {
+            let entry = entry.clone();
+            match side {
+                Side::Left => ComparePair {
+                    path: entry.path.clone(),
+                    left: Some(entry),
+                    right: None,
+                    status: PairStatus::OnlyLeft,
+                },
+                Side::Right => ComparePair {
+                    path: entry.path.clone(),
+                    left: None,
+                    right: Some(entry),
+                    status: PairStatus::OnlyRight,
+                },
+            }
+        })
+        .collect();
+    ArchiveDiff { pairs }
+}
+
+#[tauri::command]
 async fn read_entry(
     side: Side,
     entry_path: String,
     state: State<'_, SharedState>,
 ) -> Result<EntryPreview, String> {
-    let (archive, engine, sidecar) = {
-        let state = state
+    let (archive, leaf, engine, sidecar) = {
+        let mut state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
-        (
-            archive(&state, side)
-                .ok_or("archive is not loaded")?
-                .clone(),
-            state.engine,
-            Arc::clone(&state.sidecar),
-        )
+        let engine = state.engine;
+        let sidecar = Arc::clone(&state.sidecar);
+        let (archive, leaf) = resolve_side_entry(&mut state, side, &entry_path)?;
+        (archive, leaf, engine, sidecar)
     };
     tauri::async_runtime::spawn_blocking(move || {
-        read_entry_preview(&archive, engine, &sidecar, entry_path)
+        read_entry_preview(&archive, engine, &sidecar, leaf)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -376,15 +425,13 @@ async fn disassemble(
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
     let (archive_path, source_path, sidecar) = {
-        let state = state
+        let mut state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
-        let archive = archive(&state, side).ok_or("archive is not loaded")?;
-        (
-            archive.path().display().to_string(),
-            class_source_path(archive, &entry_path)?,
-            Arc::clone(&state.sidecar),
-        )
+        let sidecar = Arc::clone(&state.sidecar);
+        let (archive, leaf) = resolve_side_entry(&mut state, side, &entry_path)?;
+        let source_path = class_source_path(&archive, &leaf)?;
+        (archive.path().display().to_string(), source_path, sidecar)
     };
     tauri::async_runtime::spawn_blocking(move || {
         sidecar
@@ -833,6 +880,7 @@ fn main() {
             platform_hints,
             open_archive,
             compute_diff,
+            compute_nested_diff,
             read_entry,
             set_engine,
             disassemble,
