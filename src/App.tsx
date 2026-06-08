@@ -722,7 +722,7 @@ export function App() {
                 viewMode={viewMode}
                 ignoreTrimWhitespace={ignoreTrimWhitespace}
                 onCopy={(from, to) => void copy(from, to)}
-                onShowSource={() => selected && void inspect(selected)}
+                onShowSource={() => selected && void inspect(selected, true)}
                 onShowBytecode={showBytecode}
                 onEditorMount={handleEditorMount}
                 onDiffMount={handleDiffMount}
