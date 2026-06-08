@@ -94,7 +94,7 @@ export function DiffView({
             original={preview.left?.content ?? ""}
             modified={preview.right?.content ?? ""}
             theme="vs-dark"
-            options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true, automaticLayout: true, ignoreTrimWhitespace }}
+            options={{ readOnly: true, minimap: { enabled: false }, renderSideBySide: true, useInlineViewWhenSpaceIsLimited: true, renderSideBySideInlineBreakpoint: 720, automaticLayout: true, ignoreTrimWhitespace }}
             onMount={onDiffMount}
           />
         ) : (
