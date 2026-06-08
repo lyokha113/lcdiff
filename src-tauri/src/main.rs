@@ -92,8 +92,12 @@ impl AppState {
         let summary = summarize(&archive);
         *archive_mut(self, side) = Some(archive);
         match side {
-            Side::Left => self.left_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?,
-            Side::Right => self.right_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?,
+            Side::Left => {
+                self.left_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+            }
+            Side::Right => {
+                self.right_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+            }
         }
         Ok(summary)
     }

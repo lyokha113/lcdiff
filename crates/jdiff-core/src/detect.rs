@@ -35,7 +35,10 @@ mod tests {
 
     #[test]
     fn classifies_archives() {
-        assert_eq!(detect_entry_kind("lib/inner.jar", false), EntryKind::Archive);
+        assert_eq!(
+            detect_entry_kind("lib/inner.jar", false),
+            EntryKind::Archive
+        );
         assert_eq!(detect_entry_kind("a.zip", false), EntryKind::Archive);
         assert_eq!(detect_entry_kind("a.war", false), EntryKind::Archive);
         assert_eq!(detect_entry_kind("a.ear", false), EntryKind::Archive);

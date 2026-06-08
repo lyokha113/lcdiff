@@ -632,7 +632,9 @@ fn resolves_one_and_two_level_nested_entries() {
     let mut cache = NestedArchiveCache::new().unwrap();
 
     // one level
-    let (arc1, leaf1) = cache.resolve(&root, "lib/middle.jar!/nested/inner.jar").unwrap();
+    let (arc1, leaf1) = cache
+        .resolve(&root, "lib/middle.jar!/nested/inner.jar")
+        .unwrap();
     assert_eq!(leaf1, "nested/inner.jar");
     assert_eq!(arc1.read_entry("nested/inner.jar").unwrap(), inner_bytes);
 
@@ -680,7 +682,10 @@ fn rewrite_zip_bytes_replaces_entry() {
     repl.insert("swap.txt".to_owned(), b"new".to_vec());
     let out = rewrite_zip_bytes(&bytes, &repl).unwrap();
 
-    assert_eq!(read_zip_entry_from_bytes(&out, "keep.txt").unwrap(), b"keep");
+    assert_eq!(
+        read_zip_entry_from_bytes(&out, "keep.txt").unwrap(),
+        b"keep"
+    );
     assert_eq!(read_zip_entry_from_bytes(&out, "swap.txt").unwrap(), b"new");
 }
 
