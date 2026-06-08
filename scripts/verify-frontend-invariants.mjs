@@ -314,8 +314,8 @@ if (copyActionGuards < 5) {
 if (!frontend.includes('disabled={mode === "single"}')) {
   failures.push('frontend: Save staged control must be disabled in Single mode');
 }
-if (!frontend.includes('aria-label="Save staged"') || !/onSave\(side\)|save\(side\)/.test(frontend)) {
-  failures.push('frontend: Save staged control must carry aria-label and trigger save for the side');
+if (!/aria-label=\{`Save to archive/.test(frontend) || !/onSave\(stagedTarget\)/.test(frontend)) {
+  failures.push('frontend: Save-to-archive control must carry an aria-label and trigger save for the staged target');
 }
 
 if (!frontend.includes('{mode === "compare" &&') || !frontend.includes('Keep one overwritten .bak on save')) {
