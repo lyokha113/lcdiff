@@ -65,6 +65,8 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
 
+const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf"];
+
 function searchResultKey(result: SearchResult) {
   return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
 }
@@ -585,6 +587,7 @@ export function App() {
         setStagedEntries((current) => {
           const next = { ...current };
           delete next[entryPath];
+          if (Object.keys(next).length === 0) setStagedTarget(undefined);
           return next;
         });
       }
@@ -593,6 +596,7 @@ export function App() {
     try {
       await invoke("stage_write", { side: "left", entryPath, content });
       setStagedEntries((current) => ({ ...current, [entryPath]: { side: "left", kind: "edit" } }));
+      setStagedTarget("left");
       setMessage(`Edited ${entryPath} (unsaved)`);
     } catch (error) {
       setMessage(String(error));
@@ -695,12 +699,11 @@ export function App() {
     );
   }
 
-  const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf"];
-  const selectedExtension = (selected?.path ?? "").split(".").pop()?.toLowerCase() ?? "";
   const isEditableEntry =
     mode === "single" &&
     !!preview.left &&
-    (preview.left.kind === "text" || EDIT_EXTENSIONS.includes(selectedExtension));
+    (preview.left.kind === "text" ||
+      EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
 
   return (
     <TooltipProvider>
@@ -781,7 +784,7 @@ export function App() {
                 editable={isEditableEntry}
                 editValue={editBuffer}
                 onEditChange={(value) => setEditBuffer(value ?? "")}
-                onEditBlur={() => selected && void stageEdit(selected.path, editBuffer)}
+                onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
               />
             </div>
           </div>

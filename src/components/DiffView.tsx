@@ -22,7 +22,7 @@ interface DiffViewProps {
   editable: boolean;
   editValue: string;
   onEditChange: (value: string | undefined) => void;
-  onEditBlur: () => void;
+  onEditBlur: (content: string) => void;
 }
 
 export function DiffView({
@@ -107,7 +107,7 @@ export function DiffView({
             onChange={(value) => editable && onEditChange(value)}
             onMount={(editor, monaco) => {
               onEditorMount(editor, monaco);
-              editor.onDidBlurEditorText(() => editable && onEditBlur());
+              editor.onDidBlurEditorText(() => editable && onEditBlur(editor.getValue()));
             }}
           />
         )}

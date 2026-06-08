@@ -57,7 +57,7 @@ export function MenuBar({
           <TooltipTrigger asChild>
             <span>
               <Button variant="secondary" size="icon" aria-label="Save staged"
-                disabled={mode === "single" || !stagedTarget} onClick={() => stagedTarget && onSave(stagedTarget)}>
+                disabled={!stagedTarget} onClick={() => stagedTarget && onSave(stagedTarget)}>
                 <Save />
               </Button>
             </span>
