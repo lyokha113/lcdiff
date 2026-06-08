@@ -356,9 +356,9 @@ export function App() {
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
   }
 
-  async function inspect(pair: ComparePair) {
+  async function inspect(pair: ComparePair, force = false) {
     const existing = openTabs.find((t) => t.path === pair.path);
-    if (existing) {
+    if (existing && !force) {
       focusTab(pair.path);
       return;
     }
@@ -447,7 +447,7 @@ export function App() {
   async function changeEngine(next: Engine) {
     await invoke("set_engine", { engine: next });
     setEngine(next);
-    if (selected) await inspect(selected);
+    if (selected) await inspect(selected, true);
   }
 
   function pickMode(next: Mode) {
