@@ -34,6 +34,15 @@ Current implementation:
 - Merge UI: arrow buttons and a row context menu stage original entry bytes;
   pending badges show the current target before explicit save, and rows can be
   unstaged individually.
+- Workspace UI: a hierarchical, foldable file tree with per-node status; a
+  multi-tab diff workspace (up to 10 tabs, LRU eviction, per-tab view-mode and
+  preview state, left/middle-click close) alongside the Files panel; a Config
+  drawer for decompiler engine, whitespace, backup, and search-scope options;
+  and a startup splash screen while the sidecar warms.
+- Nested archives: archive entries (jar/zip/war/ear inside an archive) expand
+  lazily in the tree through `compute_nested_diff`, extract to cached temp files
+  on demand using the `parent!/inner` path separator, and merge by flattening
+  staged replacements back into their parent archives.
 
 macOS-first build status:
 
@@ -87,6 +96,54 @@ Remote release workflow validation:
 ```bash
 rtk scripts/verify-remote-release-workflow.sh --dispatch --ref main
 ```
+
+Linux build:
+
+The only Linux target validated in CI is **Ubuntu 24.04**
+(`.github/workflows/release.yml`), which produces AppImage, `.deb`, and `.rpm`
+artifacts. AppImage is portable to other distributions (including Arch); `.deb`
+suits Ubuntu/Debian and `.rpm` suits Fedora/openSUSE.
+
+Install the WebKitGTK toolchain for your distro:
+
+Ubuntu / Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  patchelf
+```
+
+Arch Linux:
+
+```bash
+sudo pacman -Syu --needed \
+  webkit2gtk-4.1 \
+  base-devel \
+  librsvg \
+  libappindicator-gtk3 \
+  patchelf \
+  openssl
+```
+
+Then assemble the sidecar JRE and bundle (any distro):
+
+```bash
+JDIFF_JLINK="$(command -v jlink)" \
+  rtk scripts/assemble-sidecar-resources.sh
+rtk npm run tauri -- build \
+  --target x86_64-unknown-linux-gnu \
+  --bundles appimage,deb,rpm
+```
+
+Requires a Java 17+ `jlink` on `PATH` (or set `JDIFF_JLINK` to one) so the
+sidecar JRE is assembled before bundling. Artifacts land under
+`target/x86_64-unknown-linux-gnu/release/bundle/`. On Arch (and other non-Debian,
+non-RPM distros) prefer `--bundles appimage`; native `.deb`/`.rpm` tooling is not
+present by default.
 
 Linux Wayland file-drop fallback:
 

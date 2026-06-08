@@ -52,3 +52,19 @@ staged changes, and bytes.
 | M2 | Two-panel compare |
 | M3 | Staged merge and atomic save |
 | M4 | Deep search, bytecode view, packaging, platform matrix |
+
+## Delivered Enhancements Beyond MVP
+
+These post-MVP capabilities are implemented in the current build. They extend
+the accepted contract above without changing its non-goals.
+
+- Nested-archive expansion: archives nested inside a source (jar/zip/war/ear)
+  expand lazily in the tree, diff through `compute_nested_diff` using the
+  `parent!/inner` path separator, and merge by flattening staged replacements
+  back into their parent archives.
+- Multi-tab diff workspace: up to 10 concurrent diff tabs with LRU eviction and
+  per-tab view-mode and preview state, alongside the Files panel.
+- Hierarchical file tree with per-node status rollup.
+- Config drawer that groups decompiler engine, whitespace, backup, and
+  search-scope options away from the operational surface.
+- Startup splash screen shown while the JVM sidecar warms.

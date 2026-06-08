@@ -17,10 +17,11 @@ derived from the input spec.
 ## Folders
 
 - `product/`: current product truth — holds `jdiff-product-contract.md`.
-- `stories/`: feature packets and backlog.
+- `stories/`: implemented feature packets (status lives in the durable layer,
+  queried with `scripts/bin/harness-cli query matrix`).
 - `decisions/`: durable decisions and tradeoffs.
-- `demo/`: concrete walkthroughs that show how the harness transforms input
-  into agent-ready work.
+- `superpowers/archive/`: completed implementation plans and design specs for
+  merged features, kept as historical record.
 - `templates/`: reusable spec-intake, story, plan, decision, and validation
   formats.
 

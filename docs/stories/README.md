@@ -3,7 +3,18 @@
 Stories are work packets. They turn product intent into bounded implementation
 and validation work.
 
-No story packets are active yet.
+Current story status is tracked in the durable layer and queried with
+`scripts/bin/harness-cli query matrix`. Implemented packet folders in this
+directory:
+
+- `jdiff-mvp-core/` — Rust archive engine: validated open, lazy read, CRC diff,
+  search, staged atomic save (implemented).
+- `jdiff-jvm-sidecar/` — JVM decompiler sidecar: CFR/Vineflower/ASM, typed
+  options, versioned LRU cache, jlink runtime (implemented).
+
+The `jdiff-desktop-shell` story (Tauri React shell, compare/merge UI,
+multi-tab diff workspace, nested-archive expansion) is tracked in the matrix;
+see `../JDIFF_COMPLETION_AUDIT.md` for proof evidence.
 
 ## Normal Story
 
