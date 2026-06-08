@@ -82,3 +82,7 @@ function finalize(folder: MutableFolder, fileLists: Map<MutableFolder, TreeFile[
   const files = (fileLists.get(folder) ?? []).sort((a, b) => a.name.localeCompare(b.name));
   return [...folders, ...files];
 }
+
+export function isArchiveKind(pair: ComparePair): boolean {
+  return pair.left?.kind === "archive" || pair.right?.kind === "archive";
+}

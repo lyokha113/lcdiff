@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, type TreeFolder, type TreeFile } from "@/lib/tree";
+import { buildTree, isArchiveKind, type TreeFolder, type TreeFile } from "@/lib/tree";
 import type { ComparePair } from "@/lib/types";
 
 const pairs: ComparePair[] = [
@@ -43,5 +43,13 @@ describe("buildTree", () => {
     const top = tree.find((n) => n.name === "top.txt") as TreeFile;
     expect(top.kind).toBe("file");
     expect(top.path).toBe("top.txt");
+  });
+});
+
+describe("isArchiveKind", () => {
+  it("detects archive entries on either side", () => {
+    expect(isArchiveKind({ path: "a.jar", status: "different", left: { path: "a.jar", kind: "archive" } })).toBe(true);
+    expect(isArchiveKind({ path: "b.jar", status: "onlyRight", right: { path: "b.jar", kind: "archive" } })).toBe(true);
+    expect(isArchiveKind({ path: "c.txt", status: "onlyLeft", left: { path: "c.txt", kind: "text" } })).toBe(false);
   });
 });
