@@ -6,10 +6,11 @@ import { MenuBar } from "@/components/MenuBar";
 
 function setup(overrides = {}) {
   const props = {
-    mode: "compare" as const, stagedTarget: undefined as "left" | "right" | undefined, stagedCount: 0,
+    mode: "compare" as const, stagedTarget: undefined as "left" | "right" | undefined,
+    pendingOps: [] as Array<{ path: string; side: "left" | "right"; kind: "copy" | "edit" }>,
     searchOpen: true, drawerOpen: false, canRefresh: true,
     onChangeMode: vi.fn(), onSave: vi.fn(), onRefresh: vi.fn(), onClearStaged: vi.fn(),
-    onToggleSearch: vi.fn(), onToggleDrawer: vi.fn(),
+    onToggleSearch: vi.fn(), onToggleDrawer: vi.fn(), onUnstageOne: vi.fn(),
     ...overrides,
   };
   render(<TooltipProvider><MenuBar {...props} /></TooltipProvider>);
@@ -17,13 +18,21 @@ function setup(overrides = {}) {
 }
 
 describe("MenuBar", () => {
-  it("shows the staged badge when copies are pending", () => {
-    setup({ stagedTarget: "right", stagedCount: 2 });
-    expect(screen.getByText(/2/)).toBeInTheDocument();
+  it("shows save-to-archive label and lists pending ops", () => {
+    setup({
+      stagedTarget: "right",
+      pendingOps: [
+        { path: "config.xml", side: "right", kind: "edit" },
+        { path: "Main.class", side: "right", kind: "copy" },
+      ],
+    });
+    expect(screen.getByRole("button", { name: /save to archive \(2\)/i })).toBeInTheDocument();
+    expect(screen.getByText(/2 unsaved/i)).toBeInTheDocument();
   });
-  it("hides the staged badge when nothing is staged", () => {
-    setup({ stagedTarget: undefined, stagedCount: 0 });
-    expect(screen.queryByText(/→/)).not.toBeInTheDocument();
+
+  it("hides the unsaved badge when nothing is staged", () => {
+    setup({ stagedTarget: undefined, pendingOps: [] });
+    expect(screen.queryByText(/unsaved/i)).not.toBeInTheDocument();
   });
   it("toggles the drawer", async () => {
     const props = setup();

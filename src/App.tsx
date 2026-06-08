@@ -711,7 +711,8 @@ export function App() {
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
-        stagedCount={Object.keys(stagedEntries).length}
+        pendingOps={Object.entries(stagedEntries).map(([path, entry]) => ({ path, side: entry.side, kind: entry.kind }))}
+        onUnstageOne={(entryPath) => void unstage(entryPath)}
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
         canRefresh={Boolean(archives.left || archives.right)}
