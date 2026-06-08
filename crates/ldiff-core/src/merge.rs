@@ -167,6 +167,9 @@ impl MergePlan {
                 }
             })
         } else if target.metadata().source_kind == ArchiveSourceKind::File {
+            // File source is a single backing file: exactly one replacement, written
+            // whole-file. The entry key is irrelevant — the bytes go to `target_path`.
+            debug_assert_eq!(replacements.len(), 1, "File source must have exactly one replacement");
             // Single backing file: write the one replacement's bytes atomically.
             let bytes = replacements
                 .values()
@@ -634,6 +637,21 @@ mod stage_write_tests {
         assert_eq!(std::fs::read(result.backup_path.unwrap()).unwrap(), b"old\n");
         assert_eq!(result.copied_entries, 1);
         assert!(!result.signature_invalidated);
+    }
+
+    #[test]
+    fn commit_file_source_without_backup_writes_no_bak() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, b"old\n").unwrap();
+
+        let target = Archive::open(path.to_string_lossy()).unwrap();
+        let mut plan = MergePlan::new();
+        plan.stage_write("notes.txt", b"new\n".to_vec()).unwrap();
+        let result = plan.commit(&target, CommitOptions { backup: false }).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
+        assert!(result.backup_path.is_none());
     }
 
     #[test]
