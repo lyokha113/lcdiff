@@ -46,6 +46,7 @@ import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { FileTree } from "@/components/FileTree";
+import { pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
 import {
   type HistoryEntry,
@@ -69,14 +70,6 @@ function basename(path: string) {
 
 function searchResultKey(result: SearchResult) {
   return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
-}
-
-function pairPassesTreeFilter(pair: ComparePair, filter: TreeFilter) {
-  return (
-    filter === "all" ||
-    (filter === "differences" && pair.status !== "identical") ||
-    pair.status === filter
-  );
 }
 
 function applySearchLineHighlight(
@@ -683,6 +676,7 @@ export function App() {
                 selected={selected}
                 stagedEntries={stagedEntries}
                 mode={mode}
+                treeFilter={treeFilter}
                 nestedPairs={nestedPairs}
                 onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                 onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}

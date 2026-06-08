@@ -5,14 +5,15 @@ import {
   ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { statusPresentation } from "@/lib/status";
-import { buildTree, isArchiveKind, type TreeNode } from "@/lib/tree";
-import type { ComparePair, Mode, Side } from "@/lib/types";
+import { buildTree, isArchiveKind, pairPassesTreeFilter, type TreeNode } from "@/lib/tree";
+import type { ComparePair, Mode, Side, TreeFilter } from "@/lib/types";
 
 interface FileTreeProps {
   visiblePairs: ComparePair[];
   selected?: ComparePair;
   stagedEntries: Record<string, Side>;
   mode: Mode;
+  treeFilter: TreeFilter;
   nestedPairs: Record<string, ComparePair[]>;
   onInspect: (pair: ComparePair) => void;
   onSelect: (pair: ComparePair) => void;
@@ -100,7 +101,7 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
   const { pair } = node;
   const fullPath = fullPathOf(basePath, node.path);
   const fullPair: ComparePair = basePath ? { ...pair, path: fullPath } : pair;
-  const { selected, stagedEntries, mode, nestedPairs, onInspect, onSelect, onCopy, onUnstage, onExpandArchive } = props;
+  const { selected, stagedEntries, mode, treeFilter, nestedPairs, onInspect, onSelect, onCopy, onUnstage, onExpandArchive } = props;
   const pres = statusPresentation(pair.status);
 
   if (isArchiveKind(pair)) {
@@ -149,7 +150,7 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
         {open && children === undefined && (
           <div className="tree-row" style={{ paddingLeft: `${(depth + 1) * 14 + 8}px` }}>Loading…</div>
         )}
-        {open && children !== undefined && buildTree(children).map((child) => (
+        {open && children !== undefined && buildTree(children.filter((child) => pairPassesTreeFilter(child, treeFilter))).map((child) => (
           <FileTreeNode {...props} key={child.path} node={child} depth={depth + 1} basePath={fullPath} expanded={expanded} onToggle={onToggle} />
         ))}
       </>

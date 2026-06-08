@@ -12,7 +12,7 @@ const pairs: ComparePair[] = [
 function setup(overrides = {}) {
   const props = {
     visiblePairs: pairs, selected: undefined, stagedEntries: {}, mode: "compare" as const,
-    nestedPairs: {}, onExpandArchive: vi.fn(),
+    treeFilter: "all" as const, nestedPairs: {}, onExpandArchive: vi.fn(),
     onInspect: vi.fn(), onSelect: vi.fn(), onCopy: vi.fn(), onUnstage: vi.fn(),
     ...overrides,
   };
@@ -52,6 +52,7 @@ describe("FileTree", () => {
         visiblePairs={pairs}
         stagedEntries={{}}
         mode="compare"
+        treeFilter="all"
         nestedPairs={{}}
         onInspect={() => {}}
         onSelect={() => {}}
@@ -63,5 +64,34 @@ describe("FileTree", () => {
     const row = screen.getByText("inner.jar").closest("button")!;
     fireEvent.click(row);
     expect(onExpandArchive).toHaveBeenCalledWith("lib/inner.jar");
+  });
+
+  it("applies the tree filter to nested archive children", () => {
+    const pairs: ComparePair[] = [
+      { path: "lib/inner.jar", status: "different", left: { path: "lib/inner.jar", kind: "archive" }, right: { path: "lib/inner.jar", kind: "archive" } },
+    ];
+    const nestedPairs = {
+      "lib/inner.jar": [
+        { path: "Changed.class", status: "different" as const, left: { path: "Changed.class", kind: "class" as const }, right: { path: "Changed.class", kind: "class" as const } },
+        { path: "Same.class", status: "identical" as const, left: { path: "Same.class", kind: "class" as const }, right: { path: "Same.class", kind: "class" as const } },
+      ],
+    };
+    render(
+      <FileTree
+        visiblePairs={pairs}
+        stagedEntries={{}}
+        mode="compare"
+        treeFilter="differences"
+        nestedPairs={nestedPairs}
+        onInspect={() => {}}
+        onSelect={() => {}}
+        onCopy={() => {}}
+        onUnstage={() => {}}
+        onExpandArchive={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText("inner.jar").closest("button")!);
+    expect(screen.getByText("Changed.class")).toBeInTheDocument();
+    expect(screen.queryByText("Same.class")).not.toBeInTheDocument();
   });
 });
