@@ -123,9 +123,12 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
             {chevron}
             {folderIcon}
             <span className="tree-name">{node.name}</span>
-            {twoPane && node.diffCount > 0 && <span className="folder-rollup">● {node.diffCount}</span>}
           </span>
-          {twoPane && <span className="tree-mid" />}
+          {twoPane && (
+            <span className="tree-mid">
+              {node.diffCount > 0 && <span className="folder-rollup">● {node.diffCount}</span>}
+            </span>
+          )}
           {twoPane && (
             <span className="tree-half tree-half-right" style={halfIndent}>
               <span className="tree-chevron tree-chevron-spacer" aria-hidden="true" />

@@ -436,7 +436,7 @@ h1 {
 .tree-two-pane .tree-row,
 .tree-header {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr 64px 1fr;
   align-items: center;
   width: 100%;
 }
@@ -444,12 +444,15 @@ h1 {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 4px 8px;
+  padding: 4px 0;
   font-size: 0.72rem;
   letter-spacing: 0.02em;
   color: var(--text-2, #889);
   background: color-mix(in oklab, var(--ink-1) 94%, transparent);
   border-bottom: 1px solid var(--line);
+}
+.tree-header .tree-half {
+  padding: 0 8px;
 }
 .tree-half {
   display: flex;
@@ -469,7 +472,10 @@ h1 {
   min-width: 0;
 }
 .tree-mid {
-  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
 }
 .tree-gap {
   flex: 1 1 auto;
