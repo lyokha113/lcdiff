@@ -888,6 +888,10 @@ export function App() {
     (preview.left.kind === "text" ||
       EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
 
+  const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
+  const leftLabel = baseName(archives.left?.path ?? paths.left) ?? "Left";
+  const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
+
   return (
     <TooltipProvider>
     <main className="app-shell">
@@ -946,6 +950,8 @@ export function App() {
                 mode={mode}
                 treeFilter={treeFilter}
                 nestedPairs={nestedPairs}
+                leftLabel={leftLabel}
+                rightLabel={rightLabel}
                 onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                 onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
                 onCopy={(from, to, pair) => void copy(from, to, pair)}

@@ -432,6 +432,62 @@ h1 {
   text-transform: lowercase;
 }
 
+/* ---------- two-pane (Beyond Compare) tree ---------- */
+.tree-two-pane .tree-row,
+.tree-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  width: 100%;
+}
+.tree-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--text-2, #889);
+  background: color-mix(in oklab, var(--ink-1) 94%, transparent);
+  border-bottom: 1px solid var(--line);
+}
+.tree-half {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.tree-half-right {
+  border-left: 1px solid var(--line);
+}
+.tree-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tree-mid {
+  padding: 0 8px;
+}
+.tree-gap {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 18px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.02),
+    rgba(255, 255, 255, 0.02) 6px,
+    rgba(255, 255, 255, 0.05) 6px,
+    rgba(255, 255, 255, 0.05) 12px
+  );
+}
+.tree-chevron-spacer {
+  visibility: hidden;
+}
+
 /* ---------- editor pane ---------- */
 .editor-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 8px; }
 .copy-actions {

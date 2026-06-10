@@ -169,7 +169,10 @@ async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/config.json", side: "right" }));
 
   // Inspect the lone pair so `selected` is set and read_entry populates preview.
-  const row = await screen.findByText("config.json");
+  // Paired entries render once per side in the two-pane tree (and again in the
+  // column header labels); click the actual file row, not a header label.
+  const cells = await screen.findAllByText("config.json");
+  const row = cells.find((el) => el.closest("button.tree-file"))!;
   await user.click(row);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_entry", { side: "left", entryPath: "config.json" }));
 }
