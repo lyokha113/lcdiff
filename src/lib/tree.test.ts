@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, isArchiveKind, isDirectoryPair, type TreeFolder, type TreeFile } from "@/lib/tree";
+import { buildTree, isArchiveKind, isDirectoryPair, pairPassesTreeFilter, type TreeFolder, type TreeFile } from "@/lib/tree";
 import type { ComparePair } from "@/lib/types";
 
 const pairs: ComparePair[] = [
@@ -72,5 +72,31 @@ describe("isArchiveKind", () => {
     expect(isArchiveKind({ path: "a.jar", status: "different", left: { path: "a.jar", kind: "archive" } })).toBe(true);
     expect(isArchiveKind({ path: "b.jar", status: "onlyRight", right: { path: "b.jar", kind: "archive" } })).toBe(true);
     expect(isArchiveKind({ path: "c.txt", status: "onlyLeft", left: { path: "c.txt", kind: "text" } })).toBe(false);
+  });
+});
+
+describe("pairPassesTreeFilter", () => {
+  const diffPair = { path: "a", status: "different" } as ComparePair;
+  const leftPair = { path: "b", status: "onlyLeft" } as ComparePair;
+  const samePair = { path: "c", status: "identical" } as ComparePair;
+  const metaPair = { path: "d", status: "differentMetadataOnly" } as ComparePair;
+
+  it("all passes everything", () => {
+    for (const p of [diffPair, leftPair, samePair, metaPair]) {
+      expect(pairPassesTreeFilter(p, "all")).toBe(true);
+    }
+  });
+
+  it("diff passes everything except identical", () => {
+    expect(pairPassesTreeFilter(diffPair, "diff")).toBe(true);
+    expect(pairPassesTreeFilter(leftPair, "diff")).toBe(true);
+    expect(pairPassesTreeFilter(metaPair, "diff")).toBe(true);
+    expect(pairPassesTreeFilter(samePair, "diff")).toBe(false);
+  });
+
+  it("same passes only identical", () => {
+    expect(pairPassesTreeFilter(samePair, "same")).toBe(true);
+    expect(pairPassesTreeFilter(diffPair, "same")).toBe(false);
+    expect(pairPassesTreeFilter(leftPair, "same")).toBe(false);
   });
 });

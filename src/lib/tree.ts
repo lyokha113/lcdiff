@@ -97,9 +97,7 @@ export function isArchiveKind(pair: ComparePair): boolean {
 }
 
 export function pairPassesTreeFilter(pair: ComparePair, filter: TreeFilter): boolean {
-  return (
-    filter === "all" ||
-    (filter === "differences" && pair.status !== "identical") ||
-    pair.status === filter
-  );
+  if (filter === "all") return true;
+  if (filter === "same") return pair.status === "identical";
+  return pair.status !== "identical";
 }
