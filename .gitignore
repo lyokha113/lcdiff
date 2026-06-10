@@ -20,3 +20,7 @@ src-tauri/resources/jre/
 src-tauri/resources/jre-legal.tar.gz
 src-tauri/resources/sidecar/
 sidecar/target/
+target-linux/
+linux-bundle/
+linux-bundle-amd64/
+docker/last-run-screenshot.png

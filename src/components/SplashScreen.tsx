@@ -35,7 +35,7 @@ export function SplashScreen({
   return (
     <div className="splash">
       <div className="splash-brand">
-        <h1>LDiff</h1>
+        <h1>LDIFF</h1>
         <span className="tagline">Inspect, compare &amp; merge JAR / ZIP / folders</span>
       </div>
 
