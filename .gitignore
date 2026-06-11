@@ -1,0 +1,29 @@
+.DS_Store
+
+# Local agent/index state.
+.claude/
+.codegraph/
+.serena/
+.superpowers/
+
+# Local environment and logs.
+.env
+.env.*
+*.log
+
+# Rust build output.
+target/
+dist/
+node_modules/
+src-tauri/gen/
+src-tauri/resources/jre/
+src-tauri/resources/jre-legal.tar.gz
+src-tauri/resources/sidecar/
+sidecar/target/
+target-linux/
+linux-bundle/
+linux-bundle-amd64/
+docker/last-run-screenshot.png
+
+# release build artifacts
+artifacts/
