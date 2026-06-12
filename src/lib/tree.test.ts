@@ -57,6 +57,53 @@ describe("buildTree", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0].kind).toBe("folder");
   });
+
+  it("hides nested and anonymous class leaves when the parent class exists in the same folder", () => {
+    const withInnerClasses: ComparePair[] = [
+      { path: "pkg/MarketSSEventListener.class", status: "identical", left: { path: "pkg/MarketSSEventListener.class", kind: "class" } },
+      { path: "pkg/MarketSSEventListener$1.class", status: "identical", left: { path: "pkg/MarketSSEventListener$1.class", kind: "class" } },
+      { path: "pkg/MarketSSEventListener$Inner.class", status: "identical", left: { path: "pkg/MarketSSEventListener$Inner.class", kind: "class" } },
+      { path: "pkg/OrderBookEventListener.class", status: "identical", left: { path: "pkg/OrderBookEventListener.class", kind: "class" } },
+      { path: "pkg/OrderBookEventListener$1.class", status: "identical", left: { path: "pkg/OrderBookEventListener$1.class", kind: "class" } },
+    ];
+
+    const tree = buildTree(withInnerClasses);
+    const pkg = tree.find((n) => n.name === "pkg") as TreeFolder;
+
+    expect(pkg.children.map((n) => n.name)).toEqual([
+      "MarketSSEventListener.class",
+      "OrderBookEventListener.class",
+    ]);
+  });
+
+  it("keeps orphan nested class leaves when the parent class is absent", () => {
+    const tree = buildTree([
+      { path: "pkg/Outer$Inner.class", status: "identical", left: { path: "pkg/Outer$Inner.class", kind: "class" } },
+    ]);
+    const pkg = tree.find((n) => n.name === "pkg") as TreeFolder;
+
+    expect(pkg.children.map((n) => n.name)).toEqual(["Outer$Inner.class"]);
+  });
+
+  it("does not hide non-class files that contain a dollar sign", () => {
+    const tree = buildTree([
+      { path: "assets/foo$bar.txt", status: "identical", left: { path: "assets/foo$bar.txt", kind: "text" } },
+      { path: "assets/foo.txt", status: "identical", left: { path: "assets/foo.txt", kind: "text" } },
+    ]);
+    const assets = tree.find((n) => n.name === "assets") as TreeFolder;
+
+    expect(assets.children.map((n) => n.name)).toEqual(["foo.txt", "foo$bar.txt"]);
+  });
+
+  it("only hides nested classes when the parent class is in the same folder", () => {
+    const tree = buildTree([
+      { path: "a/Outer.class", status: "identical", left: { path: "a/Outer.class", kind: "class" } },
+      { path: "b/Outer$Inner.class", status: "identical", left: { path: "b/Outer$Inner.class", kind: "class" } },
+    ]);
+    const folderB = tree.find((n) => n.name === "b") as TreeFolder;
+
+    expect(folderB.children.map((n) => n.name)).toEqual(["Outer$Inner.class"]);
+  });
 });
 
 describe("isDirectoryPair", () => {
