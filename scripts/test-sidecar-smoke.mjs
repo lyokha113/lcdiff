@@ -94,6 +94,15 @@ try {
   });
   assertIncludes(defaultDecompiler, "hello-ldiff");
   assertNotIncludes(defaultDecompiler, "Decompiled with CFR");
+  const vineflowerDecompiler = await request(child, pending, {
+    id: "explicit-vineflower",
+    action: "decompile",
+    engine: "vineflower",
+    classpath: [archive],
+    entry: "demo/Hello.class",
+  });
+  assertIncludes(vineflowerDecompiler, "hello-ldiff");
+  assertSameSource(defaultDecompiler, vineflowerDecompiler);
   const malformed = await request(child, pending, {
     id: "malformed",
     action: "disassemble",
@@ -133,6 +142,14 @@ function assertNotIncludes(response, unexpected) {
   assertOk(response);
   if (response.source?.includes(unexpected)) {
     throw new Error(`unexpected ${JSON.stringify(unexpected)} in ${JSON.stringify(response)}`);
+  }
+}
+
+function assertSameSource(left, right) {
+  assertOk(left);
+  assertOk(right);
+  if (left.source !== right.source) {
+    throw new Error(`source mismatch: ${JSON.stringify({ left, right })}`);
   }
 }
 
