@@ -1,13 +1,21 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfigDrawer } from "@/components/ConfigDrawer";
+import { DEFAULT_ENGINE } from "@/lib/types";
+
+Object.assign(window.HTMLElement.prototype, {
+  hasPointerCapture: vi.fn(() => false),
+  scrollIntoView: vi.fn(),
+  setPointerCapture: vi.fn(),
+  releasePointerCapture: vi.fn(),
+});
 
 function setup(overrides = {}) {
   const props = {
     open: true, mode: "compare" as const, searchScope: "both" as const, searching: false,
-    engine: "cfr" as const,
+    engine: DEFAULT_ENGINE,
     ignoreTrimWhitespace: true, backupEnabled: false,
     viewMode: "source" as const, canShowSource: true, canShowBytecode: true,
     onScopeChange: vi.fn(), onDeepSearch: vi.fn(), onCancelDeepSearch: vi.fn(), onClearSearch: vi.fn(),
@@ -32,6 +40,15 @@ describe("ConfigDrawer", () => {
     const props = setup();
     await userEvent.click(screen.getByText("Deep search"));
     expect(props.onDeepSearch).toHaveBeenCalled();
+  });
+  it("keeps Vineflower and CFR selectable", async () => {
+    const props = setup();
+    await userEvent.click(screen.getByLabelText("Decompiler engine"));
+    const engineOptions = screen.getByRole("listbox");
+    expect(within(engineOptions).getByText("Vineflower")).toBeInTheDocument();
+    expect(within(engineOptions).getByText("CFR")).toBeInTheDocument();
+    await userEvent.click(within(engineOptions).getByText("CFR"));
+    expect(props.onEngineChange).toHaveBeenCalledWith("cfr");
   });
 
   // View toggle moved here from the diff toolbar.

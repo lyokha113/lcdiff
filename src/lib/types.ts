@@ -9,6 +9,7 @@ export interface StagedEntry {
 export type PairStatus = "onlyLeft" | "onlyRight" | "identical" | "different" | "differentMetadataOnly";
 export type EntryKind = "directory" | "class" | "text" | "archive" | "binary";
 export type Engine = "cfr" | "vineflower";
+export const DEFAULT_ENGINE: Engine = "vineflower";
 export type Mode = "single" | "compare";
 export type SearchScope = Side | "both";
 export type TreeFilter = "all" | "diff" | "same";

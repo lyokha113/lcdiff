@@ -1,28 +1,29 @@
 import "@/lib/monaco";
 import type { DiffOnMount, OnMount } from "@monaco-editor/react";
-import type {
-  ArchiveDiff,
-  ArchiveSummary,
-  CodeEditor,
-  CommitResult,
-  ComparePair,
-  DecorationRef,
-  DiffCodeEditor,
-  Engine,
-  EntryKind,
-  EntryPreview,
-  Mode,
-  MonacoApi,
-  PairStatus,
-  PlatformHints,
-  SearchHit,
-  SearchResult,
-  SearchScope,
-  SearchTier,
-  Side,
-  StagedEntry,
-  TreeFilter,
-  ViewMode,
+import {
+  type ArchiveDiff,
+  type ArchiveSummary,
+  type CodeEditor,
+  type CommitResult,
+  type ComparePair,
+  type DecorationRef,
+  DEFAULT_ENGINE,
+  type DiffCodeEditor,
+  type Engine,
+  type EntryKind,
+  type EntryPreview,
+  type Mode,
+  type MonacoApi,
+  type PairStatus,
+  type PlatformHints,
+  type SearchHit,
+  type SearchResult,
+  type SearchScope,
+  type SearchTier,
+  type Side,
+  type StagedEntry,
+  type TreeFilter,
+  type ViewMode,
 } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -112,7 +113,7 @@ export function App() {
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
-  const [engine, setEngine] = useState<Engine>("cfr");
+  const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE);
   const [query, setQuery] = useState("");
   const [searchScope, setSearchScope] = useState<SearchScope>("both");
   const [searchPaths, setSearchPaths] = useState<Set<string>>();
