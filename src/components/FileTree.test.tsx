@@ -29,6 +29,19 @@ describe("FileTree", () => {
     // A left-only file renders only on the left, with a gap on the right.
     expect(screen.getAllByText("top.txt").length).toBe(1);
   });
+  it("renders a chevron spacer in file cells so file icons align with folder icons", () => {
+    const { container } = setup();
+
+    const fileRows = container.querySelectorAll("button.tree-file");
+    expect(fileRows.length).toBeGreaterThan(0);
+    for (const row of fileRows) {
+      const populatedCells = row.querySelectorAll(".tree-cell:not(.tree-gap)");
+      expect(populatedCells.length).toBeGreaterThan(0);
+      for (const cell of populatedCells) {
+        expect(cell.querySelector(".tree-file-chevron-spacer")).toBeInTheDocument();
+      }
+    }
+  });
   it("collapsing a folder hides its files", async () => {
     setup();
     await userEvent.click(screen.getAllByText("com")[0].closest("button")!);

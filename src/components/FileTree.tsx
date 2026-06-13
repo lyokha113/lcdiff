@@ -100,6 +100,10 @@ function SideCell({ present, icon, name, chevron }: {
   );
 }
 
+const fileChevronSpacer = (
+  <span className="tree-chevron tree-chevron-spacer tree-file-chevron-spacer" aria-hidden="true" />
+);
+
 function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: NodeProps) {
   const { mode } = props;
   const twoPane = mode !== "single";
@@ -232,13 +236,23 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
           onContextMenu={() => onSelect(fullPair)}
         >
           <span className="tree-half tree-half-left" style={twoPane ? halfIndent : undefined}>
-            <SideCell present={twoPane ? !!pair.left : true} icon={<File className="tree-icon" />} name={node.name} />
+            <SideCell
+              present={twoPane ? !!pair.left : true}
+              chevron={fileChevronSpacer}
+              icon={<File className="tree-icon" />}
+              name={node.name}
+            />
             {stagedBadge}
           </span>
           {statusGlyph}
           {twoPane && (
             <span className="tree-half tree-half-right" style={halfIndent}>
-              <SideCell present={!!pair.right} icon={<File className="tree-icon" />} name={node.name} />
+              <SideCell
+                present={!!pair.right}
+                chevron={fileChevronSpacer}
+                icon={<File className="tree-icon" />}
+                name={node.name}
+              />
             </span>
           )}
         </button>
