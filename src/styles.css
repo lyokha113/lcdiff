@@ -372,6 +372,55 @@ h1 {
   font-size: 0.74rem;
   white-space: nowrap;
 }
+.search-results-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 8px;
+  max-height: 9.5rem;
+  overflow: auto;
+  padding: 4px 2px 8px;
+}
+.search-result-group {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--ink-1) 76%, transparent);
+}
+.search-result-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-1);
+  border-bottom: 1px solid var(--line-soft);
+}
+.search-result-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+.search-result-row {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  font-family: var(--font-tree, var(--font-mono));
+  font-size: var(--ldiff-tree-font-size, 0.74rem);
+}
+.search-result-path,
+.search-result-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-result-path { flex: 1 1 auto; text-align: left; }
+.search-result-preview { flex: 0 2 18rem; color: var(--text-2); text-align: left; }
+.search-result-line { flex: 0 0 auto; color: var(--brass); }
 
 /* ---------- workspace: tree + editor ---------- */
 .tree {
