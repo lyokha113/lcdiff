@@ -1777,6 +1777,7 @@ version = "0.1.0"
 dependencies = [
  "ldiff-core",
  "serde",
+ "serde_json",
  "sha2",
  "tauri",
  "tauri-build",

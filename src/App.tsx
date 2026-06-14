@@ -3,6 +3,7 @@ import type { DiffOnMount, OnMount } from "@monaco-editor/react";
 import {
   type ArchiveDiff,
   type ArchiveSummary,
+  type BackendSearchHit,
   type CodeEditor,
   type CommitResult,
   type ComparePair,
@@ -75,6 +76,7 @@ interface LegacySearchHit {
   path: string;
   matchKind: string;
   line?: number;
+  preview?: string;
 }
 
 interface LegacySearchResult extends LegacySearchHit {
@@ -84,6 +86,15 @@ interface LegacySearchResult extends LegacySearchHit {
 
 function searchResultKey(result: LegacySearchResult) {
   return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
+}
+
+function legacySearchHit(hit: BackendSearchHit): LegacySearchHit {
+  return {
+    path: hit.entryPath,
+    matchKind: hit.kind,
+    line: hit.line,
+    preview: hit.preview,
+  };
 }
 
 function applySearchLineHighlight(
@@ -299,9 +310,9 @@ export function App() {
     }).then((stop) => {
       unlistenProgress = stop;
     });
-    listen<{ searchId: number; side: Side; hit: LegacySearchHit }>("search-result", (event) => {
+    listen<{ searchId: number; side: Side; hit: BackendSearchHit }>("search-result", (event) => {
       if (event.payload.searchId !== searchStreamId.current) return;
-      const result = { side: event.payload.side, tier: "T3" as const, ...event.payload.hit };
+      const result = { side: event.payload.side, tier: "T3" as const, ...legacySearchHit(event.payload.hit) };
       setSearchPaths((current) => new Set([...(current ?? []), result.path]));
       setSearchResults((current) =>
         current.some((candidate) => searchResultKey(candidate) === searchResultKey(result))
@@ -785,10 +796,15 @@ export function App() {
       const results: LegacySearchResult[] = [];
       for (const side of searchSides()) {
         if (!archives[side]) continue;
-        for (const hit of await invoke<LegacySearchHit[]>("search", { side, query })) {
+        for (const hit of await invoke<BackendSearchHit[]>("search", {
+          side,
+          query,
+          options: { includePath: true, includeText: true, includeConstants: true },
+        })) {
           if (searchStreamId.current !== searchId) return;
-          matches.add(hit.path);
-          results.push({ side, tier: "T2", ...hit });
+          const result = { side, tier: "T2" as const, ...legacySearchHit(hit) };
+          matches.add(result.path);
+          results.push(result);
         }
       }
       if (searchStreamId.current !== searchId) return;
@@ -814,10 +830,11 @@ export function App() {
       const results: LegacySearchResult[] = [];
       for (const side of searchSides()) {
         if (!archives[side]) continue;
-        for (const hit of await invoke<LegacySearchHit[]>("deep_search", { side, query, searchId })) {
+        for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
           if (searchStreamId.current !== searchId) return;
-          matches.add(hit.path);
-          results.push({ side, tier: "T3", ...hit });
+          const result = { side, tier: "T3" as const, ...legacySearchHit(hit) };
+          matches.add(result.path);
+          results.push(result);
         }
       }
       if (searchStreamId.current !== searchId) return;

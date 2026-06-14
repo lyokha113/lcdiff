@@ -603,6 +603,7 @@ fn unstage(
 async fn search(
     side: Side,
     query: String,
+    options: SearchOptions,
     state: State<'_, SharedState>,
 ) -> Result<Vec<SearchHit>, String> {
     let archive = {
@@ -613,46 +614,59 @@ async fn search(
             .ok_or("archive is not loaded")?
             .clone()
     };
-    tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query))
+    tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query, options))
         .await
         .map_err(|error| error.to_string())?
 }
 
-fn search_archive(archive: &Archive, query: &str) -> Result<Vec<SearchHit>, String> {
+fn search_archive(
+    archive: &Archive,
+    query: &str,
+    options: SearchOptions,
+) -> Result<Vec<SearchHit>, String> {
     let query = normalize_search_query(query)?;
     let query_lower = query.to_ascii_lowercase();
     let mut matches = Vec::new();
     for entry in archive.entries() {
-        let mut hit = entry
-            .path
-            .to_ascii_lowercase()
-            .contains(&query_lower)
-            .then(|| SearchHit::new(entry.path.clone(), "path"));
-        if hit.is_none() {
-            hit = match entry.kind {
-                EntryKind::Class => {
-                    let bytes = archive
-                        .read_entry(&entry.path)
-                        .map_err(|error| error.to_string())?;
-                    search_constant_pool(&bytes, &query)
-                        .ok()
-                        .and_then(|values| {
-                            (!values.is_empty())
-                                .then(|| SearchHit::new(entry.path.clone(), "constantPool"))
-                        })
-                }
-                EntryKind::Text => {
-                    let bytes = archive
-                        .read_entry(&entry.path)
-                        .map_err(|error| error.to_string())?;
-                    line_number_for_match(&String::from_utf8_lossy(&bytes), &query_lower)
-                        .map(|line| SearchHit::new(entry.path.clone(), "text").with_line(line))
-                }
-                EntryKind::Directory | EntryKind::Binary | EntryKind::Archive => None,
-            };
+        if options.include_path && entry.path.to_ascii_lowercase().contains(&query_lower) {
+            matches.push(SearchHit::new(entry.path.clone(), SearchHitKind::Path));
         }
-        if let Some(hit) = hit {
-            matches.push(hit);
+
+        match entry.kind {
+            EntryKind::Text if options.include_text => {
+                let bytes = archive
+                    .read_entry(&entry.path)
+                    .map_err(|error| error.to_string())?;
+                if let Some((line, preview)) =
+                    line_match_for_search(&String::from_utf8_lossy(&bytes), &query_lower)
+                {
+                    matches.push(
+                        SearchHit::new(entry.path.clone(), SearchHitKind::Text)
+                            .with_line(line)
+                            .with_preview(preview),
+                    );
+                }
+            }
+            EntryKind::Class if options.include_constants => {
+                let bytes = archive
+                    .read_entry(&entry.path)
+                    .map_err(|error| error.to_string())?;
+                if let Some(preview) = search_constant_pool(&bytes, &query)
+                    .ok()
+                    .and_then(|values| values.into_iter().next())
+                    .map(|value| truncate_search_preview(value.value.trim()))
+                {
+                    matches.push(
+                        SearchHit::new(entry.path.clone(), SearchHitKind::ConstantPool)
+                            .with_preview(preview),
+                    );
+                }
+            }
+            EntryKind::Directory
+            | EntryKind::Binary
+            | EntryKind::Archive
+            | EntryKind::Text
+            | EntryKind::Class => {}
         }
     }
     Ok(matches)
@@ -666,20 +680,41 @@ fn normalize_search_query(query: &str) -> Result<String, String> {
     Ok(query.to_owned())
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchOptions {
+    include_path: bool,
+    include_text: bool,
+    include_constants: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum SearchHitKind {
+    Path,
+    Text,
+    ConstantPool,
+    Source,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchHit {
-    path: String,
-    match_kind: String,
+    entry_path: String,
+    kind: SearchHitKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
 }
 
 impl SearchHit {
-    fn new(path: String, match_kind: impl Into<String>) -> Self {
+    fn new(entry_path: String, kind: SearchHitKind) -> Self {
         Self {
-            path,
-            match_kind: match_kind.into(),
+            entry_path,
+            kind,
             line: None,
+            preview: None,
         }
     }
 
@@ -687,13 +722,23 @@ impl SearchHit {
         self.line = Some(line);
         self
     }
+
+    fn with_preview(mut self, preview: String) -> Self {
+        self.preview = Some(preview);
+        self
+    }
 }
 
-fn line_number_for_match(content: &str, query_lower: &str) -> Option<usize> {
+fn line_match_for_search(content: &str, query_lower: &str) -> Option<(usize, String)> {
     content
         .lines()
-        .position(|line| line.to_ascii_lowercase().contains(query_lower))
-        .map(|index| index + 1)
+        .enumerate()
+        .find(|(_, line)| line.to_ascii_lowercase().contains(query_lower))
+        .map(|(index, line)| (index + 1, truncate_search_preview(line.trim())))
+}
+
+fn truncate_search_preview(value: &str) -> String {
+    value.chars().take(160).collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -792,9 +837,10 @@ fn deep_search_hit(
     query_lower: &str,
 ) -> Option<SearchHit> {
     let source = source.ok()?;
-    source.to_ascii_lowercase().contains(query_lower).then(|| {
-        SearchHit::new(entry_path.to_owned(), "source")
-            .with_line(line_number_for_match(&source, query_lower).unwrap_or(1))
+    line_match_for_search(&source, query_lower).map(|(line, preview)| {
+        SearchHit::new(entry_path.to_owned(), SearchHitKind::Source)
+            .with_line(line)
+            .with_preview(preview)
     })
 }
 
@@ -1001,8 +1047,9 @@ mod tests {
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::{
-        AppState, Side, SidecarClient, class_source_path, deep_search_hit, is_prefetch_sibling,
-        language_for_path, platform_hints_from, read_entry_preview, search_archive, validate_path,
+        AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, class_source_path,
+        deep_search_hit, is_prefetch_sibling, language_for_path, platform_hints_from,
+        read_entry_preview, search_archive, validate_path,
     };
     use ldiff_core::{Archive, DecompileEngine};
 
@@ -1011,6 +1058,27 @@ mod tests {
         let state = AppState::default();
 
         assert_eq!(state.engine, DecompileEngine::Vineflower);
+    }
+
+    #[test]
+    fn search_hit_serializes_camel_case_and_omits_none() {
+        let constant_pool_hit = SearchHit::new(
+            "pkg/A.class".to_owned(),
+            SearchHitKind::ConstantPool,
+        )
+        .with_preview("Needle".to_owned());
+        let constant_pool_json = serde_json::to_value(&constant_pool_hit).unwrap();
+        assert_eq!(constant_pool_json["entryPath"], "pkg/A.class");
+        assert_eq!(constant_pool_json["kind"], "constantPool");
+        assert_eq!(constant_pool_json["preview"], "Needle");
+        assert!(!constant_pool_json.as_object().unwrap().contains_key("line"));
+
+        let path_hit = SearchHit::new("pkg/A.class".to_owned(), SearchHitKind::Path);
+        let path_json = serde_json::to_value(&path_hit).unwrap();
+        assert_eq!(path_json["entryPath"], "pkg/A.class");
+        assert_eq!(path_json["kind"], "path");
+        assert!(!path_json.as_object().unwrap().contains_key("line"));
+        assert!(!path_json.as_object().unwrap().contains_key("preview"));
     }
 
     #[test]
@@ -1151,11 +1219,80 @@ mod tests {
         let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
 
         assert!(archive.read_entry("blob.bin").is_err());
-        let hits = search_archive(&archive, "blob").unwrap();
+        let hits = search_archive(
+            &archive,
+            "blob",
+            SearchOptions {
+                include_path: true,
+                include_text: false,
+                include_constants: false,
+            },
+        )
+        .unwrap();
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, "blob.bin");
-        assert_eq!(hits[0].match_kind, "path");
+        assert_eq!(hits[0].entry_path, "blob.bin");
+        assert_eq!(hits[0].kind, SearchHitKind::Path);
         assert_eq!(hits[0].line, None);
+    }
+
+    #[test]
+    fn t2_search_can_return_path_and_text_for_same_entry() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("text.zip");
+        create_zip(
+            &archive_path,
+            &[("needle.properties", b"first\nneedle=value\n")],
+        );
+        let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
+
+        let hits = search_archive(
+            &archive,
+            "needle",
+            SearchOptions {
+                include_path: true,
+                include_text: true,
+                include_constants: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].entry_path, "needle.properties");
+        assert_eq!(hits[0].kind, SearchHitKind::Path);
+        assert_eq!(hits[0].line, None);
+        assert_eq!(hits[0].preview, None);
+        assert_eq!(hits[1].entry_path, "needle.properties");
+        assert_eq!(hits[1].kind, SearchHitKind::Text);
+        assert_eq!(hits[1].line, Some(2));
+        assert_eq!(hits[1].preview, Some("needle=value".to_owned()));
+    }
+
+    #[test]
+    fn t2_search_options_exclude_unrequested_categories() {
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("text.zip");
+        create_zip(
+            &archive_path,
+            &[("needle.properties", b"first\nneedle=value\n")],
+        );
+        let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
+
+        let hits = search_archive(
+            &archive,
+            "needle",
+            SearchOptions {
+                include_path: false,
+                include_text: true,
+                include_constants: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry_path, "needle.properties");
+        assert_eq!(hits[0].kind, SearchHitKind::Text);
+        assert_eq!(hits[0].line, Some(2));
+        assert_eq!(hits[0].preview, Some("needle=value".to_owned()));
     }
 
     #[test]
@@ -1168,12 +1305,22 @@ mod tests {
         );
         let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
 
-        let hits = search_archive(&archive, "needle").unwrap();
+        let hits = search_archive(
+            &archive,
+            "needle",
+            SearchOptions {
+                include_path: true,
+                include_text: true,
+                include_constants: true,
+            },
+        )
+        .unwrap();
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, "app.properties");
-        assert_eq!(hits[0].match_kind, "text");
+        assert_eq!(hits[0].entry_path, "app.properties");
+        assert_eq!(hits[0].kind, SearchHitKind::Text);
         assert_eq!(hits[0].line, Some(2));
+        assert_eq!(hits[0].preview, Some("needle=value".to_owned()));
     }
 
     #[test]
@@ -1186,11 +1333,20 @@ mod tests {
         );
         let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
 
-        let hits = search_archive(&archive, "runtime-needle").unwrap();
+        let hits = search_archive(
+            &archive,
+            "runtime-needle",
+            SearchOptions {
+                include_path: true,
+                include_text: true,
+                include_constants: true,
+            },
+        )
+        .unwrap();
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, "pkg/NeedleHolder.class");
-        assert_eq!(hits[0].match_kind, "constantPool");
+        assert_eq!(hits[0].entry_path, "pkg/NeedleHolder.class");
+        assert_eq!(hits[0].kind, SearchHitKind::ConstantPool);
         assert_eq!(hits[0].line, None);
     }
 
@@ -1204,7 +1360,16 @@ mod tests {
         );
         let archive = Archive::open(archive_path.to_str().unwrap()).unwrap();
 
-        let error = search_archive(&archive, "  ").unwrap_err();
+        let error = search_archive(
+            &archive,
+            "  ",
+            SearchOptions {
+                include_path: true,
+                include_text: true,
+                include_constants: true,
+            },
+        )
+        .unwrap_err();
 
         assert_eq!(error, "search query is empty");
     }
@@ -1289,9 +1454,10 @@ mod tests {
             "needle",
         )
         .unwrap();
-        assert_eq!(hit.path, "pkg/A.class");
-        assert_eq!(hit.match_kind, "source");
+        assert_eq!(hit.entry_path, "pkg/A.class");
+        assert_eq!(hit.kind, SearchHitKind::Source);
         assert_eq!(hit.line, Some(2));
+        assert_eq!(hit.preview, Some("void needle() {}".to_owned()));
 
         assert!(deep_search_hit("pkg/B.class", Ok("class B {}".to_owned()), "needle").is_none());
         assert!(
