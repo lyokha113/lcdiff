@@ -46,6 +46,7 @@ import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
+import { DEFAULT_UI_PREFERENCES } from "@/lib/preferences";
 import { searchContextForActiveTab } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
@@ -160,6 +161,7 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"files" | string>("files");
   const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
+  const [uiPreferences, setUiPreferences] = useState(DEFAULT_UI_PREFERENCES);
   const focusCounter = useRef(0);
   const openTabsCountRef = useRef(0);
   const previewRequestId = useRef(0);
@@ -1024,23 +1026,14 @@ export function App() {
         <ConfigDrawer
           open={drawerOpen}
           mode={mode}
-          searchScope={searchScope}
-          searching={searching}
           engine={engine}
           ignoreTrimWhitespace={ignoreTrimWhitespace}
           backupEnabled={backupEnabled}
-          viewMode={viewMode}
-          canShowSource={!!selected}
-          canShowBytecode={pairHasClass(selected)}
-          onScopeChange={setSearchScope}
-          onDeepSearch={runDeepSearch}
-          onCancelDeepSearch={cancelDeepSearch}
-          onClearSearch={clearSearch}
+          preferences={uiPreferences}
+          onPreferencesChange={setUiPreferences}
           onEngineChange={(next) => void changeEngine(next)}
           onIgnoreWhitespaceChange={setIgnoreTrimWhitespace}
           onBackupEnabledChange={setBackupEnabled}
-          onShowSource={() => selected && void inspect(selected, true)}
-          onShowBytecode={showBytecode}
         />
       </div>
       <p className="message">{message}</p>

@@ -246,7 +246,36 @@ main.app-shell {
 
 .config-drawer { flex: 0 0 auto; overflow-y: auto; border-left: 1px solid var(--border, #2c3a4f); transition: width 0.15s ease; }
 .config-drawer.closed { width: 0; border-left: none; overflow: hidden; }
-.config-drawer.open { width: 280px; padding: 0.75rem; }
+.config-drawer.open { width: 360px; padding: 0.75rem; }
+.app-shell[data-drawer-width="wide"] .config-drawer.open { width: 420px; }
+.preferences-drawer {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 10px;
+}
+.preferences-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.preferences-nav button {
+  justify-content: flex-start;
+}
+.preferences-content {
+  min-width: 0;
+  overflow-y: auto;
+}
+.preference-subhead {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-2);
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
 .drawer-group { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
 
 .copy-cluster, .view-toggle { display: flex; gap: 0.25rem; }
@@ -795,7 +824,7 @@ h1 {
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(280px, 86vw);
+    width: min(360px, 88vw);
     z-index: 20;
     background: var(--ink-1);
     box-shadow: -10px 0 28px rgba(0, 0, 0, 0.5);
