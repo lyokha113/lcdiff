@@ -17,8 +17,8 @@ import {
   type MonacoApi,
   type PairStatus,
   type PlatformHints,
+  type SearchResult,
   type SearchScope,
-  type SearchTier,
   type Side,
   type StagedEntry,
   type TreeFilter,
@@ -44,10 +44,11 @@ import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { MenuBar } from "@/components/MenuBar";
 import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
+import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
 import { applyPreferencesToRoot, loadUiPreferences, saveUiPreferences } from "@/lib/preferences";
-import { searchContextForActiveTab } from "@/lib/search";
+import { searchContextForActiveTab, searchResultKey } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
@@ -73,31 +74,6 @@ const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
 
 // Keep in sync with EDITABLE_EXTENSIONS in crates/ldiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
-
-interface LegacySearchHit {
-  path: string;
-  matchKind: string;
-  line?: number;
-  preview?: string;
-}
-
-interface LegacySearchResult extends LegacySearchHit {
-  side: Side;
-  tier: SearchTier;
-}
-
-function searchResultKey(result: LegacySearchResult) {
-  return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
-}
-
-function legacySearchHit(hit: BackendSearchHit): LegacySearchHit {
-  return {
-    path: hit.entryPath,
-    matchKind: hit.kind,
-    line: hit.line,
-    preview: hit.preview,
-  };
-}
 
 function applySearchLineHighlight(
   editor: CodeEditor | undefined,
@@ -136,12 +112,13 @@ export function App() {
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
   const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE);
+  const [preferences, setPreferences] = useState(loadUiPreferences);
   const [query, setQuery] = useState("");
   const [searchScope, setSearchScope] = useState<SearchScope>("both");
-  const [includeSourceSearch, setIncludeSourceSearch] = useState(false);
+  const [includeSourceSearch, setIncludeSourceSearch] = useState(preferences.search.includeSourceByDefault);
   const [searchPaths, setSearchPaths] = useState<Set<string>>();
-  const [searchResults, setSearchResults] = useState<LegacySearchResult[]>([]);
-  const [selectedSearchResult, setSelectedSearchResult] = useState<LegacySearchResult>();
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult>();
   const [mode, setMode] = useState<Mode>("compare");
   const [view, setView] = useState<"splash" | "workspace">("splash");
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
@@ -161,7 +138,6 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"files" | string>("files");
   const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
-  const [preferences, setPreferences] = useState(loadUiPreferences);
   const appShellRef = useRef<HTMLElement>(null);
   const focusCounter = useRef(0);
   const openTabsCountRef = useRef(0);
@@ -179,6 +155,9 @@ export function App() {
     saveUiPreferences(preferences);
     if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, preferences);
   }, [preferences, view]);
+  useEffect(() => {
+    setIncludeSourceSearch(preferences.search.includeSourceByDefault);
+  }, [preferences.search.includeSourceByDefault]);
   const displayedPairs = useMemo<ComparePair[]>(
     () =>
       mode === "compare"
@@ -321,7 +300,14 @@ export function App() {
     });
     listen<{ searchId: number; side: Side; hit: BackendSearchHit }>("search-result", (event) => {
       if (event.payload.searchId !== searchStreamId.current) return;
-      const result = { side: event.payload.side, tier: "T3" as const, ...legacySearchHit(event.payload.hit) };
+      const result: SearchResult = {
+        side: event.payload.side,
+        tier: "T3",
+        path: event.payload.hit.entryPath,
+        kind: event.payload.hit.kind,
+        line: event.payload.hit.line,
+        preview: event.payload.hit.preview,
+      };
       setSearchPaths((current) => new Set([...(current ?? []), result.path]));
       setSearchResults((current) =>
         current.some((candidate) => searchResultKey(candidate) === searchResultKey(result))
@@ -802,18 +788,21 @@ export function App() {
     setSearching(false);
     try {
       const matches = new Set<string>();
-      const results: LegacySearchResult[] = [];
+      const results: SearchResult[] = [];
+      const options = { includePath: true, includeText: true, includeConstants: true };
       for (const side of searchSides()) {
         if (!archives[side]) continue;
-        for (const hit of await invoke<BackendSearchHit[]>("search", {
-          side,
-          query,
-          options: { includePath: true, includeText: true, includeConstants: true },
-        })) {
+        for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
           if (searchStreamId.current !== searchId) return;
-          const result = { side, tier: "T2" as const, ...legacySearchHit(hit) };
-          matches.add(result.path);
-          results.push(result);
+          matches.add(hit.entryPath);
+          results.push({
+            side,
+            tier: "T2",
+            path: hit.entryPath,
+            kind: hit.kind,
+            line: hit.line,
+            preview: hit.preview,
+          });
         }
       }
       if (searchStreamId.current !== searchId) return;
@@ -836,14 +825,20 @@ export function App() {
     setSearchResults([]);
     try {
       const matches = new Set<string>();
-      const results: LegacySearchResult[] = [];
+      const results: SearchResult[] = [];
       for (const side of searchSides()) {
         if (!archives[side]) continue;
         for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
           if (searchStreamId.current !== searchId) return;
-          const result = { side, tier: "T3" as const, ...legacySearchHit(hit) };
-          matches.add(result.path);
-          results.push(result);
+          matches.add(hit.entryPath);
+          results.push({
+            side,
+            tier: "T3",
+            path: hit.entryPath,
+            kind: hit.kind,
+            line: hit.line,
+            preview: hit.preview,
+          });
         }
       }
       if (searchStreamId.current !== searchId) return;
@@ -865,6 +860,30 @@ export function App() {
     setMessage("Cancelling deep search...");
   }
 
+  function findInCurrentDiff() {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setMessage("Search query is empty");
+      return;
+    }
+    const searchInEditor = (editor?: CodeEditor) => {
+      const matches = editor?.getModel()?.findMatches(trimmed, true, false, false, null, true) ?? [];
+      const line = matches[0]?.range.startLineNumber;
+      if (line !== undefined) editor?.revealLineInCenter(line);
+      return line;
+    };
+    const diffEditor = diffEditorRef.current;
+    const line =
+      mode === "compare"
+        ? searchInEditor(diffEditor?.getModifiedEditor()) ?? searchInEditor(diffEditor?.getOriginalEditor())
+        : searchInEditor(editorRef.current);
+    if (line === undefined) {
+      setMessage("Current diff found no matches.");
+      return;
+    }
+    setMessage(`Current diff matched line ${line}.`);
+  }
+
   function searchSides(): Side[] {
     if (mode === "single") return ["left"];
     return searchScope === "both" ? ["left", "right"] : [searchScope];
@@ -878,7 +897,7 @@ export function App() {
     setSelectedSearchResult(undefined);
   }
 
-  function inspectSearchResult(result: LegacySearchResult) {
+  function inspectSearchResult(result: SearchResult) {
     const pair = displayedPairs.find((candidate) => candidate.path === result.path);
     if (!pair) return;
     if (!pairPassesTreeFilter(pair, treeFilter)) setTreeFilter("all");
@@ -969,7 +988,7 @@ export function App() {
         includeSource={includeSourceSearch}
         searching={searching}
         onQueryChange={setQuery}
-        onSearch={runSearch}
+        onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
         onSearchAllFiles={runSearch}
         onCancel={cancelDeepSearch}
         onClear={clearSearch}
@@ -1043,20 +1062,11 @@ export function App() {
         />
       </div>
       <p className="message">{message}</p>
-      {searchResults.length > 0 && (
-        <section className="search-results">
-          {searchResults.map((result) => (
-            <Button
-              variant="outline"
-              key={searchResultKey(result)}
-              onClick={() => inspectSearchResult(result)}
-            >
-              {result.path} · {result.matchKind}
-              {result.line !== undefined && `:${result.line}`} · {result.tier} · {result.side.toUpperCase()}
-            </Button>
-          ))}
-        </section>
-      )}
+      <SearchResultsPanel
+        results={searchResults}
+        grouping={preferences.search.resultGrouping}
+        onInspect={inspectSearchResult}
+      />
       <Dialog open={pendingOpen !== undefined} onOpenChange={(open) => !open && setPendingOpen(undefined)}>
         <DialogContent>
           <DialogHeader>

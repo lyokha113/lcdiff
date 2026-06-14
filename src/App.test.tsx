@@ -60,6 +60,15 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       return onePairDiff;
     case "read_entry":
       return entryPreview(args?.side as "left" | "right");
+    case "search":
+      return [
+        { entryPath: "config.json", kind: "path" as const },
+        { entryPath: "config.json", kind: "text" as const, line: 2, preview: '"v": 2' },
+      ];
+    case "deep_search":
+      return [{ entryPath: "config.json", kind: "source" as const, line: 3, preview: "class Config" }];
+    case "cancel_deep_search":
+      return undefined;
     case "stage_write":
     case "prefetch_siblings":
     case "clear_staged":
@@ -120,6 +129,11 @@ function makeFakeDiffEditor() {
     setValue: set,
     onDidBlurEditorText: vi.fn(() => ({ dispose: vi.fn() })),
     getPosition: () => ({ lineNumber: 2 }),
+    getModel: () => ({
+      findMatches: vi.fn(() => [
+        { range: { startLineNumber: 2 } },
+      ]),
+    }),
     deltaDecorations: vi.fn(() => []),
     revealLineInCenter: vi.fn(),
   });
@@ -222,6 +236,40 @@ describe("App file-merge wiring", () => {
     expect(shell.dataset.radius).toBe("soft");
     expect(shell.dataset.motion).toBe("reduced");
     expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
+  });
+
+  it("runs Files index search with typed backend options", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.clear(screen.getByPlaceholderText(/Search paths, text, constants/));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "config");
+    await user.click(screen.getByRole("button", { name: /search all/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("search", {
+        side: "left",
+        query: "config",
+        options: { includePath: true, includeText: true, includeConstants: true },
+      }),
+    );
+    expect((await screen.findAllByText("Path")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Text")).length).toBeGreaterThan(0);
+  });
+
+  it("finds inside the current diff without invoking archive search", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    invoke.mockClear();
+    await user.click(screen.getByRole("tab", { name: /config.json/i }));
+    await user.type(screen.getByPlaceholderText(/Find in current diff/), "v");
+    await user.click(screen.getByRole("button", { name: /^find$/i }));
+
+    expect(invoke).not.toHaveBeenCalledWith("search", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("deep_search", expect.anything());
+    expect(await screen.findByText("Current diff matched line 2.")).toBeInTheDocument();
   });
 
   it("Move hunk into left copies into left and removes from right (copy+delete)", async () => {
