@@ -102,7 +102,7 @@ export function MenuBar({
         <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
           <Search />
         </Button>
-        <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Settings" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
+        <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Preferences" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
           <Settings />
         </Button>
       </div>

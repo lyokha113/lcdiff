@@ -482,6 +482,12 @@ h1 {
 .search-result-path { flex: 1 1 auto; text-align: left; }
 .search-result-preview { flex: 0 2 18rem; color: var(--text-2); text-align: left; }
 .search-result-line { flex: 0 0 auto; color: var(--brass); }
+.app-shell[data-search-results-density="comfortable"] .search-result-row {
+  min-height: 2.25rem;
+}
+.app-shell[data-icon-labels="iconsOnly"] .button-label {
+  display: none;
+}
 
 /* ---------- workspace: tree + editor ---------- */
 .tree {
@@ -870,6 +876,18 @@ h1 {
 }
 
 @media (max-width: 480px) {
-  .search-bar { flex-wrap: wrap; }
+  .search-bar { align-items: stretch; flex-wrap: wrap; }
+  .search-context-label { flex-basis: 100%; }
   .search-bar .search-input { flex: 1 1 100%; }
+  .search-bar [data-slot="select-trigger"],
+  .search-bar button {
+    flex: 1 1 auto;
+  }
+  .preferences-drawer {
+    grid-template-columns: 1fr;
+  }
+  .preferences-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
 }

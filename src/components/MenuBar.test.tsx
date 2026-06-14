@@ -36,7 +36,7 @@ describe("MenuBar", () => {
   });
   it("toggles the drawer", async () => {
     const props = setup();
-    await userEvent.click(screen.getByLabelText("Settings"));
+    await userEvent.click(screen.getByLabelText("Preferences"));
     expect(props.onToggleDrawer).toHaveBeenCalled();
   });
   it("refreshes sources", async () => {
