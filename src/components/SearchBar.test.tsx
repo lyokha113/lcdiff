@@ -7,7 +7,6 @@ function setup(overrides = {}) {
   const props = {
     open: true,
     context: "files" as const,
-    mode: "compare" as const,
     query: "",
     includeSource: false,
     searching: false,

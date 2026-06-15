@@ -3,12 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { labelForSearchContext } from "@/lib/search";
-import type { Mode, SearchContext } from "@/lib/types";
+import type { SearchContext } from "@/lib/types";
 
 interface SearchBarProps {
   open: boolean;
   context: SearchContext;
-  mode: Mode;
   query: string;
   includeSource: boolean;
   searching: boolean;

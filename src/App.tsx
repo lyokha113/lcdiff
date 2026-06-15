@@ -980,7 +980,6 @@ export function App() {
       <SearchBar
         open={searchOpen}
         context={searchContext}
-        mode={mode}
         query={query}
         includeSource={includeSourceSearch}
         searching={searching}
