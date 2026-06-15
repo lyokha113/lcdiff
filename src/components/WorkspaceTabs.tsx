@@ -41,16 +41,18 @@ export function WorkspaceTabs({
 }: WorkspaceTabsProps) {
   return (
     <div className="workspace-tabs">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeId === "files"}
-        className={`workspace-tab workspace-tab-files${activeId === "files" ? " active" : ""}`}
-        onClick={onSelectFiles}
-      >
-        <ListTree /> Files
-        {fileCount > 0 && <span className="workspace-tab-count">{fileCount}</span>}
-      </button>
+      <div className="workspace-tabs-files" role="tablist" aria-label="Files workspace view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeId === "files"}
+          className={`workspace-tab workspace-tab-files${activeId === "files" ? " active" : ""}`}
+          onClick={onSelectFiles}
+        >
+          <ListTree /> Files
+          {fileCount > 0 && <span className="workspace-tab-count">{fileCount}</span>}
+        </button>
+      </div>
       <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
         <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
           <SelectValue />
@@ -63,7 +65,7 @@ export function WorkspaceTabs({
           </SelectGroup>
         </SelectContent>
       </Select>
-      <div className="workspace-tabs-scroll" role="tablist" aria-label="Workspace view">
+      <div className="workspace-tabs-scroll" role="tablist" aria-label="Open diff tabs">
         {tabs.map((tab) => {
           const status = statusPresentation(tab.status);
           return (

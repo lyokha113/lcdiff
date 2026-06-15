@@ -63,18 +63,23 @@ describe("WorkspaceTabs", () => {
   });
   it("renders the tree filter next to the Files tab", async () => {
     const props = setup();
-    const tablist = screen.getByRole("tablist", { name: "Workspace view" });
     const workspaceTabs = document.querySelector(".workspace-tabs");
+    const filesTab = screen.getByRole("tab", { name: /Files/ });
+    const treeFilter = screen.getByRole("combobox", { name: "Tree filter" });
 
-    expect(screen.getByRole("tab", { name: /Files/ })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Tree filter" })).toBeInTheDocument();
-    expect(within(tablist).queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(filesTab).toBeInTheDocument();
+    expect(treeFilter).toBeInTheDocument();
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.closest('[role="tablist"]')).toBeInTheDocument();
+    }
+    expect(treeFilter.closest('[role="tablist"]')).toBeNull();
     expect(screen.getByText("Differences")).toBeInTheDocument();
-    expect(workspaceTabs?.children[0]).toBe(screen.getByRole("tab", { name: /Files/ }));
-    expect(workspaceTabs?.children[1]).toBe(screen.getByRole("combobox", { name: "Tree filter" }));
+    expect(workspaceTabs?.children[0]).toBe(document.querySelector(".workspace-tabs-files"));
+    expect(within(workspaceTabs?.children[0] as HTMLElement).getByRole("tab", { name: /Files/ })).toBe(filesTab);
+    expect(workspaceTabs?.children[1]).toBe(treeFilter);
     expect(workspaceTabs?.children[2]).toBe(document.querySelector(".workspace-tabs-scroll"));
 
-    await userEvent.click(screen.getByRole("combobox", { name: "Tree filter" }));
+    await userEvent.click(treeFilter);
     await userEvent.click(screen.getByRole("option", { name: "Identical" }));
 
     expect(props.onFilterChange).toHaveBeenCalledWith("same");

@@ -161,6 +161,7 @@ main.app-shell {
 
 /* ---------- workspace tabs (Files | Diff) ---------- */
 .workspace-tabs { flex: 0 0 auto; display: flex; gap: 4px; min-width: 0; max-width: 100%; }
+.workspace-tabs-files { display: flex; flex: 0 0 auto; }
 .workspace-tab-files { flex: 0 0 auto; }
 .workspace-tree-filter {
   flex: 0 0 auto;
