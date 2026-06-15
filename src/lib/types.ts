@@ -11,7 +11,6 @@ export type EntryKind = "directory" | "class" | "text" | "archive" | "binary";
 export type Engine = "cfr" | "vineflower";
 export const DEFAULT_ENGINE: Engine = "vineflower";
 export type Mode = "single" | "compare";
-export type SearchScope = Side | "both";
 export type TreeFilter = "all" | "diff" | "same";
 export type SearchTier = "T2" | "T3";
 export type SearchHitKind = "path" | "text" | "constantPool" | "source";

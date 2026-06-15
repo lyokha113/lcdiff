@@ -238,14 +238,14 @@ describe("App file-merge wiring", () => {
     expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
   });
 
-  it("runs Files index search with typed backend options", async () => {
+  it("runs Files index search with typed backend options on both compare sides", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
 
     await user.click(screen.getByRole("tab", { name: /files/i }));
     await user.clear(screen.getByPlaceholderText(/Search paths, text, constants/));
     await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "config");
-    await user.click(screen.getByRole("button", { name: /search all/i }));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("search", {
@@ -254,6 +254,11 @@ describe("App file-merge wiring", () => {
         options: { includePath: true, includeText: true, includeConstants: true },
       }),
     );
+    expect(invoke).toHaveBeenCalledWith("search", {
+      side: "right",
+      query: "config",
+      options: { includePath: true, includeText: true, includeConstants: true },
+    });
     expect((await screen.findAllByText("Path")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("Text")).length).toBeGreaterThan(0);
   });
@@ -278,8 +283,8 @@ describe("App file-merge wiring", () => {
 
     await user.click(screen.getByRole("tab", { name: /files/i }));
     await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "config");
-    await user.click(screen.getByLabelText("Include source search"));
-    await user.click(screen.getByRole("button", { name: /search all/i }));
+    await user.click(screen.getByLabelText("Include decompiled source search"));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("deep_search", {
@@ -298,7 +303,6 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByText("Current diff")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^find$/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /search all files/i })).toBeInTheDocument();
   });
 
   it("Move hunk into left copies into left and removes from right (copy+delete)", async () => {

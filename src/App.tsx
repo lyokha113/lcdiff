@@ -18,7 +18,6 @@ import {
   type PairStatus,
   type PlatformHints,
   type SearchResult,
-  type SearchScope,
   type Side,
   type StagedEntry,
   type TreeFilter,
@@ -114,7 +113,6 @@ export function App() {
   const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE);
   const [preferences, setPreferences] = useState(loadUiPreferences);
   const [query, setQuery] = useState("");
-  const [searchScope, setSearchScope] = useState<SearchScope>("both");
   const [includeSourceSearch, setIncludeSourceSearch] = useState(preferences.search.includeSourceByDefault);
   const [searchPaths, setSearchPaths] = useState<Set<string>>();
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -784,8 +782,9 @@ export function App() {
 
   async function runSearch() {
     const searchId = searchStreamId.current + 1;
+    const sourceTierEnabled = includeSourceSearch;
     searchStreamId.current = searchId;
-    setSearching(false);
+    setSearching(sourceTierEnabled);
     try {
       const matches = new Set<string>();
       const results: SearchResult[] = [];
@@ -805,7 +804,7 @@ export function App() {
           });
         }
       }
-      if (includeSourceSearch) {
+      if (sourceTierEnabled) {
         for (const side of searchSides()) {
           if (!archives[side]) continue;
           for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
@@ -825,12 +824,14 @@ export function App() {
       if (searchStreamId.current !== searchId) return;
       setSearchPaths(matches);
       setSearchResults(results);
-      setMessage(`${includeSourceSearch ? "Search with source" : "Search"} matched ${matches.size} entries.`);
+      setMessage(`${sourceTierEnabled ? "Search with decompiled source" : "Search"} matched ${matches.size} entries.`);
     } catch (error) {
       if (searchStreamId.current !== searchId) return;
       setSearchPaths(undefined);
       setSearchResults([]);
       setMessage(String(error));
+    } finally {
+      if (searchStreamId.current === searchId) setSearching(false);
     }
   }
 
@@ -874,7 +875,7 @@ export function App() {
     searchStreamId.current += 1;
     setSearching(false);
     await invoke("cancel_deep_search");
-    setMessage("Cancelling deep search...");
+    setMessage("Cancelling decompiled source search...");
   }
 
   function findInCurrentDiff() {
@@ -903,15 +904,20 @@ export function App() {
 
   function searchSides(): Side[] {
     if (mode === "single") return ["left"];
-    return searchScope === "both" ? ["left", "right"] : [searchScope];
+    return ["left", "right"];
   }
 
-  function clearSearch() {
+  function clearSearchResults() {
     searchStreamId.current += 1;
     setSearching(false);
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
+  }
+
+  function clearFind() {
+    clearSearchResults();
+    setQuery("");
   }
 
   function inspectSearchResult(result: SearchResult) {
@@ -1000,17 +1006,12 @@ export function App() {
         context={searchContext}
         mode={mode}
         query={query}
-        treeFilter={treeFilter}
-        searchScope={searchScope}
         includeSource={includeSourceSearch}
         searching={searching}
         onQueryChange={setQuery}
         onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
-        onSearchAllFiles={runSearch}
         onCancel={cancelDeepSearch}
-        onClear={clearSearch}
-        onFilterChange={setTreeFilter}
-        onScopeChange={setSearchScope}
+        onClear={searchContext === "files" ? clearSearchResults : clearFind}
         onIncludeSourceChange={setIncludeSourceSearch}
       />
       {dropHint && <p className="platform-hint">{dropHint}</p>}
@@ -1020,9 +1021,11 @@ export function App() {
             fileCount={visiblePairs.length}
             activeId={activeTab}
             tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+            treeFilter={treeFilter}
             onSelectFiles={() => setActiveTab("files")}
             onSelectTab={(path) => focusTab(path)}
             onCloseTab={(path) => closeTab(path)}
+            onFilterChange={setTreeFilter}
           />
           <div className="workspace-tabpanels">
             <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
