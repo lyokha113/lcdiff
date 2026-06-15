@@ -70,6 +70,11 @@ describe("SearchBar", () => {
     expect(props.onClear).toHaveBeenCalled();
   });
 
+  it("does not render cancel for Current diff while searching", () => {
+    setup({ context: "diff", searching: true });
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+  });
+
   it("runs the primary search action from Enter", async () => {
     const props = setup({ query: "needle" });
     await userEvent.type(screen.getByPlaceholderText("Search paths, text, constants"), "{Enter}");
