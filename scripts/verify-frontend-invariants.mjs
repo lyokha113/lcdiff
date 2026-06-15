@@ -214,8 +214,11 @@ if (
 }
 
 const searchSidesBody = app.match(/function searchSides\(\): Side\[] {([\s\S]*?)\n  }/)?.[1] ?? "";
-if (!searchSidesBody.includes('if (mode === "single") return ["left"];')) {
-  failures.push("src/App.tsx: Single mode search must only target the visible left archive");
+if (
+  !searchSidesBody.includes('if (mode === "single") return ["left"];') ||
+  !searchSidesBody.includes('return ["left", "right"];')
+) {
+  failures.push("src/App.tsx: Single mode search must only target left and Compare mode search must target both sides");
 }
 
 const searchListenerBody = app.match(/listen<\{ searchId: number; completed: number; total: number; entryPath: string \}>\("search-progress"([\s\S]*?)\n    return \(\) =>/)?.[1] ?? "";

@@ -84,6 +84,8 @@ try {
   });
   await mockedPage.addInitScript(() => {
     const opened = {};
+    const searchCalls = [];
+    window.__LDIFF_RENDER_SEARCH_CALLS__ = searchCalls;
     const archives = {
       "/fixtures/left.jar": {
         path: "/fixtures/left.jar",
@@ -218,6 +220,11 @@ try {
           return `${args.side.toUpperCase()} ASM BYTECODE for ${args.entryPath}`;
         }
         if (cmd === "search") {
+          searchCalls.push({
+            side: args.side,
+            query: args.query,
+            options: args.options,
+          });
           return args.side === "right" ? [{ entryPath: "right-only.txt", kind: "path" }] : [];
         }
         if (cmd === "stage_copy") return undefined;
@@ -302,14 +309,27 @@ try {
 
   // Submit via the SearchBar Search button (MenuBar toggle is now "Toggle search").
   await mockedPage.getByPlaceholder("Search paths, text, constants").fill("right-only");
+  await mockedPage.getByText("Search files", { exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Search files", exact: true }).click();
   await mockedPage.locator("text=Search matched 1 entries.").waitFor({ timeout: 5_000 });
+  const searchCalls = await mockedPage.evaluate(() => window.__LDIFF_RENDER_SEARCH_CALLS__);
+  const expectedSearchOptions = { includePath: true, includeText: true, includeConstants: true };
+  for (const side of ["left", "right"]) {
+    const call = searchCalls.find((candidate) => candidate.side === side);
+    if (!call) {
+      throw new Error(`Search files did not search ${side}: ${JSON.stringify(searchCalls)}`);
+    }
+    if (call.query !== "right-only" || JSON.stringify(call.options) !== JSON.stringify(expectedSearchOptions)) {
+      throw new Error(`Unexpected ${side} search call: ${JSON.stringify(call)}`);
+    }
+  }
   await mockedPage.locator(".search-result-row", { hasText: "right-only.txt" }).click();
   await mockedPage.locator("text=right text content for right-only.txt").waitFor({ timeout: 5_000 });
 
   await showFilesTab();
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Differences" }).click();
+  await mockedPage.getByText("Clear results", { exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Clear results" }).click();
 
   // Metadata-only detection: identical decompiled source -> differentMetadataOnly badge.
