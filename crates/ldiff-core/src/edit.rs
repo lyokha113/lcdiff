@@ -6,7 +6,18 @@ use crate::{ArchiveEntry, EntryKind};
 /// entry binary. Lower-case, compared case-insensitively.
 /// Keep in sync with EDIT_EXTENSIONS in src/App.tsx (this list is the authority; the JS list only controls the editor read-only affordance in the UI).
 const EDITABLE_EXTENSIONS: &[&str] = &[
-    "xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh",
+    "xml",
+    "json",
+    "ini",
+    "txt",
+    "properties",
+    "yaml",
+    "yml",
+    "md",
+    "csv",
+    "cfg",
+    "conf",
+    "sh",
     "bash",
 ];
 
@@ -34,7 +45,9 @@ pub struct EntryEncoding {
 pub fn has_editable_extension(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name.rsplit_once('.') {
-        Some((_, ext)) => EDITABLE_EXTENSIONS.iter().any(|known| known.eq_ignore_ascii_case(ext)),
+        Some((_, ext)) => EDITABLE_EXTENSIONS
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(ext)),
         None => false,
     }
 }
@@ -108,12 +121,18 @@ mod tests {
 
     #[test]
     fn text_entry_is_editable() {
-        assert!(editable_text(&entry("a/config.xml", EntryKind::Text), b"<x/>"));
+        assert!(editable_text(
+            &entry("a/config.xml", EntryKind::Text),
+            b"<x/>"
+        ));
     }
 
     #[test]
     fn whitelisted_extension_on_binary_kind_is_editable() {
-        assert!(editable_text(&entry("app.properties", EntryKind::Binary), b"k=v"));
+        assert!(editable_text(
+            &entry("app.properties", EntryKind::Binary),
+            b"k=v"
+        ));
     }
 
     #[test]
@@ -128,29 +147,53 @@ mod tests {
 
     #[test]
     fn unknown_extension_binary_is_not_editable() {
-        assert!(!editable_text(&entry("blob.dat", EntryKind::Binary), b"data"));
+        assert!(!editable_text(
+            &entry("blob.dat", EntryKind::Binary),
+            b"data"
+        ));
     }
 
     #[test]
     fn detect_encoding_empty_defaults_to_lf() {
-        assert_eq!(detect_encoding(b""), EntryEncoding { bom: false, line_ending: LineEnding::Lf });
+        assert_eq!(
+            detect_encoding(b""),
+            EntryEncoding {
+                bom: false,
+                line_ending: LineEnding::Lf
+            }
+        );
     }
 
     #[test]
     fn detect_lf_no_bom() {
         let enc = detect_encoding(b"a\nb\n");
-        assert_eq!(enc, EntryEncoding { bom: false, line_ending: LineEnding::Lf });
+        assert_eq!(
+            enc,
+            EntryEncoding {
+                bom: false,
+                line_ending: LineEnding::Lf
+            }
+        );
     }
 
     #[test]
     fn detect_crlf_with_bom() {
         let enc = detect_encoding(b"\xEF\xBB\xBFa\r\nb\r\n");
-        assert_eq!(enc, EntryEncoding { bom: true, line_ending: LineEnding::Crlf });
+        assert_eq!(
+            enc,
+            EntryEncoding {
+                bom: true,
+                line_ending: LineEnding::Crlf
+            }
+        );
     }
 
     #[test]
     fn encode_preserves_bom_and_crlf() {
-        let enc = EntryEncoding { bom: true, line_ending: LineEnding::Crlf };
+        let enc = EntryEncoding {
+            bom: true,
+            line_ending: LineEnding::Crlf,
+        };
         assert_eq!(encode_text("a\nb", &enc), b"\xEF\xBB\xBFa\r\nb".to_vec());
     }
 

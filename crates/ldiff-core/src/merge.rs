@@ -38,8 +38,12 @@ pub enum StagedKind {
 impl StagedOp {
     pub fn target_entry_path(&self) -> &str {
         match self {
-            StagedOp::Copy { target_entry_path, .. } => target_entry_path,
-            StagedOp::Write { target_entry_path, .. } => target_entry_path,
+            StagedOp::Copy {
+                target_entry_path, ..
+            } => target_entry_path,
+            StagedOp::Write {
+                target_entry_path, ..
+            } => target_entry_path,
         }
     }
 
@@ -169,12 +173,13 @@ impl MergePlan {
         } else if target.metadata().source_kind == ArchiveSourceKind::File {
             // File source is a single backing file: exactly one replacement, written
             // whole-file. The entry key is irrelevant — the bytes go to `target_path`.
-            debug_assert_eq!(replacements.len(), 1, "File source must have exactly one replacement");
+            debug_assert_eq!(
+                replacements.len(),
+                1,
+                "File source must have exactly one replacement"
+            );
             // Single backing file: write the one replacement's bytes atomically.
-            let bytes = replacements
-                .values()
-                .next()
-                .ok_or(Error::EmptyMergePlan)?;
+            let bytes = replacements.values().next().ok_or(Error::EmptyMergePlan)?;
             let temp_path = temp_path_for(target_path);
             let write = OpenOptions::new()
                 .create_new(true)
@@ -565,12 +570,17 @@ mod stage_write_tests {
     use super::*;
     use crate::Archive;
 
-    fn write_zip(dir: &std::path::Path, name: &str, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+    fn write_zip(
+        dir: &std::path::Path,
+        name: &str,
+        entries: &[(&str, &[u8])],
+    ) -> std::path::PathBuf {
         let path = dir.join(name);
         let file = std::fs::File::create(&path).unwrap();
         let mut zip = zip::ZipWriter::new(file);
         for (entry, bytes) in entries {
-            zip.start_file(*entry, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.start_file(*entry, zip::write::SimpleFileOptions::default())
+                .unwrap();
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
@@ -596,12 +606,17 @@ mod stage_write_tests {
     fn mixed_copy_and_write_commit() {
         let dir = tempfile::tempdir().unwrap();
         let src = write_zip(dir.path(), "src.jar", &[("Main.class", b"CLASSBYTES")]);
-        let tgt = write_zip(dir.path(), "tgt.jar", &[("Main.class", b"OLD"), ("a.txt", b"x")]);
+        let tgt = write_zip(
+            dir.path(),
+            "tgt.jar",
+            &[("Main.class", b"OLD"), ("a.txt", b"x")],
+        );
         let source = Archive::open(src.to_str().unwrap()).unwrap();
         let target = Archive::open(tgt.to_str().unwrap()).unwrap();
 
         let mut plan = MergePlan::new();
-        plan.stage_copy(&source, "Main.class", "Main.class").unwrap();
+        plan.stage_copy(&source, "Main.class", "Main.class")
+            .unwrap();
         plan.stage_write("a.txt", b"y".to_vec()).unwrap();
         assert_eq!(plan.staged().len(), 2);
         plan.commit(&target, CommitOptions::default()).unwrap();
@@ -630,11 +645,16 @@ mod stage_write_tests {
         let target = Archive::open(path.to_string_lossy()).unwrap();
         let mut plan = MergePlan::new();
         plan.stage_write("notes.txt", b"new\n".to_vec()).unwrap();
-        let result = plan.commit(&target, CommitOptions { backup: true }).unwrap();
+        let result = plan
+            .commit(&target, CommitOptions { backup: true })
+            .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert!(result.backup_path.is_some());
-        assert_eq!(std::fs::read(result.backup_path.unwrap()).unwrap(), b"old\n");
+        assert_eq!(
+            std::fs::read(result.backup_path.unwrap()).unwrap(),
+            b"old\n"
+        );
         assert_eq!(result.copied_entries, 1);
         assert!(!result.signature_invalidated);
     }
@@ -648,7 +668,9 @@ mod stage_write_tests {
         let target = Archive::open(path.to_string_lossy()).unwrap();
         let mut plan = MergePlan::new();
         plan.stage_write("notes.txt", b"new\n".to_vec()).unwrap();
-        let result = plan.commit(&target, CommitOptions { backup: false }).unwrap();
+        let result = plan
+            .commit(&target, CommitOptions { backup: false })
+            .unwrap();
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new\n");
         assert!(result.backup_path.is_none());

@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const root = new URL("..", import.meta.url).pathname;
 const bundledJava = join(root, "src-tauri", "resources", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
 const java = process.env.LDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
-const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.1.0.jar");
+const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.2.0.jar");
 const tmp = mkdtempSync(join(tmpdir(), "ldiff-sidecar-smoke-"));
 
 try {
@@ -48,16 +48,15 @@ try {
 
   const archive = join(tmp, "hello.jar");
   assertOk(await request(child, pending, { id: "p1", action: "ping" }));
-  assertIncludes(
-    await request(child, pending, {
-      id: "c1",
-      action: "decompile",
-      engine: "cfr",
-      classpath: [archive],
-      entry: "demo/Hello.class",
-    }),
-    "hello-ldiff",
-  );
+  const cfrDecompiler = await request(child, pending, {
+    id: "c1",
+    action: "decompile",
+    engine: "cfr",
+    classpath: [archive],
+    entry: "demo/Hello.class",
+  });
+  assertIncludes(cfrDecompiler, "hello-ldiff");
+  assertIncludes(cfrDecompiler, "Decompiled with CFR");
   assertIncludes(
     await request(child, pending, {
       id: "a1",
@@ -87,16 +86,23 @@ try {
     }),
     "anon",
   );
-  assertIncludes(
-    await request(child, pending, {
-      id: "v1",
-      action: "decompile",
-      engine: "vineflower",
-      classpath: [archive],
-      entry: "demo/Hello.class",
-    }),
-    "hello-ldiff",
-  );
+  const defaultDecompiler = await request(child, pending, {
+    id: "default-vineflower",
+    action: "decompile",
+    classpath: [archive],
+    entry: "demo/Hello.class",
+  });
+  assertIncludes(defaultDecompiler, "hello-ldiff");
+  assertNotIncludes(defaultDecompiler, "Decompiled with CFR");
+  const vineflowerDecompiler = await request(child, pending, {
+    id: "explicit-vineflower",
+    action: "decompile",
+    engine: "vineflower",
+    classpath: [archive],
+    entry: "demo/Hello.class",
+  });
+  assertIncludes(vineflowerDecompiler, "hello-ldiff");
+  assertSameSource(defaultDecompiler, vineflowerDecompiler);
   const malformed = await request(child, pending, {
     id: "malformed",
     action: "disassemble",
@@ -130,6 +136,21 @@ function assertOk(response) {
 function assertIncludes(response, expected) {
   assertOk(response);
   if (!response.source?.includes(expected)) throw new Error(JSON.stringify(response));
+}
+
+function assertNotIncludes(response, unexpected) {
+  assertOk(response);
+  if (response.source?.includes(unexpected)) {
+    throw new Error(`unexpected ${JSON.stringify(unexpected)} in ${JSON.stringify(response)}`);
+  }
+}
+
+function assertSameSource(left, right) {
+  assertOk(left);
+  assertOk(right);
+  if (left.source !== right.source) {
+    throw new Error(`source mismatch: ${JSON.stringify({ left, right })}`);
+  }
 }
 
 function run(command, args) {

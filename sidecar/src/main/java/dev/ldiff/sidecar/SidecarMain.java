@@ -68,7 +68,7 @@ public final class SidecarMain {
         return ok(id).put("source", disassemble(bytes));
       }
       if ("decompile".equals(action)) {
-        String engine = request.path("engine").asText("cfr");
+        String engine = request.path("engine").asText("vineflower");
         String source =
             "vineflower".equals(engine)
                 ? decompileVineflower(archive, entry, bytes)

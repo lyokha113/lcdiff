@@ -1,116 +1,234 @@
-import { Binary, Code } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { Engine, Mode, SearchScope, ViewMode } from "@/lib/types";
+import type { UiPreferences } from "@/lib/preferences";
+import { listThemesByMode } from "@/lib/themes";
+import type { Engine, Mode } from "@/lib/types";
+
+type Section = "appearance" | "typography" | "editor" | "search" | "decompiler" | "save";
 
 interface ConfigDrawerProps {
   open: boolean;
   mode: Mode;
-  searchScope: SearchScope;
-  searching: boolean;
   engine: Engine;
   ignoreTrimWhitespace: boolean;
   backupEnabled: boolean;
-  viewMode: ViewMode;
-  canShowSource: boolean;
-  canShowBytecode: boolean;
-  onScopeChange: (scope: SearchScope) => void;
-  onDeepSearch: () => void;
-  onCancelDeepSearch: () => void;
-  onClearSearch: () => void;
+  preferences: UiPreferences;
+  onPreferencesChange: (preferences: UiPreferences) => void;
   onEngineChange: (engine: Engine) => void;
   onIgnoreWhitespaceChange: (value: boolean) => void;
   onBackupEnabledChange: (value: boolean) => void;
-  onShowSource: () => void;
-  onShowBytecode: () => void;
 }
 
+const sections: Array<{ id: Section; label: string }> = [
+  { id: "appearance", label: "Appearance" },
+  { id: "typography", label: "Typography" },
+  { id: "editor", label: "Editor" },
+  { id: "search", label: "Search" },
+  { id: "decompiler", label: "Decompiler" },
+  { id: "save", label: "Save" },
+];
+
+const fontSizes = [12, 13, 14, 15, 16] as const;
+
 export function ConfigDrawer({
-  open, mode, searchScope, searching, engine, ignoreTrimWhitespace, backupEnabled,
-  viewMode, canShowSource, canShowBytecode,
-  onScopeChange, onDeepSearch, onCancelDeepSearch, onClearSearch,
-  onEngineChange, onIgnoreWhitespaceChange, onBackupEnabledChange,
-  onShowSource, onShowBytecode,
+  open,
+  mode,
+  engine,
+  ignoreTrimWhitespace,
+  backupEnabled,
+  preferences,
+  onPreferencesChange,
+  onEngineChange,
+  onIgnoreWhitespaceChange,
+  onBackupEnabledChange,
 }: ConfigDrawerProps) {
+  const [section, setSection] = useState<Section>("appearance");
   if (!open) return <aside className="config-drawer closed" aria-hidden="true" />;
+
+  const update = (next: UiPreferences) => onPreferencesChange(next);
+
   return (
-    <aside className="config-drawer open" aria-label="Configuration">
-      <section className="drawer-group">
-        <span className="zone-label">View</span>
-        <div className="view-toggle" role="group" aria-label="Diff view mode">
-          <Button variant={viewMode === "source" ? "secondary" : "ghost"} size="sm"
-            aria-label="Show source" aria-pressed={viewMode === "source"}
-            disabled={!canShowSource} onClick={onShowSource}>
-            <Code /> Source
+    <aside className="config-drawer open preferences-drawer" aria-label="Preferences">
+      <nav className="preferences-nav" aria-label="Preferences sections">
+        {sections.map((item) => (
+          <Button
+            key={item.id}
+            variant={section === item.id ? "secondary" : "ghost"}
+            size="sm"
+            aria-pressed={section === item.id}
+            onClick={() => setSection(item.id)}
+          >
+            {item.label}
           </Button>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button variant={viewMode === "bytecode" ? "secondary" : "ghost"} size="sm"
-                  aria-label="Show bytecode" aria-pressed={viewMode === "bytecode"}
-                  disabled={!canShowBytecode} onClick={onShowBytecode}>
-                  <Binary /> Bytecode
+        ))}
+      </nav>
+      <div className="preferences-content">
+        {section === "appearance" && (
+          <section className="drawer-group">
+            <span className="zone-label">Appearance</span>
+            <Select
+              value={preferences.appearance.colorMode}
+              onValueChange={(colorMode) => update({
+                ...preferences,
+                appearance: {
+                  ...preferences.appearance,
+                  colorMode: colorMode as UiPreferences["appearance"]["colorMode"],
+                },
+              })}
+            >
+              <SelectTrigger aria-label="Color mode"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup>
+                <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="dark">Dark</SelectItem>
+              </SelectGroup></SelectContent>
+            </Select>
+            <span className="preference-subhead">Light themes</span>
+            <div className="theme-grid">
+              {listThemesByMode("light").map((theme) => (
+                <Button
+                  key={theme.id}
+                  variant={preferences.appearance.themeId === theme.id ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => update({
+                    ...preferences,
+                    appearance: { ...preferences.appearance, colorMode: "light", themeId: theme.id },
+                  })}
+                >
+                  {theme.label}
                 </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent><p>Open ASM bytecode for class entries; useful for metadata-only differences.</p></TooltipContent>
-          </Tooltip>
-        </div>
-      </section>
+              ))}
+            </div>
+            <span className="preference-subhead">Dark themes</span>
+            <div className="theme-grid">
+              {listThemesByMode("dark").map((theme) => (
+                <Button
+                  key={theme.id}
+                  variant={preferences.appearance.themeId === theme.id ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => update({
+                    ...preferences,
+                    appearance: { ...preferences.appearance, colorMode: "dark", themeId: theme.id },
+                  })}
+                >
+                  {theme.label}
+                </Button>
+              ))}
+            </div>
+          </section>
+        )}
 
-      <section className="drawer-group">
-        <span className="zone-label">Search</span>
-        <Select value={searchScope} disabled={mode === "single"}
-          onValueChange={(v) => onScopeChange(v as SearchScope)}>
-          <SelectTrigger aria-label="Search scope"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectGroup>
-            <SelectItem value="both">Search both</SelectItem>
-            <SelectItem value="left">Search left</SelectItem>
-            <SelectItem value="right">Search right</SelectItem>
-          </SelectGroup></SelectContent>
-        </Select>
-        <div className="row">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button variant="secondary" disabled={searching} onClick={onDeepSearch}>Deep search</Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent><p>Decompile classes in the background and stream source matches.</p></TooltipContent>
-          </Tooltip>
-          <Button variant="outline" disabled={!searching} onClick={onCancelDeepSearch}>Cancel search</Button>
-          <Button variant="ghost" onClick={onClearSearch}>Clear search</Button>
-        </div>
-      </section>
+        {section === "typography" && (
+          <section className="drawer-group">
+            <span className="zone-label">Typography</span>
+            <Select
+              value={String(preferences.typography.editorScale)}
+              onValueChange={(value) => update({
+                ...preferences,
+                typography: {
+                  ...preferences.typography,
+                  editorScale: Number(value) as UiPreferences["typography"]["editorScale"],
+                },
+              })}
+            >
+              <SelectTrigger aria-label="Editor font size"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup>
+                {fontSizes.map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                ))}
+              </SelectGroup></SelectContent>
+            </Select>
+          </section>
+        )}
 
-      <section className="drawer-group">
-        <span className="zone-label">Decompiler &amp; diff</span>
-        <Select value={engine} onValueChange={(v) => onEngineChange(v as Engine)}>
-          <SelectTrigger aria-label="Decompiler engine"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectGroup>
-            <SelectItem value="cfr">CFR</SelectItem>
-            <SelectItem value="vineflower">Vineflower</SelectItem>
-          </SelectGroup></SelectContent>
-        </Select>
-        <label className="check-label">
-          <Checkbox checked={ignoreTrimWhitespace} onCheckedChange={(c) => onIgnoreWhitespaceChange(c === true)} />
-          Ignore trim whitespace
-        </label>
-      </section>
+        {section === "editor" && (
+          <section className="drawer-group">
+            <span className="zone-label">Editor</span>
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.editor.wordWrap === "on"}
+                onCheckedChange={(checked) => update({
+                  ...preferences,
+                  editor: { ...preferences.editor, wordWrap: checked === true ? "on" : "off" },
+                })}
+              />
+              Word wrap
+            </label>
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.editor.lineNumbers === "on"}
+                onCheckedChange={(checked) => update({
+                  ...preferences,
+                  editor: { ...preferences.editor, lineNumbers: checked === true ? "on" : "off" },
+                })}
+              />
+              Line numbers
+            </label>
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.editor.minimap === "on"}
+                onCheckedChange={(checked) => update({
+                  ...preferences,
+                  editor: { ...preferences.editor, minimap: checked === true ? "on" : "off" },
+                })}
+              />
+              Minimap
+            </label>
+          </section>
+        )}
 
-      {mode === "compare" && (
-        <section className="drawer-group">
-          <span className="zone-label">Save</span>
-          <label className="check-label">
-            <Checkbox checked={backupEnabled} onCheckedChange={(c) => onBackupEnabledChange(c === true)} />
-            Keep one overwritten .bak on save
-          </label>
-        </section>
-      )}
+        {section === "search" && (
+          <section className="drawer-group">
+            <span className="zone-label">Search</span>
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.search.includeSourceByDefault}
+                onCheckedChange={(checked) => update({
+                  ...preferences,
+                  search: { ...preferences.search, includeSourceByDefault: checked === true },
+                })}
+              />
+              Include source by default
+            </label>
+          </section>
+        )}
+
+        {section === "decompiler" && (
+          <section className="drawer-group">
+            <span className="zone-label">Decompiler &amp; diff</span>
+            <Select value={engine} onValueChange={(value) => onEngineChange(value as Engine)}>
+              <SelectTrigger aria-label="Decompiler engine"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectGroup>
+                <SelectItem value="vineflower">Vineflower</SelectItem>
+                <SelectItem value="cfr">CFR</SelectItem>
+              </SelectGroup></SelectContent>
+            </Select>
+            <label className="check-label">
+              <Checkbox
+                checked={ignoreTrimWhitespace}
+                onCheckedChange={(checked) => onIgnoreWhitespaceChange(checked === true)}
+              />
+              Ignore trim whitespace
+            </label>
+          </section>
+        )}
+
+        {section === "save" && mode === "compare" && (
+          <section className="drawer-group">
+            <span className="zone-label">Save</span>
+            <label className="check-label">
+              <Checkbox
+                checked={backupEnabled}
+                onCheckedChange={(checked) => onBackupEnabledChange(checked === true)}
+              />
+              Keep one overwritten .bak on save
+            </label>
+          </section>
+        )}
+      </div>
     </aside>
   );
 }

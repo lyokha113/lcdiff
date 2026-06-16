@@ -13,6 +13,8 @@ pub enum DecompileEngine {
     Vineflower,
 }
 
+pub const DEFAULT_DECOMPILE_ENGINE: DecompileEngine = DecompileEngine::Vineflower;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SidecarAction {

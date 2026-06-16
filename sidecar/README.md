@@ -6,20 +6,22 @@ Build:
 mvn -f sidecar/pom.xml package
 ```
 
-The shaded artifact is `sidecar/target/ldiff-sidecar-0.1.0.jar`. It uses the
+The shaded artifact is `sidecar/target/ldiff-sidecar-0.2.0.jar`. It uses the
 same `[u32 big-endian length][JSON]` framing as
 `ldiff-core::sidecar_protocol`.
 
 Actions:
 
 - `ping`
-- `decompile` with `engine: "cfr" | "vineflower"`
+- `decompile` with optional `engine: "cfr" | "vineflower"`; missing `engine`
+  defaults to `"vineflower"`
 - `disassemble`
 - `cancel` acknowledgement
 
-The production app bundles a Java 17 jlink runtime because current Vineflower
-requires Java 17. The source remains Java 8 compatible so CFR, ping, and ASM can
-also be smoke-tested on older development runtimes.
+The production app defaults to Vineflower and bundles a Java 17 jlink runtime
+because current Vineflower requires Java 17. The sidecar source remains Java 8
+compatible so explicit CFR, ping, and ASM can also be smoke-tested on older
+development runtimes.
 
 Build the runtime with a Java 17+ `jlink` executable:
 

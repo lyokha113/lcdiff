@@ -149,6 +149,7 @@ Local builds produce these per platform:
 
 - macOS arm64 and x64 `.app` plus `.dmg` bundles.
 - Linux AppImage/deb/rpm bundles.
+- Arch Linux AUR package for `ldiff`.
 - Windows NSIS/MSI installers.
 - Optional signing/notarization runs only when its secrets are present; unsigned
   builds are still produced when secrets are absent.

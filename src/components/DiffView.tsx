@@ -1,8 +1,9 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowLeft, ArrowRight, Binary, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { ComparePair, EntryPreview, Mode, Side } from "@/lib/types";
+import type { UiPreferences } from "@/lib/preferences";
+import type { ComparePair, EntryPreview, Mode, Side, ViewMode } from "@/lib/types";
 
 export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
@@ -12,6 +13,10 @@ interface DiffViewProps {
   mode: Mode;
   selected?: ComparePair;
   preview: Partial<Record<Side, EntryPreview>>;
+  preferences: UiPreferences;
+  viewMode: ViewMode;
+  canShowSource: boolean;
+  canShowBytecode: boolean;
   ignoreTrimWhitespace: boolean;
   onCopy: (from: Side, to: Side) => void;
   onEditorMount: OnMount;
@@ -25,17 +30,52 @@ interface DiffViewProps {
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
   onMoveHunk: (target: Side) => void;
+  onShowSource: () => void;
+  onShowBytecode: () => void;
 }
 
 export function DiffView({
-  mode, selected, preview, ignoreTrimWhitespace,
+  mode, selected, preview, preferences, viewMode, canShowSource, canShowBytecode, ignoreTrimWhitespace,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
-  fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk, onShowSource, onShowBytecode,
 }: DiffViewProps) {
+  const monacoTheme = preferences.appearance.colorMode === "light" ? "light" : "vs-dark";
+  const editorOptions = {
+    fontFamily: "var(--font-mono)",
+    fontSize: preferences.typography.editorScale,
+    minimap: { enabled: preferences.editor.minimap === "on" },
+    wordWrap: preferences.editor.wordWrap,
+    lineNumbers: preferences.editor.lineNumbers,
+    automaticLayout: true,
+  } as const;
+
   return (
     <div className="editor-panel">
       <div className="copy-actions">
+        <div className="view-toggle" role="group" aria-label="Diff view mode">
+          <Button
+            variant={viewMode === "source" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show source"
+            aria-pressed={viewMode === "source"}
+            disabled={!canShowSource}
+            onClick={onShowSource}
+          >
+            <Code /> Source
+          </Button>
+          <Button
+            variant={viewMode === "bytecode" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show bytecode"
+            aria-pressed={viewMode === "bytecode"}
+            disabled={!canShowBytecode}
+            onClick={onShowBytecode}
+          >
+            <Binary /> Bytecode
+          </Button>
+        </div>
+
         {/* Far left: copy the whole entry/file onto the LEFT pane. */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -109,15 +149,14 @@ export function DiffView({
             language={preview.left?.language ?? preview.right?.language ?? "plaintext"}
             original={preview.left?.content ?? ""}
             modified={preview.right?.content ?? ""}
-            theme="vs-dark"
+            theme={monacoTheme}
             options={{
+              ...editorOptions,
               readOnly: !hunkMerge,
               originalEditable: hunkMerge,
               renderMarginRevertIcon: hunkMerge,
-              minimap: { enabled: false },
               renderSideBySide: true,
               useInlineViewWhenSpaceIsLimited: false,
-              automaticLayout: true,
               ignoreTrimWhitespace,
             }}
             onMount={(editor, monaco) => {
@@ -136,8 +175,8 @@ export function DiffView({
             height="100%"
             language={preview.left?.language ?? "plaintext"}
             value={editable ? editValue : (preview.left?.content ?? "")}
-            theme="vs-dark"
-            options={{ readOnly: !editable, minimap: { enabled: false }, automaticLayout: true }}
+            theme={monacoTheme}
+            options={{ ...editorOptions, readOnly: !editable }}
             onChange={(value) => editable && onEditChange(value)}
             onMount={(editor, monaco) => {
               onEditorMount(editor, monaco);

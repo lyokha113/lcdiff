@@ -9,10 +9,12 @@ export interface StagedEntry {
 export type PairStatus = "onlyLeft" | "onlyRight" | "identical" | "different" | "differentMetadataOnly";
 export type EntryKind = "directory" | "class" | "text" | "archive" | "binary";
 export type Engine = "cfr" | "vineflower";
+export const DEFAULT_ENGINE: Engine = "vineflower";
 export type Mode = "single" | "compare";
-export type SearchScope = Side | "both";
 export type TreeFilter = "all" | "diff" | "same";
 export type SearchTier = "T2" | "T3";
+export type SearchHitKind = "path" | "text" | "constantPool" | "source";
+export type SearchContext = "files" | "diff";
 export type CodeEditor = Parameters<OnMount>[0];
 export type DiffCodeEditor = Parameters<DiffOnMount>[0];
 export type MonacoApi = Parameters<OnMount>[1];
@@ -51,18 +53,26 @@ export interface CommitResult {
   copiedEntries: number;
 }
 
+export interface BackendSearchOptions {
+  includePath: boolean;
+  includeText: boolean;
+  includeConstants: boolean;
+}
+
+export interface BackendSearchHit {
+  entryPath: string;
+  kind: SearchHitKind;
+  line?: number;
+  preview?: string;
+}
+
 export interface SearchResult {
   side: Side;
   path: string;
   tier: SearchTier;
-  matchKind: string;
+  kind: SearchHitKind;
   line?: number;
-}
-
-export interface SearchHit {
-  path: string;
-  matchKind: string;
-  line?: number;
+  preview?: string;
 }
 
 export interface PlatformHints {

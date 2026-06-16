@@ -382,7 +382,10 @@ fn path_is_zip(path: &Path) -> Result<bool> {
     if read < 4 {
         return Ok(false);
     }
-    Ok(matches!(&header, b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08"))
+    Ok(matches!(
+        &header,
+        b"PK\x03\x04" | b"PK\x05\x06" | b"PK\x07\x08"
+    ))
 }
 
 #[cfg(test)]
@@ -421,7 +424,8 @@ mod open_tests {
         let jar = dir.path().join("lib.jar");
         let file = std::fs::File::create(&jar).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        zip.start_file("a.txt", zip::write::SimpleFileOptions::default()).unwrap();
+        zip.start_file("a.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
         use std::io::Write as _;
         zip.write_all(b"hi").unwrap();
         zip.finish().unwrap();

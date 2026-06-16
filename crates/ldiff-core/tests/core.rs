@@ -269,7 +269,10 @@ fn staging_same_target_path_replaces_previous_copy() {
     plan.stage_copy(&left, "second.txt", "target.txt").unwrap();
 
     assert_eq!(plan.staged().len(), 1);
-    let ldiff_core::StagedOp::Copy { source_entry_path, .. } = &plan.staged()[0] else {
+    let ldiff_core::StagedOp::Copy {
+        source_entry_path, ..
+    } = &plan.staged()[0]
+    else {
         panic!("expected a Copy op");
     };
     assert_eq!(source_entry_path, "second.txt");

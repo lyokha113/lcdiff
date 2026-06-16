@@ -11,10 +11,12 @@ artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
 | macOS arm64 | `LDiff-<version>-aarch64.dmg` | locally on macOS |
 | Linux x86_64 | `LDiff_<version>_amd64.AppImage` | Docker (`ubuntu:22.04`) |
 | Linux x86_64 | `LDiff_<version>_amd64.deb` | Docker (`ubuntu:22.04`) |
+| Arch Linux | `aur/ldiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
 
 The install scripts ship as release assets so users get them next to the
-binaries without cloning the repo.
+binaries without cloning the repo. Arch Linux uses the AUR package in
+`aur/ldiff/` instead of a GitHub release asset.
 
 ## 1. Pick the version
 
@@ -71,6 +73,12 @@ docker rm "$cid"
 
 (Optional) prove the GUI renders headlessly: `docker/run-linux-docker.sh`.
 
+## 3.5 Publish the AUR package
+
+Update `aur/ldiff/PKGBUILD` and `aur/ldiff/.SRCINFO` when the version changes,
+then push the AUR repo separately from the GitHub release. Arch users install
+it with `yay -S ldiff` or `paru -S ldiff`.
+
 ## 4. Publish the release
 
 Stage every artifact under one folder, then create the tagged release:
@@ -92,10 +100,12 @@ gh release create v<version> \
   confirm `open -a LDiff` launches.
 - Linux: download the AppImage + `install-linux.sh`, run
   `bash install-linux.sh LDiff_<version>_amd64.AppImage`, confirm `ldiff` runs.
+- Arch Linux: install from AUR with `yay -S ldiff`, confirm `ldiff` runs.
 
 ## Notes
 
 - Linux bundles are unsigned; there is no Linux code-signing step.
+- Arch Linux uses the AUR package, not a GitHub release asset.
 - ARM Linux is not a release target — build from source with
   `docker/build-linux-docker.sh --arch arm64` if needed.
 - Run the developer checks (`npm run verify:all`,

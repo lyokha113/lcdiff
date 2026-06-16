@@ -1,28 +1,27 @@
 import "@/lib/monaco";
 import type { DiffOnMount, OnMount } from "@monaco-editor/react";
-import type {
-  ArchiveDiff,
-  ArchiveSummary,
-  CodeEditor,
-  CommitResult,
-  ComparePair,
-  DecorationRef,
-  DiffCodeEditor,
-  Engine,
-  EntryKind,
-  EntryPreview,
-  Mode,
-  MonacoApi,
-  PairStatus,
-  PlatformHints,
-  SearchHit,
-  SearchResult,
-  SearchScope,
-  SearchTier,
-  Side,
-  StagedEntry,
-  TreeFilter,
-  ViewMode,
+import {
+  type ArchiveDiff,
+  type ArchiveSummary,
+  type BackendSearchHit,
+  type CodeEditor,
+  type CommitResult,
+  type ComparePair,
+  type DecorationRef,
+  DEFAULT_ENGINE,
+  type DiffCodeEditor,
+  type Engine,
+  type EntryKind,
+  type EntryPreview,
+  type Mode,
+  type MonacoApi,
+  type PairStatus,
+  type PlatformHints,
+  type SearchResult,
+  type Side,
+  type StagedEntry,
+  type TreeFilter,
+  type ViewMode,
 } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -44,8 +43,11 @@ import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { MenuBar } from "@/components/MenuBar";
 import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
+import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
+import { applyPreferencesToRoot, loadUiPreferences, saveUiPreferences } from "@/lib/preferences";
+import { searchContextForActiveTab, searchResultKey } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
@@ -71,10 +73,6 @@ const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
 
 // Keep in sync with EDITABLE_EXTENSIONS in crates/ldiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
-
-function searchResultKey(result: SearchResult) {
-  return `${result.tier}:${result.side}:${result.path}:${result.matchKind}:${result.line ?? ""}`;
-}
 
 function applySearchLineHighlight(
   editor: CodeEditor | undefined,
@@ -112,9 +110,10 @@ export function App() {
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
-  const [engine, setEngine] = useState<Engine>("cfr");
+  const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE);
+  const [preferences, setPreferences] = useState(loadUiPreferences);
   const [query, setQuery] = useState("");
-  const [searchScope, setSearchScope] = useState<SearchScope>("both");
+  const [includeSourceSearch, setIncludeSourceSearch] = useState(preferences.search.includeSourceByDefault);
   const [searchPaths, setSearchPaths] = useState<Set<string>>();
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult>();
@@ -137,10 +136,12 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<"files" | string>("files");
   const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
+  const appShellRef = useRef<HTMLElement>(null);
   const focusCounter = useRef(0);
   const openTabsCountRef = useRef(0);
   const previewRequestId = useRef(0);
   const searchStreamId = useRef(0);
+  const cancelableSearchActiveRef = useRef(false);
   const editorRef = useRef<CodeEditor | undefined>(undefined);
   const diffEditorRef = useRef<DiffCodeEditor | undefined>(undefined);
   const monacoRef = useRef<MonacoApi | undefined>(undefined);
@@ -149,6 +150,13 @@ export function App() {
   const rightSearchDecorations = useRef<string[]>([]);
   const handleEditorMount = useCallback<OnMount>((editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; }, []);
   const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; }, []);
+  useEffect(() => {
+    saveUiPreferences(preferences);
+    if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, preferences);
+  }, [preferences, view]);
+  useEffect(() => {
+    setIncludeSourceSearch(preferences.search.includeSourceByDefault);
+  }, [preferences.search.includeSourceByDefault]);
   const displayedPairs = useMemo<ComparePair[]>(
     () =>
       mode === "compare"
@@ -289,9 +297,16 @@ export function App() {
     }).then((stop) => {
       unlistenProgress = stop;
     });
-    listen<{ searchId: number; side: Side; hit: SearchHit }>("search-result", (event) => {
+    listen<{ searchId: number; side: Side; hit: BackendSearchHit }>("search-result", (event) => {
       if (event.payload.searchId !== searchStreamId.current) return;
-      const result = { side: event.payload.side, tier: "T3" as const, ...event.payload.hit };
+      const result: SearchResult = {
+        side: event.payload.side,
+        tier: "T3",
+        path: event.payload.hit.entryPath,
+        kind: event.payload.hit.kind,
+        line: event.payload.hit.line,
+        preview: event.payload.hit.preview,
+      };
       setSearchPaths((current) => new Set([...(current ?? []), result.path]));
       setSearchResults((current) =>
         current.some((candidate) => searchResultKey(candidate) === searchResultKey(result))
@@ -768,78 +783,127 @@ export function App() {
 
   async function runSearch() {
     const searchId = searchStreamId.current + 1;
+    const sourceTierEnabled = includeSourceSearch;
     searchStreamId.current = searchId;
-    setSearching(false);
+    cancelableSearchActiveRef.current = sourceTierEnabled;
+    setSearching(sourceTierEnabled);
+    setSearchPaths(undefined);
+    setSearchResults([]);
+    setSelectedSearchResult(undefined);
     try {
       const matches = new Set<string>();
       const results: SearchResult[] = [];
+      const options = { includePath: true, includeText: true, includeConstants: true };
       for (const side of searchSides()) {
         if (!archives[side]) continue;
-        for (const hit of await invoke<SearchHit[]>("search", { side, query })) {
+        for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
           if (searchStreamId.current !== searchId) return;
-          matches.add(hit.path);
-          results.push({ side, tier: "T2", ...hit });
+          matches.add(hit.entryPath);
+          results.push({
+            side,
+            tier: "T2",
+            path: hit.entryPath,
+            kind: hit.kind,
+            line: hit.line,
+            preview: hit.preview,
+          });
+        }
+      }
+      if (sourceTierEnabled) {
+        setSearchPaths(new Set(matches));
+        setSearchResults([...results]);
+        try {
+          for (const side of searchSides()) {
+            if (!archives[side]) continue;
+            for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+              if (searchStreamId.current !== searchId) return;
+              matches.add(hit.entryPath);
+              results.push({
+                side,
+                tier: "T3",
+                path: hit.entryPath,
+                kind: hit.kind,
+                line: hit.line,
+                preview: hit.preview,
+              });
+            }
+          }
+        } catch (error) {
+          if (searchStreamId.current !== searchId) return;
+          setSearchPaths(new Set(matches));
+          setSearchResults([...results]);
+          setMessage(`Source search failed: ${String(error)}`);
+          return;
         }
       }
       if (searchStreamId.current !== searchId) return;
       setSearchPaths(matches);
       setSearchResults(results);
-      setMessage(`Search matched ${matches.size} entries.`);
+      setMessage(`${sourceTierEnabled ? "Search with decompiled source" : "Search"} matched ${matches.size} entries.`);
     } catch (error) {
       if (searchStreamId.current !== searchId) return;
       setSearchPaths(undefined);
       setSearchResults([]);
       setMessage(String(error));
-    }
-  }
-
-  async function runDeepSearch() {
-    const searchId = searchStreamId.current + 1;
-    searchStreamId.current = searchId;
-    setSearching(true);
-    setSearchPaths(new Set());
-    setSearchResults([]);
-    try {
-      const matches = new Set<string>();
-      const results: SearchResult[] = [];
-      for (const side of searchSides()) {
-        if (!archives[side]) continue;
-        for (const hit of await invoke<SearchHit[]>("deep_search", { side, query, searchId })) {
-          if (searchStreamId.current !== searchId) return;
-          matches.add(hit.path);
-          results.push({ side, tier: "T3", ...hit });
-        }
-      }
-      if (searchStreamId.current !== searchId) return;
-      setSearchPaths(matches);
-      setSearchResults(results);
-      setMessage(`Deep search matched ${matches.size} entries.`);
-    } catch (error) {
-      if (searchStreamId.current !== searchId) return;
-      setMessage(String(error));
     } finally {
-      if (searchStreamId.current === searchId) setSearching(false);
+      if (searchStreamId.current === searchId) {
+        cancelableSearchActiveRef.current = false;
+        setSearching(false);
+      }
     }
   }
 
   async function cancelDeepSearch() {
     searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
     setSearching(false);
     await invoke("cancel_deep_search");
-    setMessage("Cancelling deep search...");
+    setMessage("Cancelling decompiled source search...");
+  }
+
+  function findInCurrentDiff() {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setMessage("Search query is empty");
+      return;
+    }
+    const searchInEditor = (editor?: CodeEditor) => {
+      const matches = editor?.getModel()?.findMatches(trimmed, true, false, false, null, true) ?? [];
+      const line = matches[0]?.range.startLineNumber;
+      if (line !== undefined) editor?.revealLineInCenter(line);
+      return line;
+    };
+    const diffEditor = diffEditorRef.current;
+    const line =
+      mode === "compare"
+        ? searchInEditor(diffEditor?.getModifiedEditor()) ?? searchInEditor(diffEditor?.getOriginalEditor())
+        : searchInEditor(editorRef.current);
+    if (line === undefined) {
+      setMessage("Current diff found no matches.");
+      return;
+    }
+    setMessage(`Current diff matched line ${line}.`);
   }
 
   function searchSides(): Side[] {
     if (mode === "single") return ["left"];
-    return searchScope === "both" ? ["left", "right"] : [searchScope];
+    return ["left", "right"];
   }
 
-  function clearSearch() {
+  async function clearSearchResults() {
+    const shouldCancelBackendSearch = cancelableSearchActiveRef.current;
     searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
     setSearching(false);
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
+    if (shouldCancelBackendSearch) await invoke("cancel_deep_search");
+  }
+
+  function clearFind() {
+    void clearSearchResults();
+    setQuery("");
   }
 
   function inspectSearchResult(result: SearchResult) {
@@ -891,10 +955,11 @@ export function App() {
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
   const leftLabel = baseName(archives.left?.path ?? paths.left) ?? "Left";
   const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
+  const searchContext = searchContextForActiveTab(activeTab);
 
   return (
     <TooltipProvider>
-    <main className="app-shell">
+    <main className="app-shell" ref={appShellRef}>
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
@@ -924,11 +989,15 @@ export function App() {
 
       <SearchBar
         open={searchOpen}
+        context={searchContext}
         query={query}
-        treeFilter={treeFilter}
+        includeSource={includeSourceSearch}
+        searching={searching}
         onQueryChange={setQuery}
-        onSearch={runSearch}
-        onFilterChange={setTreeFilter}
+        onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
+        onCancel={cancelDeepSearch}
+        onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
+        onIncludeSourceChange={setIncludeSourceSearch}
       />
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
@@ -936,10 +1005,13 @@ export function App() {
           <WorkspaceTabs
             fileCount={visiblePairs.length}
             activeId={activeTab}
+            mode={mode}
             tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+            treeFilter={treeFilter}
             onSelectFiles={() => setActiveTab("files")}
             onSelectTab={(path) => focusTab(path)}
             onCloseTab={(path) => closeTab(path)}
+            onFilterChange={setTreeFilter}
           />
           <div className="workspace-tabpanels">
             <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
@@ -964,6 +1036,10 @@ export function App() {
                 mode={mode}
                 selected={selected}
                 preview={preview}
+                preferences={preferences}
+                viewMode={viewMode}
+                canShowSource={!!selected}
+                canShowBytecode={pairHasClass(selected)}
                 ignoreTrimWhitespace={ignoreTrimWhitespace}
                 onCopy={(from, to) => void copy(from, to)}
                 onEditorMount={handleEditorMount}
@@ -977,6 +1053,8 @@ export function App() {
                 onDiffEditEither={(side, content) => void stageFileSide(side, content)}
                 onTakeAll={(t) => void takeAllTo(t)}
                 onMoveHunk={(t) => void moveHunkTo(t)}
+                onShowSource={() => selected && void inspect(selected, true)}
+                onShowBytecode={showBytecode}
               />
             </div>
           </div>
@@ -984,40 +1062,22 @@ export function App() {
         <ConfigDrawer
           open={drawerOpen}
           mode={mode}
-          searchScope={searchScope}
-          searching={searching}
           engine={engine}
           ignoreTrimWhitespace={ignoreTrimWhitespace}
           backupEnabled={backupEnabled}
-          viewMode={viewMode}
-          canShowSource={!!selected}
-          canShowBytecode={pairHasClass(selected)}
-          onScopeChange={setSearchScope}
-          onDeepSearch={runDeepSearch}
-          onCancelDeepSearch={cancelDeepSearch}
-          onClearSearch={clearSearch}
+          preferences={preferences}
+          onPreferencesChange={setPreferences}
           onEngineChange={(next) => void changeEngine(next)}
           onIgnoreWhitespaceChange={setIgnoreTrimWhitespace}
           onBackupEnabledChange={setBackupEnabled}
-          onShowSource={() => selected && void inspect(selected, true)}
-          onShowBytecode={showBytecode}
         />
       </div>
       <p className="message">{message}</p>
-      {searchResults.length > 0 && (
-        <section className="search-results">
-          {searchResults.map((result) => (
-            <Button
-              variant="outline"
-              key={searchResultKey(result)}
-              onClick={() => inspectSearchResult(result)}
-            >
-              {result.path} · {result.matchKind}
-              {result.line !== undefined && `:${result.line}`} · {result.tier} · {result.side.toUpperCase()}
-            </Button>
-          ))}
-        </section>
-      )}
+      <SearchResultsPanel
+        results={searchResults}
+        grouping={preferences.search.resultGrouping}
+        onInspect={inspectSearchResult}
+      />
       <Dialog open={pendingOpen !== undefined} onOpenChange={(open) => !open && setPendingOpen(undefined)}>
         <DialogContent>
           <DialogHeader>

@@ -10,8 +10,9 @@ merge copies the original entry bytes, never the decompiled view.
   rows, Monaco source/bytecode diff, and text/hex preview.
 - **Merge** — stage original entry bytes from one side to the other, review
   pending changes, then save atomically with an optional `.bak` backup.
-- **Decompile** — CFR / Vineflower source and ASM bytecode through an isolated
-  JVM sidecar that may degrade independently when the JVM is absent.
+- **Decompile** — Vineflower source by default, CFR as an alternate engine, and
+  ASM bytecode through an isolated JVM sidecar that may degrade independently
+  when the JVM is absent.
 
 > This README has two parts. **[For Users](#for-users)** if you just want to
 > install and run LDiff. **[For Developers](#for-developers)** if you want to
@@ -52,9 +53,11 @@ files by hand).
 
 ### Linux (Ubuntu 22.04+ / glibc 2.35+)
 
-Two artifacts ship: a portable **AppImage** (runs on any recent distro) and a
-**`.deb`** (Debian/Ubuntu). The `install-linux.sh` helper handles either —
-pass it whichever you downloaded:
+Two artifacts ship as GitHub release assets: a portable **AppImage** (runs on
+any recent distro) and a **`.deb`** (Debian/Ubuntu). Arch Linux users should
+install from AUR with `yay -S ldiff` (or `paru -S ldiff`). The
+`install-linux.sh` helper handles the GitHub release assets — pass it whichever
+you downloaded:
 
 ```bash
 bash install-linux.sh LDiff_<version>_amd64.AppImage   # -> ~/.local/bin/ldiff + app menu entry
@@ -65,8 +68,9 @@ The AppImage path needs no root and adds an `ldiff` command plus a desktop
 entry. On Wayland, if drag-and-drop misbehaves, launch with
 `GDK_BACKEND=x11 ldiff`.
 
-> The Linux release is built for **x86_64**. For ARM Linux, build from source
-> (see [For Developers](#building-and-packaging-linux)).
+> The GitHub Linux release is built for **x86_64**. Arch Linux uses the AUR
+> package instead. For ARM Linux, build from source (see [For
+> Developers](#building-and-packaging-linux)).
 
 ---
 
@@ -148,8 +152,9 @@ files. If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
    bytecode, or a text/hex view. Java sources are read-only.
 3. **Compare mode** — open a second archive/folder on the right; matching entries
    align and changed rows are highlighted with a CRC tree diff.
-4. **Search** — fast path/text/constant-pool search, plus an opt-in deep source
-   search (left / right / both) with clickable streaming results.
+4. **Search** — fast path/text/constant-pool search across the open source in
+   Single mode or both sides in Compare mode, plus an opt-in deep decompiled
+   source search with clickable results.
 5. **Merge** — use the arrow buttons or row context menu to stage original bytes
    from one side to the other. Pending changes show a badge until you save.
 6. **Save** — writes atomically. Enable the backup option to keep a `.bak`.
@@ -171,7 +176,7 @@ Rust src-tauri  (commands, async adapters)
         |
 Rust ldiff-core  (archive state, staged bytes, CRC diff, search, save)
         |  framed stdio
-JVM decompiler sidecar  (CFR / Vineflower / ASM, jlink Java 17)
+JVM decompiler sidecar  (Vineflower default / CFR / ASM, jlink Java 17)
 ```
 
 The frontend never owns bytes. Rust owns archive state, staged changes, and the
@@ -191,8 +196,9 @@ LDiff is built from four layers:
   picker, file drop, resizable tree/editor panels, context-menu merge actions,
   staged copy, signed-save confirmation, and async adapters for
   ZIP/folder/decompiler long operations.
-- **JVM decompiler sidecar** — CFR / Vineflower / ASM over framed stdio with a
-  versioned LRU cache and a bundled Java 17 jlink JRE.
+- **JVM decompiler sidecar** — Vineflower source by default, CFR source as an
+  alternate engine, and ASM bytecode over framed stdio with a versioned LRU
+  cache and a bundled Java 17 jlink JRE.
 
 ## Repository Layout
 
@@ -270,7 +276,7 @@ scripts/test-sidecar-smoke.sh
 
 Build on the target Linux machine — Linux bundles cannot be cross-built from
 macOS. One script installs the GTK/WebKit deps, assembles the sidecar, and
-builds the bundles on both Ubuntu and Arch:
+builds the GitHub release bundles on Ubuntu or Arch:
 
 ```bash
 scripts/build-linux.sh                 # apt or pacman deps, then AppImage + deb
@@ -288,7 +294,8 @@ System dependencies it installs:
 
 Bundles land under `target/release/bundle/` (`appimage/*.AppImage`, `deb/*.deb`).
 The **AppImage** is the portable artifact for both distros; the `.deb` targets
-Debian/Ubuntu.
+Debian/Ubuntu. Arch users get the AUR package instead of a GitHub release
+bundle.
 
 ### Cross-building Linux bundles from macOS (Docker)
 

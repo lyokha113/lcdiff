@@ -84,6 +84,8 @@ try {
   });
   await mockedPage.addInitScript(() => {
     const opened = {};
+    const searchCalls = [];
+    window.__LDIFF_RENDER_SEARCH_CALLS__ = searchCalls;
     const archives = {
       "/fixtures/left.jar": {
         path: "/fixtures/left.jar",
@@ -218,7 +220,12 @@ try {
           return `${args.side.toUpperCase()} ASM BYTECODE for ${args.entryPath}`;
         }
         if (cmd === "search") {
-          return [{ path: "right-only.txt", matchKind: "path" }];
+          searchCalls.push({
+            side: args.side,
+            query: args.query,
+            options: args.options,
+          });
+          return args.side === "right" ? [{ entryPath: "right-only.txt", kind: "path" }] : [];
         }
         if (cmd === "stage_copy") return undefined;
         if (cmd === "unstage") return undefined;
@@ -289,7 +296,7 @@ try {
   await archiveInput().press("Enter");
   await closePopover();
 
-  // Tree filter (in the always-visible SearchBar): Identical hides non-identical rows.
+  // Tree filter in the workspace tab strip: Identical hides non-identical rows.
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Identical" }).click();
   await mockedPage.locator(".tree-file", { hasText: "right-only.txt" }).waitFor({ state: "detached", timeout: 5_000 });
@@ -300,20 +307,30 @@ try {
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Differences" }).click();
 
-  // Search scope lives in the config drawer (closed by default) — open it.
-  await mockedPage.getByRole("button", { name: "Settings", exact: true }).click();
-  await mockedPage.getByRole("combobox", { name: "Search scope" }).click();
-  await mockedPage.getByRole("option", { name: "Search right" }).click();
   // Submit via the SearchBar Search button (MenuBar toggle is now "Toggle search").
   await mockedPage.getByPlaceholder("Search paths, text, constants").fill("right-only");
-  await mockedPage.getByRole("button", { name: "Search", exact: true }).click();
+  await mockedPage.getByText("Search files", { exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Search files", exact: true }).click();
   await mockedPage.locator("text=Search matched 1 entries.").waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("button", { name: "right-only.txt · path · T2 · RIGHT" }).click();
+  const searchCalls = await mockedPage.evaluate(() => window.__LDIFF_RENDER_SEARCH_CALLS__);
+  const expectedSearchOptions = { includePath: true, includeText: true, includeConstants: true };
+  for (const side of ["left", "right"]) {
+    const call = searchCalls.find((candidate) => candidate.side === side);
+    if (!call) {
+      throw new Error(`Search files did not search ${side}: ${JSON.stringify(searchCalls)}`);
+    }
+    if (call.query !== "right-only" || JSON.stringify(call.options) !== JSON.stringify(expectedSearchOptions)) {
+      throw new Error(`Unexpected ${side} search call: ${JSON.stringify(call)}`);
+    }
+  }
+  await mockedPage.locator(".search-result-row", { hasText: "right-only.txt" }).click();
   await mockedPage.locator("text=right text content for right-only.txt").waitFor({ timeout: 5_000 });
 
+  await showFilesTab();
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Differences" }).click();
-  await mockedPage.getByRole("button", { name: "Clear search" }).click();
+  await mockedPage.getByText("Clear results", { exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Clear results" }).click();
 
   // Metadata-only detection: identical decompiled source -> differentMetadataOnly badge.
   await showFilesTab();
@@ -395,11 +412,15 @@ try {
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
     throw new Error("Single mode still rendered the right source chip");
   }
+  if (await mockedPage.getByRole("combobox", { name: "Tree filter" }).count()) {
+    throw new Error("Single mode still rendered the compare-only tree filter");
+  }
 
   // Back to Compare: right chip returns.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "Compare" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
   const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });
@@ -429,9 +450,11 @@ try {
   // wait for it to fully detach before interacting with the tree again.
   await mockedPage.getByRole("heading", { name: "Signed JAR warning" }).waitFor({ state: "detached", timeout: 5_000 });
 
-  // Re-stage + toggle backup (in config drawer, still open) + save (backup=true,
+  // Re-stage + toggle backup in Preferences > Save + save (backup=true,
   // no second signed prompt thanks to session suppression).
   await selectAppAndStageRight();
+  await mockedPage.getByRole("button", { name: "Preferences", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Save", exact: true }).click();
   const backupCheckbox = mockedPage.getByLabel("Keep one overwritten .bak on save");
   await backupCheckbox.waitFor({ timeout: 5_000 });
   await backupCheckbox.evaluate((element) => element.click());

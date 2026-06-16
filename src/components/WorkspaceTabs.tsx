@@ -1,6 +1,11 @@
 import { FileDiff, ListTree, X } from "lucide-react";
-import type { PairStatus } from "@/lib/types";
+import {
+  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import type { Mode, PairStatus, TreeFilter } from "@/lib/types";
 import { statusPresentation } from "@/lib/status";
+
+const noopFilterChange = () => undefined;
 
 function basename(path: string) {
   const clean = path.endsWith("/") ? path.slice(0, -1) : path;
@@ -16,26 +21,55 @@ export interface WorkspaceTabDescriptor {
 export interface WorkspaceTabsProps {
   fileCount: number;
   activeId: "files" | string;
+  mode: Mode;
   tabs: WorkspaceTabDescriptor[];
+  treeFilter?: TreeFilter;
   onSelectFiles: () => void;
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
+  onFilterChange?: (filter: TreeFilter) => void;
 }
 
-export function WorkspaceTabs({ fileCount, activeId, tabs, onSelectFiles, onSelectTab, onCloseTab }: WorkspaceTabsProps) {
+export function WorkspaceTabs({
+  fileCount,
+  activeId,
+  mode,
+  tabs,
+  treeFilter = "diff",
+  onSelectFiles,
+  onSelectTab,
+  onCloseTab,
+  onFilterChange = noopFilterChange,
+}: WorkspaceTabsProps) {
   return (
-    <div className="workspace-tabs" role="tablist" aria-label="Workspace view">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={activeId === "files"}
-        className={`workspace-tab workspace-tab-files${activeId === "files" ? " active" : ""}`}
-        onClick={onSelectFiles}
-      >
-        <ListTree /> Files
-        {fileCount > 0 && <span className="workspace-tab-count">{fileCount}</span>}
-      </button>
-      <div className="workspace-tabs-scroll">
+    <div className="workspace-tabs">
+      <div className="workspace-tabs-files" role="tablist" aria-label="Files workspace view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeId === "files"}
+          className={`workspace-tab workspace-tab-files${activeId === "files" ? " active" : ""}`}
+          onClick={onSelectFiles}
+        >
+          <ListTree /> Files
+          {fileCount > 0 && <span className="workspace-tab-count">{fileCount}</span>}
+        </button>
+      </div>
+      {mode === "compare" && (
+        <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
+          <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">Show all</SelectItem>
+              <SelectItem value="diff">Differences</SelectItem>
+              <SelectItem value="same">Identical</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      )}
+      <div className="workspace-tabs-scroll" role="tablist" aria-label="Open diff tabs">
         {tabs.map((tab) => {
           const status = statusPresentation(tab.status);
           return (

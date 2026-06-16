@@ -1,40 +1,72 @@
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import type { TreeFilter } from "@/lib/types";
+import { labelForSearchContext } from "@/lib/search";
+import type { SearchContext } from "@/lib/types";
 
 interface SearchBarProps {
   open: boolean;
+  context: SearchContext;
   query: string;
-  treeFilter: TreeFilter;
+  includeSource: boolean;
+  searching: boolean;
   onQueryChange: (value: string) => void;
   onSearch: () => void;
-  onFilterChange: (filter: TreeFilter) => void;
+  onCancel: () => void;
+  onClear: () => void;
+  onIncludeSourceChange: (value: boolean) => void;
 }
 
-export function SearchBar({ open, query, treeFilter, onQueryChange, onSearch, onFilterChange }: SearchBarProps) {
+export function SearchBar({
+  open,
+  context,
+  query,
+  includeSource,
+  searching,
+  onQueryChange,
+  onSearch,
+  onCancel,
+  onClear,
+  onIncludeSourceChange,
+}: SearchBarProps) {
   if (!open) return null;
+
+  const filesContext = context === "files";
+  const placeholder = filesContext ? "Search paths, text, constants" : "Find in current diff";
+  const clearLabel = filesContext ? "Clear results" : "Clear find";
+
   return (
-    <div className="search-bar">
+    <div className="search-bar" data-context={context}>
+      <span className="search-context-label">{labelForSearchContext(context)}</span>
       <Input
         className="search-input"
         value={query}
-        placeholder="Search paths, text, constants"
+        placeholder={placeholder}
         onChange={(e) => onQueryChange(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") onSearch(); }}
       />
-      <Button aria-label="Search" onClick={onSearch}><Search /> Search</Button>
-      <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
-        <SelectTrigger aria-label="Tree filter"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectGroup>
-          <SelectItem value="all">Show all</SelectItem>
-          <SelectItem value="diff">Differences</SelectItem>
-          <SelectItem value="same">Identical</SelectItem>
-        </SelectGroup></SelectContent>
-      </Select>
+      {filesContext ? (
+        <>
+          <label className="check-label search-inline-check">
+            <Checkbox
+              aria-label="Include decompiled source search"
+              checked={includeSource}
+              onCheckedChange={(checked) => onIncludeSourceChange(checked === true)}
+            />
+            Decompiled source
+          </label>
+          <Button aria-label="Search files" disabled={searching} onClick={onSearch}>
+            <Search /> Search files
+          </Button>
+          {searching && (
+            <Button variant="outline" onClick={onCancel}>Cancel</Button>
+          )}
+        </>
+      ) : (
+        <Button aria-label="Find" onClick={onSearch}><Search /> Find</Button>
+      )}
+      <Button variant="ghost" aria-label={clearLabel} onClick={onClear}><X /> {clearLabel}</Button>
     </div>
   );
 }

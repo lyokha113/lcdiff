@@ -1,0 +1,51 @@
+pkgname=ldiff
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Inspect, compare, and merge JAR/ZIP archives and folders"
+arch=('x86_64')
+url="https://github.com/lyokha113/ldiff"
+license=('MIT')
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libappindicator-gtk3'
+  'librsvg'
+  'libsoup'
+  'openssl'
+  'pango'
+  'webkit2gtk-4.1'
+  'xdotool'
+)
+makedepends=(
+  'cargo'
+  'git'
+  'jdk17-openjdk'
+  'maven'
+  'nodejs'
+  'npm'
+  'rust'
+)
+source=("git+https://github.com/lyokha113/ldiff.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+options=('!strip')
+install="${pkgname}.install"
+
+prepare() {
+  cd "$srcdir/$pkgname"
+  npm ci
+}
+
+build() {
+  cd "$srcdir/$pkgname"
+  LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+  npm run tauri -- build --bundles deb
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  bsdtar -xf "src-tauri/target/release/bundle/deb/LDiff_${pkgver}_amd64.deb" -C "$pkgdir"
+}

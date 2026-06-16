@@ -1,19 +1,55 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
+
+const htmlElementPatches = {
+  hasPointerCapture: vi.fn(() => false),
+  scrollIntoView: vi.fn(),
+  setPointerCapture: vi.fn(),
+  releasePointerCapture: vi.fn(),
+};
+
+type HtmlElementPatch = keyof typeof htmlElementPatches;
+
+const originalHTMLElementDescriptors = new Map<HtmlElementPatch, PropertyDescriptor | undefined>();
+
+beforeAll(() => {
+  for (const method of Object.keys(htmlElementPatches) as HtmlElementPatch[]) {
+    originalHTMLElementDescriptors.set(method, Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, method));
+    Object.defineProperty(window.HTMLElement.prototype, method, {
+      configurable: true,
+      writable: true,
+      value: htmlElementPatches[method],
+    });
+  }
+});
+
+afterAll(() => {
+  for (const method of Object.keys(htmlElementPatches) as HtmlElementPatch[]) {
+    const descriptor = originalHTMLElementDescriptors.get(method);
+    if (descriptor) {
+      Object.defineProperty(window.HTMLElement.prototype, method, descriptor);
+    } else {
+      delete window.HTMLElement.prototype[method];
+    }
+  }
+});
 
 function setup(overrides = {}) {
   const props = {
     fileCount: 3,
     activeId: "files" as "files" | string,
+    mode: "compare" as const,
     tabs: [
       { path: "com/x/Foo.class", status: "different" as const },
       { path: "com/x/Bar.class", status: "onlyLeft" as const },
     ],
+    treeFilter: "diff" as const,
     onSelectFiles: vi.fn(),
     onSelectTab: vi.fn(),
     onCloseTab: vi.fn(),
+    onFilterChange: vi.fn(),
     ...overrides,
   };
   render(<WorkspaceTabs {...props} />);
@@ -25,6 +61,33 @@ describe("WorkspaceTabs", () => {
     setup();
     expect(screen.getByRole("tab", { name: /Files/ })).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
+  });
+  it("renders the tree filter next to the Files tab", async () => {
+    const props = setup();
+    const workspaceTabs = document.querySelector(".workspace-tabs");
+    const filesTab = screen.getByRole("tab", { name: /Files/ });
+    const treeFilter = screen.getByRole("combobox", { name: "Tree filter" });
+
+    expect(filesTab).toBeInTheDocument();
+    expect(treeFilter).toBeInTheDocument();
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.closest('[role="tablist"]')).toBeInTheDocument();
+    }
+    expect(treeFilter.closest('[role="tablist"]')).toBeNull();
+    expect(screen.getByText("Differences")).toBeInTheDocument();
+    expect(workspaceTabs?.children[0]).toBe(document.querySelector(".workspace-tabs-files"));
+    expect(within(workspaceTabs?.children[0] as HTMLElement).getByRole("tab", { name: /Files/ })).toBe(filesTab);
+    expect(workspaceTabs?.children[1]).toBe(treeFilter);
+    expect(workspaceTabs?.children[2]).toBe(document.querySelector(".workspace-tabs-scroll"));
+
+    await userEvent.click(treeFilter);
+    await userEvent.click(screen.getByRole("option", { name: "Identical" }));
+
+    expect(props.onFilterChange).toHaveBeenCalledWith("same");
+  });
+  it("hides the tree filter in View mode", () => {
+    setup({ mode: "single" });
+    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
   });
   it("renders one tab per diff with the basename label", () => {
     setup();

@@ -31,6 +31,13 @@ export function isDirectoryPair(pair: ComparePair): boolean {
   );
 }
 
+function parentClassLeafName(leafName: string): string | undefined {
+  if (!leafName.endsWith(".class")) return undefined;
+  const dollarIndex = leafName.indexOf("$");
+  if (dollarIndex <= 0) return undefined;
+  return `${leafName.slice(0, dollarIndex)}.class`;
+}
+
 export function buildTree(pairs: ComparePair[]): TreeNode[] {
   const root = newFolder("", "");
   const fileLists = new Map<MutableFolder, TreeFile[]>();
@@ -88,7 +95,26 @@ function finalize(folder: MutableFolder, fileLists: Map<MutableFolder, TreeFile[
       diffCount: child.diffCount,
       children: finalize(child, fileLists),
     }));
-  const files = (fileLists.get(folder) ?? []).sort((a, b) => a.name.localeCompare(b.name));
+  const rawFiles = fileLists.get(folder) ?? [];
+  const leftParentClassNames = new Set(
+    rawFiles
+      .filter((file) => file.pair.left && file.name.endsWith(".class") && !parentClassLeafName(file.name))
+      .map((file) => file.name),
+  );
+  const rightParentClassNames = new Set(
+    rawFiles
+      .filter((file) => file.pair.right && file.name.endsWith(".class") && !parentClassLeafName(file.name))
+      .map((file) => file.name),
+  );
+  const files = rawFiles
+    .filter((file) => {
+      const parent = parentClassLeafName(file.name);
+      if (!parent) return true;
+      const leftHasParent = !file.pair.left || leftParentClassNames.has(parent);
+      const rightHasParent = !file.pair.right || rightParentClassNames.has(parent);
+      return !(leftHasParent && rightHasParent);
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
   return [...folders, ...files];
 }
 

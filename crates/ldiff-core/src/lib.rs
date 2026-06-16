@@ -21,6 +21,6 @@ pub use merge::{
 pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
 pub use path::{normalize_archive_entry_path, validate_path};
 pub use sidecar_protocol::{
-    DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest, SidecarResponse, read_frame,
-    write_frame,
+    DEFAULT_DECOMPILE_ENGINE, DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest,
+    SidecarResponse, read_frame, write_frame,
 };
