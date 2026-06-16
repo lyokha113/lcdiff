@@ -10,6 +10,15 @@ const results: SearchResult[] = [
   { side: "right", path: "config/app.properties", kind: "text", tier: "T2", line: 4, preview: "needle=value" },
 ];
 
+const sourceResult: SearchResult = {
+  side: "left",
+  path: "pkg/App.class",
+  kind: "source",
+  tier: "T3",
+  line: 22,
+  preview: "List<String> values",
+};
+
 describe("SearchResultsPanel", () => {
   it("renders grouped result rows", () => {
     render(<SearchResultsPanel results={results} grouping="kind" onInspect={vi.fn()} />);
@@ -48,6 +57,31 @@ describe("SearchResultsPanel", () => {
     );
 
     expect(onInspect).toHaveBeenCalledWith(results[2]);
+  });
+
+  it("merges hits for the same file when source results are present", () => {
+    render(<SearchResultsPanel results={[...results, sourceResult]} grouping="kind" onInspect={vi.fn()} />);
+
+    const fileGroup = screen.getByRole("group", { name: "Files search results" });
+    const appRow = within(fileGroup).getByRole("button", { name: /pkg\/App\.class/ });
+
+    expect(screen.queryByRole("group", { name: "Constants search results" })).not.toBeInTheDocument();
+    expect(within(fileGroup).getAllByRole("button")).toHaveLength(2);
+    expect(screen.getAllByText("pkg/App.class")).toHaveLength(1);
+    expect(within(appRow).getByText("Path")).toBeInTheDocument();
+    expect(within(appRow).getByText("Constants")).toBeInTheDocument();
+    expect(within(appRow).getByText("Source")).toBeInTheDocument();
+    expect(within(appRow).getByText(":22")).toBeInTheDocument();
+    expect(within(appRow).getByText("List<String> values")).toBeInTheDocument();
+  });
+
+  it("opens the source hit when a merged source row is clicked", async () => {
+    const onInspect = vi.fn();
+    render(<SearchResultsPanel results={[...results, sourceResult]} grouping="kind" onInspect={onInspect} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /pkg\/App\.class/ }));
+
+    expect(onInspect).toHaveBeenCalledWith(sourceResult);
   });
 
   it("renders nothing for empty results", () => {

@@ -1005,6 +1005,7 @@ export function App() {
           <WorkspaceTabs
             fileCount={visiblePairs.length}
             activeId={activeTab}
+            mode={mode}
             tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
             treeFilter={treeFilter}
             onSelectFiles={() => setActiveTab("files")}

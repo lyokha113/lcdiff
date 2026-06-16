@@ -412,11 +412,15 @@ try {
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
     throw new Error("Single mode still rendered the right source chip");
   }
+  if (await mockedPage.getByRole("combobox", { name: "Tree filter" }).count()) {
+    throw new Error("Single mode still rendered the compare-only tree filter");
+  }
 
   // Back to Compare: right chip returns.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "Compare" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
   const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });

@@ -40,6 +40,7 @@ function setup(overrides = {}) {
   const props = {
     fileCount: 3,
     activeId: "files" as "files" | string,
+    mode: "compare" as const,
     tabs: [
       { path: "com/x/Foo.class", status: "different" as const },
       { path: "com/x/Bar.class", status: "onlyLeft" as const },
@@ -83,6 +84,10 @@ describe("WorkspaceTabs", () => {
     await userEvent.click(screen.getByRole("option", { name: "Identical" }));
 
     expect(props.onFilterChange).toHaveBeenCalledWith("same");
+  });
+  it("hides the tree filter in View mode", () => {
+    setup({ mode: "single" });
+    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
   });
   it("renders one tab per diff with the basename label", () => {
     setup();
