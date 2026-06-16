@@ -53,9 +53,11 @@ files by hand).
 
 ### Linux (Ubuntu 22.04+ / glibc 2.35+)
 
-Two artifacts ship: a portable **AppImage** (runs on any recent distro) and a
-**`.deb`** (Debian/Ubuntu). The `install-linux.sh` helper handles either —
-pass it whichever you downloaded:
+Two artifacts ship as GitHub release assets: a portable **AppImage** (runs on
+any recent distro) and a **`.deb`** (Debian/Ubuntu). Arch Linux users should
+install from AUR with `yay -S ldiff` (or `paru -S ldiff`). The
+`install-linux.sh` helper handles the GitHub release assets — pass it whichever
+you downloaded:
 
 ```bash
 bash install-linux.sh LDiff_<version>_amd64.AppImage   # -> ~/.local/bin/ldiff + app menu entry
@@ -66,8 +68,9 @@ The AppImage path needs no root and adds an `ldiff` command plus a desktop
 entry. On Wayland, if drag-and-drop misbehaves, launch with
 `GDK_BACKEND=x11 ldiff`.
 
-> The Linux release is built for **x86_64**. For ARM Linux, build from source
-> (see [For Developers](#building-and-packaging-linux)).
+> The GitHub Linux release is built for **x86_64**. Arch Linux uses the AUR
+> package instead. For ARM Linux, build from source (see [For
+> Developers](#building-and-packaging-linux)).
 
 ---
 
@@ -273,7 +276,7 @@ scripts/test-sidecar-smoke.sh
 
 Build on the target Linux machine — Linux bundles cannot be cross-built from
 macOS. One script installs the GTK/WebKit deps, assembles the sidecar, and
-builds the bundles on both Ubuntu and Arch:
+builds the GitHub release bundles on Ubuntu or Arch:
 
 ```bash
 scripts/build-linux.sh                 # apt or pacman deps, then AppImage + deb
@@ -291,7 +294,8 @@ System dependencies it installs:
 
 Bundles land under `target/release/bundle/` (`appimage/*.AppImage`, `deb/*.deb`).
 The **AppImage** is the portable artifact for both distros; the `.deb` targets
-Debian/Ubuntu.
+Debian/Ubuntu. Arch users get the AUR package instead of a GitHub release
+bundle.
 
 ### Cross-building Linux bundles from macOS (Docker)
 

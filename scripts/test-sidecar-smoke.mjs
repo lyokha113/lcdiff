@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const root = new URL("..", import.meta.url).pathname;
 const bundledJava = join(root, "src-tauri", "resources", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
 const java = process.env.LDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
-const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.1.0.jar");
+const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.2.0.jar");
 const tmp = mkdtempSync(join(tmpdir(), "ldiff-sidecar-smoke-"));
 
 try {

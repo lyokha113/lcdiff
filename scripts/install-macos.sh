@@ -7,7 +7,7 @@
 #
 # Usage:
 #   scripts/install-macos.sh                 # auto-find the DMG next to this script or in CWD
-#   scripts/install-macos.sh path/to/LDiff-0.1.0-aarch64.dmg
+#   scripts/install-macos.sh path/to/LDiff-0.2.0-aarch64.dmg
 #   LDIFF_LINK_CLI=1 scripts/install-macos.sh   # also add an `ldiff` launcher to /usr/local/bin
 set -euo pipefail
 

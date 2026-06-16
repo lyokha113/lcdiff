@@ -3,11 +3,16 @@ import { readFileSync } from "node:fs";
 
 const files = [
   "README.md",
+  "docs/RELEASING.md",
   "docs/OPERATIONS_MACOS.md",
   "docs/LDIFF_COMPLETION_AUDIT.md",
   "docs/LDIFF_IMPLEMENTATION_PLAN.md",
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
+  "docs/release-notes/v0.2.0.md",
+  "aur/ldiff/PKGBUILD",
+  "aur/ldiff/.SRCINFO",
+  "aur/ldiff/ldiff.install",
 ];
 
 const failures = [];
@@ -58,6 +63,60 @@ if (!readme.includes("JAR/ZIP archives and folders")) {
 // enforced below) but are no longer required inline in the README.
 if (!readme.includes("scripts/build-linux.sh")) {
   failures.push("README.md: missing Linux build script command");
+}
+if (!readme.includes("yay -S ldiff")) {
+  failures.push("README.md: missing Arch AUR install note");
+}
+
+const releasing = readFileSync("docs/RELEASING.md", "utf8");
+if (!releasing.includes("aur/ldiff/PKGBUILD")) {
+  failures.push("docs/RELEASING.md: missing AUR package reference");
+}
+if (!releasing.includes("yay -S ldiff")) {
+  failures.push("docs/RELEASING.md: missing AUR install command");
+}
+
+const aurPkgbuild = readFileSync("aur/ldiff/PKGBUILD", "utf8");
+for (const marker of [
+  "pkgname=ldiff",
+  "pkgver=0.2.0",
+  "source=(\"git+https://github.com/lyokha113/ldiff.git#tag=v${pkgver}\")",
+  "npm ci",
+  "LDIFF_JLINK=\"$(command -v jlink)\" scripts/assemble-sidecar-resources.sh",
+  "npm run tauri -- build --bundles deb",
+  "bsdtar -xf \"src-tauri/target/release/bundle/deb/LDiff_${pkgver}_amd64.deb\" -C \"$pkgdir\"",
+]) {
+  if (!aurPkgbuild.includes(marker)) {
+    failures.push(`aur/ldiff/PKGBUILD: missing ${marker}`);
+  }
+}
+
+const aurSrcinfo = readFileSync("aur/ldiff/.SRCINFO", "utf8");
+for (const marker of [
+  "pkgbase = ldiff",
+  "pkgver = 0.2.0",
+  "source = git+https://github.com/lyokha113/ldiff.git#tag=v0.2.0",
+  "sha256sums = SKIP",
+]) {
+  if (!aurSrcinfo.includes(marker)) {
+    failures.push(`aur/ldiff/.SRCINFO: missing ${marker}`);
+  }
+}
+
+const aurInstall = readFileSync("aur/ldiff/ldiff.install", "utf8");
+if (!aurInstall.includes("gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor")) {
+  failures.push("aur/ldiff/ldiff.install: missing icon cache refresh");
+}
+if (!aurInstall.includes("update-desktop-database -q")) {
+  failures.push("aur/ldiff/ldiff.install: missing desktop database refresh");
+}
+
+const releaseNotes = readFileSync("docs/release-notes/v0.2.0.md", "utf8");
+if (!releaseNotes.includes("yay -S ldiff")) {
+  failures.push("docs/release-notes/v0.2.0.md: missing AUR install command");
+}
+if (!releaseNotes.includes("Arch Linux")) {
+  failures.push("docs/release-notes/v0.2.0.md: missing Arch Linux note");
 }
 
 const audit = readFileSync("docs/LDIFF_COMPLETION_AUDIT.md", "utf8");
@@ -118,6 +177,9 @@ if (!audit.includes("Linux display-matrix validation runner")) {
 if (!audit.includes("macOS distribution validation runner")) {
   failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution runner evidence");
 }
+if (!audit.includes("Arch AUR package source")) {
+  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Arch AUR package evidence");
+}
 if (!audit.includes("platform-validation/macos-distribution-*.md")) {
   failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
 }
@@ -138,6 +200,9 @@ if (!platformValidation.includes("platform-validation/macos-distribution-*.md"))
 }
 if (!platformValidation.includes("docs/OPERATIONS_MACOS.md")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing macOS operations runbook link");
+}
+if (!platformValidation.includes("Arch Linux AUR package for `ldiff`")) {
+  failures.push("docs/PLATFORM_VALIDATION.md: missing Arch AUR package note");
 }
 
 for (const marker of [

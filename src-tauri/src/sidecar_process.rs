@@ -254,7 +254,7 @@ fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
         || {
             resource_candidate(resource_dir, "sidecar/ldiff-sidecar.jar").unwrap_or_else(|| {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../sidecar/target/ldiff-sidecar-0.1.0.jar")
+                    .join("../sidecar/target/ldiff-sidecar-0.2.0.jar")
             })
         },
         PathBuf::from,

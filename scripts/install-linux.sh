@@ -9,8 +9,8 @@
 #
 # Usage:
 #   scripts/install-linux.sh                       # auto-find AppImage/deb next to script or CWD
-#   scripts/install-linux.sh path/to/LDiff_0.1.0_amd64.AppImage
-#   scripts/install-linux.sh path/to/LDiff_0.1.0_amd64.deb
+#   scripts/install-linux.sh path/to/LDiff_0.2.0_amd64.AppImage
+#   scripts/install-linux.sh path/to/LDiff_0.2.0_amd64.deb
 #   LDIFF_PREFIX=/usr/local scripts/install-linux.sh app.AppImage   # system-wide AppImage (sudo)
 set -euo pipefail
 
