@@ -810,20 +810,30 @@ export function App() {
         }
       }
       if (sourceTierEnabled) {
-        for (const side of searchSides()) {
-          if (!archives[side]) continue;
-          for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
-            if (searchStreamId.current !== searchId) return;
-            matches.add(hit.entryPath);
-            results.push({
-              side,
-              tier: "T3",
-              path: hit.entryPath,
-              kind: hit.kind,
-              line: hit.line,
-              preview: hit.preview,
-            });
+        setSearchPaths(new Set(matches));
+        setSearchResults([...results]);
+        try {
+          for (const side of searchSides()) {
+            if (!archives[side]) continue;
+            for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+              if (searchStreamId.current !== searchId) return;
+              matches.add(hit.entryPath);
+              results.push({
+                side,
+                tier: "T3",
+                path: hit.entryPath,
+                kind: hit.kind,
+                line: hit.line,
+                preview: hit.preview,
+              });
+            }
           }
+        } catch (error) {
+          if (searchStreamId.current !== searchId) return;
+          setSearchPaths(new Set(matches));
+          setSearchResults([...results]);
+          setMessage(`Source search failed: ${String(error)}`);
+          return;
         }
       }
       if (searchStreamId.current !== searchId) return;

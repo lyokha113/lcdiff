@@ -149,8 +149,9 @@ files. If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
    bytecode, or a text/hex view. Java sources are read-only.
 3. **Compare mode** — open a second archive/folder on the right; matching entries
    align and changed rows are highlighted with a CRC tree diff.
-4. **Search** — fast path/text/constant-pool search, plus an opt-in deep source
-   search (left / right / both) with clickable streaming results.
+4. **Search** — fast path/text/constant-pool search across the open source in
+   Single mode or both sides in Compare mode, plus an opt-in deep decompiled
+   source search with clickable results.
 5. **Merge** — use the arrow buttons or row context menu to stage original bytes
    from one side to the other. Pending changes show a badge until you save.
 6. **Save** — writes atomically. Enable the backup option to keep a `.bak`.

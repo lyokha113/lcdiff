@@ -21,6 +21,7 @@ const FILE_ENTRY = { path: "config.json", kind: "text" as const, uncompressedSiz
 // tests can flip to "archive" to exercise hunk-merge on entries inside a jar.
 let summarySourceKind: "file" | "archive" = "file";
 let deepSearchBlock: { promise: Promise<void> } | undefined;
+let deepSearchError: Error | undefined;
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
@@ -68,6 +69,7 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
       ];
     case "deep_search":
       if (deepSearchBlock) await deepSearchBlock.promise;
+      if (deepSearchError) throw deepSearchError;
       return [{ entryPath: "config.json", kind: "source" as const, line: 3, preview: "class Config" }];
     case "cancel_deep_search":
       return undefined;
@@ -204,6 +206,7 @@ describe("App file-merge wiring", () => {
     lineChanges = [MODIFY_LINE_2];
     summarySourceKind = "file";
     deepSearchBlock = undefined;
+    deepSearchError = undefined;
     localStorage.clear();
   });
 
@@ -280,6 +283,40 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByText("Current diff matched line 2.")).toBeInTheDocument();
   });
 
+  it("keeps Current diff Find enabled during background source search", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    let unblockDeepSearch: () => void = () => undefined;
+    deepSearchBlock = {
+      promise: new Promise<void>((resolve) => { unblockDeepSearch = resolve; }),
+    };
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "config");
+    await user.click(screen.getByLabelText("Include decompiled source search"));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("deep_search", {
+        side: "left",
+        query: "config",
+        searchId: expect.any(Number),
+      }),
+    );
+
+    await user.click(screen.getByRole("tab", { name: /config.json/i }));
+    const findButton = screen.getByRole("button", { name: /^find$/i });
+    expect(findButton).not.toBeDisabled();
+    await user.click(findButton);
+    expect(await screen.findByText("Current diff matched line 2.")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(screen.getByRole("button", { name: /clear results/i }));
+    await waitFor(() =>
+      expect(invoke.mock.calls.some(([cmd]) => cmd === "cancel_deep_search")).toBe(true),
+    );
+    unblockDeepSearch();
+  });
+
   it("runs source search when Include source is enabled on both compare sides", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
@@ -301,6 +338,21 @@ describe("App file-merge wiring", () => {
       query: "config",
       searchId: expect.any(Number),
     });
+  });
+
+  it("keeps base search results when decompiled source search fails", async () => {
+    const user = userEvent.setup();
+    deepSearchError = new Error("sidecar unavailable");
+    await driveIntoFileCompare(user);
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "config");
+    await user.click(screen.getByLabelText("Include decompiled source search"));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    expect((await screen.findAllByText("Path")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Text")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Source search failed: Error: sidecar unavailable")).toBeInTheDocument();
   });
 
   it("clears stale results and cancels active decompiled source search", async () => {
@@ -326,7 +378,7 @@ describe("App file-merge wiring", () => {
         searchId: expect.any(Number),
       }),
     );
-    expect(screen.queryAllByText("Path")).toHaveLength(0);
+    expect((await screen.findAllByText("Path")).length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: /clear results/i }));
 

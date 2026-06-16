@@ -64,7 +64,7 @@ export function SearchBar({
           )}
         </>
       ) : (
-        <Button aria-label="Find" disabled={searching} onClick={onSearch}><Search /> Find</Button>
+        <Button aria-label="Find" onClick={onSearch}><Search /> Find</Button>
       )}
       <Button variant="ghost" aria-label={clearLabel} onClick={onClear}><X /> {clearLabel}</Button>
     </div>
