@@ -36,6 +36,11 @@ const NON_EDITABLE_INPUT_TYPES = new Set([
   "submit",
 ]);
 
+const SHIFTED_KEY_ALIASES: Record<string, string> = {
+  "{": "[",
+  "}": "]",
+};
+
 export function parseShortcut(shortcut: string): ParsedShortcut {
   const parsed: ParsedShortcut = {
     key: "",
@@ -67,7 +72,7 @@ export function parseShortcut(shortcut: string): ParsedShortcut {
 }
 
 export function shortcutMatches(event: KeyboardLikeEvent, shortcut: ParsedShortcut, platform: PlatformName): boolean {
-  if (normalizeKey(event.key) !== shortcut.key) {
+  if (normalizeEventKey(event.key, event.shiftKey) !== shortcut.key) {
     return false;
   }
 
@@ -111,7 +116,7 @@ export function classifyFocusTarget(target: EventTarget | null | undefined): Foc
     return "editable";
   }
 
-  if (element.closest('[contenteditable="true"], [contenteditable="plaintext-only"]')) {
+  if (isContentEditableElement(element)) {
     return "editable";
   }
 
@@ -149,7 +154,40 @@ function normalizeKey(key: string): string {
     return "space";
   }
 
-  return key.length === 1 ? key.toLowerCase() : key.toLowerCase();
+  return key.toLowerCase();
+}
+
+function normalizeEventKey(key: string, shiftKey: boolean): string {
+  const normalized = normalizeKey(key);
+  if (shiftKey && SHIFTED_KEY_ALIASES[normalized]) {
+    return SHIFTED_KEY_ALIASES[normalized];
+  }
+
+  return normalized;
+}
+
+function isContentEditableElement(element: Element): boolean {
+  for (let current: Element | null = element; current; current = current.parentElement) {
+    if (current instanceof HTMLElement && current.isContentEditable) {
+      return true;
+    }
+
+    const contentEditable = current.getAttribute("contenteditable");
+    if (contentEditable === null) {
+      continue;
+    }
+
+    const normalized = contentEditable.trim().toLowerCase();
+    if (normalized === "false") {
+      return false;
+    }
+
+    if (normalized === "" || normalized === "true" || normalized === "plaintext-only") {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function targetElement(target: EventTarget | null | undefined): Element | null {
