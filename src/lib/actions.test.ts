@@ -58,6 +58,14 @@ describe("action registry", () => {
     expect(bindings.find((binding) => binding.actionId === "search.toggle")?.shortcut).toBe("CmdOrCtrl+F");
   });
 
+  it("keeps action ids and shortcuts unique", () => {
+    const actionIds = ACTION_DEFINITIONS.map((definition) => definition.id);
+    const shortcuts = ACTION_DEFINITIONS.map((definition) => definition.shortcut);
+
+    expect(new Set(actionIds).size).toBe(actionIds.length);
+    expect(new Set(shortcuts).size).toBe(shortcuts.length);
+  });
+
   it("identifies known action ids", () => {
     expect(isAppActionId("file.save")).toBe(true);
     expect(isAppActionId("file.export")).toBe(false);
@@ -81,7 +89,14 @@ describe("action registry", () => {
   it("blocks content-changing merge shortcuts while editable content has focus", () => {
     expect(getActionState("merge.copyToRight", context({ focusKind: "editable", selectedCanCopyRight: true }))).toEqual({
       enabled: false,
-      blockedReason: "Finish editing or leave the editor before running this merge shortcut.",
+      blockedReason: "Finish editing or leave the editor before running this shortcut.",
+    });
+  });
+
+  it("blocks clearing staged changes while editable content has focus", () => {
+    expect(getActionState("edit.clearStaged", context({ focusKind: "editable", stagedCount: 1 }))).toEqual({
+      enabled: false,
+      blockedReason: "Finish editing or leave the editor before running this shortcut.",
     });
   });
 
@@ -103,7 +118,7 @@ describe("action registry", () => {
   it("requires hunk merge state for hunk movement actions", () => {
     expect(getActionState("merge.moveHunkToLeft", context())).toEqual({
       enabled: false,
-      blockedReason: "Open a diff tab before moving hunks.",
+      blockedReason: "Open an editable diff before moving hunks.",
     });
     expect(getActionState("merge.moveHunkToRight", context({ hunkMerge: true }))).toEqual({ enabled: true });
   });
@@ -111,7 +126,7 @@ describe("action registry", () => {
   it("requires hunk merge state for take-all hunk actions", () => {
     expect(getActionState("merge.takeAllToLeft", context())).toEqual({
       enabled: false,
-      blockedReason: "Open a diff tab before moving hunks.",
+      blockedReason: "Open an editable diff before taking all changes.",
     });
     expect(getActionState("merge.takeAllToRight", context({ hunkMerge: true }))).toEqual({ enabled: true });
   });

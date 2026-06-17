@@ -1,30 +1,12 @@
 import type { FocusKind, ShortcutBinding } from "@/lib/shortcuts";
 import type { Mode, Side } from "@/lib/types";
 
-export type AppActionId =
-  | "file.openLeft"
-  | "file.openRight"
-  | "file.refresh"
-  | "file.save"
-  | "edit.clearStaged"
-  | "search.toggle"
-  | "search.runContextual"
-  | "view.togglePreferences"
-  | "workspace.focusFiles"
-  | "workspace.nextTab"
-  | "workspace.previousTab"
-  | "workspace.closeTab"
-  | "merge.copyToLeft"
-  | "merge.copyToRight"
-  | "merge.takeAllToLeft"
-  | "merge.takeAllToRight"
-  | "merge.moveHunkToLeft"
-  | "merge.moveHunkToRight";
+type AppActionGroup = "File" | "Edit" | "Search" | "View" | "Workspace" | "Merge";
 
-export interface AppActionDefinition {
-  id: AppActionId;
+interface AppActionDefinitionShape {
+  id: string;
   label: string;
-  group: "File" | "Edit" | "Search" | "View" | "Workspace" | "Merge";
+  group: AppActionGroup;
   shortcut: string;
   contentChanging?: boolean;
 }
@@ -69,7 +51,7 @@ export interface AppActionState {
   blockedReason?: string;
 }
 
-export const ACTION_DEFINITIONS: AppActionDefinition[] = [
+export const ACTION_DEFINITIONS = [
   { id: "file.openLeft", label: "Open Left Source", group: "File", shortcut: "CmdOrCtrl+O" },
   { id: "file.openRight", label: "Open Right Target", group: "File", shortcut: "CmdOrCtrl+Shift+O" },
   { id: "file.refresh", label: "Refresh Sources", group: "File", shortcut: "CmdOrCtrl+R" },
@@ -88,7 +70,10 @@ export const ACTION_DEFINITIONS: AppActionDefinition[] = [
   { id: "merge.takeAllToRight", label: "Take All Into Right", group: "Merge", shortcut: "Alt+Shift+]", contentChanging: true },
   { id: "merge.moveHunkToLeft", label: "Move Hunk Into Left", group: "Merge", shortcut: "CmdOrCtrl+Alt+[", contentChanging: true },
   { id: "merge.moveHunkToRight", label: "Move Hunk Into Right", group: "Merge", shortcut: "CmdOrCtrl+Alt+]", contentChanging: true },
-];
+] as const satisfies readonly AppActionDefinitionShape[];
+
+export type AppActionDefinition = (typeof ACTION_DEFINITIONS)[number];
+export type AppActionId = AppActionDefinition["id"];
 
 type AppActionHandlerName = Exclude<keyof AppActionHandlers, "reportBlocked">;
 
@@ -128,7 +113,7 @@ export function isAppActionId(value: string): value is AppActionId {
 
 export function getActionState(actionId: AppActionId, context: AppActionContext): AppActionState {
   if (isContentChangingAction(actionId) && context.focusKind === "editable") {
-    return blocked("Finish editing or leave the editor before running this merge shortcut.");
+    return blocked("Finish editing or leave the editor before running this shortcut.");
   }
 
   switch (actionId) {
@@ -149,9 +134,10 @@ export function getActionState(actionId: AppActionId, context: AppActionContext)
       return context.selectedCanCopyRight ? enabled() : blocked("Select an entry before copying to the right.");
     case "merge.takeAllToLeft":
     case "merge.takeAllToRight":
+      return context.hunkMerge ? enabled() : blocked("Open an editable diff before taking all changes.");
     case "merge.moveHunkToLeft":
     case "merge.moveHunkToRight":
-      return context.hunkMerge ? enabled() : blocked("Open a diff tab before moving hunks.");
+      return context.hunkMerge ? enabled() : blocked("Open an editable diff before moving hunks.");
     default:
       return enabled();
   }
@@ -173,7 +159,9 @@ export async function dispatchAppAction(
 }
 
 function isContentChangingAction(actionId: AppActionId): boolean {
-  return ACTION_DEFINITIONS.some((definition) => definition.id === actionId && definition.contentChanging);
+  return ACTION_DEFINITIONS.some((definition) =>
+    definition.id === actionId && "contentChanging" in definition && definition.contentChanging === true
+  );
 }
 
 function enabled(): AppActionState {
