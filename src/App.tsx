@@ -155,6 +155,8 @@ export function App() {
   const monacoRef = useRef<MonacoApi | undefined>(undefined);
   const actionContextRef = useRef<AppActionContext | undefined>(undefined);
   const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
+  const viewRef = useRef(view);
+  const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
@@ -164,6 +166,16 @@ export function App() {
     saveUiPreferences(preferences);
     if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, preferences);
   }, [preferences, view]);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+  useEffect(() => {
+    const updateLastFocusKind = (event: FocusEvent) => {
+      lastFocusKindRef.current = classifyFocusTarget(event.target);
+    };
+    document.addEventListener("focusin", updateLastFocusKind);
+    return () => document.removeEventListener("focusin", updateLastFocusKind);
+  }, []);
   useEffect(() => {
     setIncludeSourceSearch(preferences.search.includeSourceByDefault);
   }, [preferences.search.includeSourceByDefault]);
@@ -981,7 +993,7 @@ export function App() {
     selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
     stagedTarget,
     stagedCount: Object.keys(stagedEntries).length,
-    hunkMerge,
+    hunkMerge: activeTab !== "files" && hunkMerge,
     focusKind: classifyFocusTarget(document.activeElement),
   }), [activeTab, hunkMerge, mode, openTabs, selected, stagedEntries, stagedTarget]);
 
@@ -1032,13 +1044,15 @@ export function App() {
   const dispatchRegisteredAction = useCallback(async (
     actionId: Parameters<typeof dispatchAppAction>[0],
     focusTarget: EventTarget | null | undefined,
+    focusKind = classifyFocusTarget(focusTarget),
   ) => {
+    if (viewRef.current === "splash") return false;
     const context = actionContextRef.current;
     const handlers = actionHandlersRef.current;
     if (!context || !handlers) return false;
     return dispatchAppAction(actionId, {
       ...context,
-      focusKind: classifyFocusTarget(focusTarget),
+      focusKind,
     }, handlers);
   }, []);
 
@@ -1062,11 +1076,13 @@ export function App() {
     void listen<{ actionId: string }>("app-action", (event) => {
       const { actionId } = event.payload;
       if (!isAppActionId(actionId)) return;
-      void dispatchRegisteredAction(actionId, document.activeElement);
+      void dispatchRegisteredAction(actionId, document.activeElement, lastFocusKindRef.current);
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
-    }).catch((error) => setMessage(`Hotkey listener failed: ${String(error)}`));
+    }).catch((error) => {
+      if (!disposed) setMessage(`Hotkey listener failed: ${String(error)}`);
+    });
     return () => {
       disposed = true;
       unlisten?.();

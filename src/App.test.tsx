@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,7 @@ let summarySourceKind: "file" | "archive" = "file";
 let deepSearchBlock: { promise: Promise<void> } | undefined;
 let deepSearchError: Error | undefined;
 let deferredAppActionListen: Promise<() => void> | undefined;
+let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
@@ -101,7 +102,10 @@ vi.mock("@tauri-apps/api/window", () => ({
     destroy: vi.fn(),
   }),
 }));
-const listen = vi.fn((eventName: string, _handler: unknown) => {
+const listen = vi.fn((eventName: string, handler: unknown) => {
+  if (eventName === "app-action") {
+    appActionHandler = handler as typeof appActionHandler;
+  }
   if (eventName === "app-action" && deferredAppActionListen) {
     return deferredAppActionListen;
   }
@@ -226,6 +230,7 @@ describe("App file-merge wiring", () => {
     deepSearchBlock = undefined;
     deepSearchError = undefined;
     deferredAppActionListen = undefined;
+    appActionHandler = undefined;
     listen.mockClear();
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     localStorage.clear();
@@ -436,6 +441,16 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByPlaceholderText(/Search paths, text, constants/)).toBeInTheDocument();
   });
 
+  it("ignores app shortcuts while the splash screen is active", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(await screen.findByPlaceholderText(/Search paths, text, constants/)).toBeInTheDocument();
+  });
+
   it("Cmd/Ctrl+, toggles Preferences open", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -474,6 +489,37 @@ describe("App file-merge wiring", () => {
 
     expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
     expect(allowed).toBe(false);
+  });
+
+  it("blocks hunk shortcuts while the Files tab is active", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    setModified.mockClear();
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    fireEvent.keyDown(window, { key: "}", altKey: true, shiftKey: true });
+
+    expect(await screen.findByText("Open an editable diff before taking all changes.")).toBeInTheDocument();
+    expect(setModified).not.toHaveBeenCalled();
+  });
+
+  it("blocks native merge actions using the last webview focus kind", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    fireEvent.focusIn(screen.getByTestId("diff-editor-cell"));
+    invoke.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "merge.copyToRight" } });
+    });
+
+    expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_copy")).toBe(false);
   });
 
   it("disposes native app-action listener when listen resolves after unmount", async () => {
