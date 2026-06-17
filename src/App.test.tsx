@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -164,12 +164,21 @@ vi.mock("@monaco-editor/react", () => ({
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: ({ onMount }: { onMount?: (e: unknown, m: unknown) => void }) => {
     onMount?.(makeFakeDiffEditor(), {});
-    return <div data-testid="diff-editor" />;
+    return <div className="monaco-editor" data-testid="diff-editor"><span data-testid="diff-editor-cell" /></div>;
   },
 }));
 
 // App must be imported AFTER the mocks are registered.
 import { App } from "@/App";
+
+function cmdOrCtrl(overrides: KeyboardEventInit = {}): KeyboardEventInit {
+  const mac = navigator.platform.toLowerCase().includes("mac");
+  return {
+    metaKey: mac,
+    ctrlKey: !mac,
+    ...overrides,
+  };
+}
 
 async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
@@ -397,6 +406,62 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByText("Current diff")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^find$/i })).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+F toggles search closed and open", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(screen.getByPlaceholderText(/Search paths, text, constants/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument(),
+    );
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    expect(await screen.findByPlaceholderText(/Search paths, text, constants/)).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+, toggles Preferences open", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(screen.queryByLabelText("Preferences sections")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
+    expect(await screen.findByLabelText("Preferences sections")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Preferences sections")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("Cmd/Ctrl+S reports no staged changes when nothing is staged", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    fireEvent.keyDown(window, { key: "s", ...cmdOrCtrl() });
+
+    expect(await screen.findByText("No staged changes to save.")).toBeInTheDocument();
+  });
+
+  it("blocks merge shortcuts while focus is inside Monaco", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    const allowed = fireEvent.keyDown(screen.getByTestId("diff-editor-cell"), {
+      key: "[",
+      altKey: true,
+      ...cmdOrCtrl(),
+    });
+
+    expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
+    expect(allowed).toBe(false);
   });
 
   it("Move hunk into left copies into left and removes from right (copy+delete)", async () => {

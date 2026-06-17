@@ -59,6 +59,14 @@ import {
   loadHistory,
   recordSession,
 } from "@/lib/history";
+import {
+  dispatchAppAction,
+  isAppActionId,
+  shortcutBindings,
+  type AppActionContext,
+  type AppActionHandlers,
+} from "@/lib/actions";
+import { classifyFocusTarget, matchShortcut } from "@/lib/shortcuts";
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -145,6 +153,8 @@ export function App() {
   const editorRef = useRef<CodeEditor | undefined>(undefined);
   const diffEditorRef = useRef<DiffCodeEditor | undefined>(undefined);
   const monacoRef = useRef<MonacoApi | undefined>(undefined);
+  const actionContextRef = useRef<AppActionContext | undefined>(undefined);
+  const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
@@ -476,6 +486,22 @@ export function App() {
       }
     }
     setOpenTabs((prev) => prev.filter((t) => t.path !== path));
+  }
+
+  function focusRelativeTab(direction: 1 | -1) {
+    if (openTabs.length === 0) return;
+    if (activeTab === "files") {
+      const target = direction > 0 ? openTabs[0] : openTabs.at(-1);
+      if (target) focusTab(target.path);
+      return;
+    }
+    const index = openTabs.findIndex((tab) => tab.path === activeTab);
+    const nextIndex = index < 0 ? 0 : (index + direction + openTabs.length) % openTabs.length;
+    focusTab(openTabs[nextIndex].path);
+  }
+
+  function closeActiveTab() {
+    if (activeTab !== "files") closeTab(activeTab);
   }
 
   async function showBytecode() {
@@ -914,18 +940,6 @@ export function App() {
     void inspect(pair);
   }
 
-  if (view === "splash") {
-    return (
-      <SplashScreen
-        history={history}
-        now={Date.now()}
-        onPickMode={pickMode}
-        onOpenEntry={openEntry}
-        onClear={clearRecent}
-      />
-    );
-  }
-
   const isFileMerge =
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
@@ -956,6 +970,115 @@ export function App() {
   const leftLabel = baseName(archives.left?.path ?? paths.left) ?? "Left";
   const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
+  const hunkMerge = isTextMerge;
+
+  const actionContext = useMemo<AppActionContext>(() => ({
+    mode,
+    activeTab,
+    openTabs: openTabs.map((tab) => tab.path),
+    selectedPath: selected?.path,
+    selectedCanCopyLeft: mode === "compare" && !!selected?.right && selected.right.kind !== "directory",
+    selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
+    stagedTarget,
+    stagedCount: Object.keys(stagedEntries).length,
+    hunkMerge,
+    focusKind: classifyFocusTarget(document.activeElement),
+  }), [activeTab, hunkMerge, mode, openTabs, selected, stagedEntries, stagedTarget]);
+
+  const actionHandlers = useMemo<AppActionHandlers>(() => ({
+    openLeft: () => void browse("left"),
+    openRight: () => void browse("right"),
+    refresh: refreshSources,
+    save: () => stagedTarget && void save(stagedTarget),
+    clearStaged: () => void clearStaged(),
+    toggleSearch: () => setSearchOpen((open) => !open),
+    runContextualSearch: () => void (searchContext === "files" ? runSearch() : findInCurrentDiff()),
+    togglePreferences: () => setDrawerOpen((open) => !open),
+    focusFiles: () => setActiveTab("files"),
+    nextTab: () => focusRelativeTab(1),
+    previousTab: () => focusRelativeTab(-1),
+    closeActiveTab,
+    copyToLeft: () => void copy("right", "left"),
+    copyToRight: () => void copy("left", "right"),
+    takeAllToLeft: () => void takeAllTo("left"),
+    takeAllToRight: () => void takeAllTo("right"),
+    moveHunkToLeft: () => void moveHunkTo("left"),
+    moveHunkToRight: () => void moveHunkTo("right"),
+    reportBlocked: setMessage,
+  }), [
+    browse,
+    clearStaged,
+    closeActiveTab,
+    copy,
+    findInCurrentDiff,
+    focusRelativeTab,
+    moveHunkTo,
+    refreshSources,
+    runSearch,
+    save,
+    searchContext,
+    stagedTarget,
+    takeAllTo,
+  ]);
+
+  useEffect(() => {
+    actionContextRef.current = actionContext;
+  }, [actionContext]);
+
+  useEffect(() => {
+    actionHandlersRef.current = actionHandlers;
+  }, [actionHandlers]);
+
+  const dispatchRegisteredAction = useCallback(async (
+    actionId: Parameters<typeof dispatchAppAction>[0],
+    focusTarget: EventTarget | null | undefined,
+  ) => {
+    const context = actionContextRef.current;
+    const handlers = actionHandlersRef.current;
+    if (!context || !handlers) return false;
+    return dispatchAppAction(actionId, {
+      ...context,
+      focusKind: classifyFocusTarget(focusTarget),
+    }, handlers);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const actionId = matchShortcut(event, shortcutBindings());
+      if (!actionId) return;
+
+      event.preventDefault();
+      void dispatchRegisteredAction(actionId, event.target);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dispatchRegisteredAction]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: undefined | (() => void);
+    listen<{ actionId: string }>("app-action", (event) => {
+      const { actionId } = event.payload;
+      if (!isAppActionId(actionId)) return;
+      void dispatchRegisteredAction(actionId, document.activeElement);
+    }).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
+  }, [dispatchRegisteredAction]);
+
+  if (view === "splash") {
+    return (
+      <SplashScreen
+        history={history}
+        now={Date.now()}
+        onPickMode={pickMode}
+        onOpenEntry={openEntry}
+        onClear={clearRecent}
+      />
+    );
+  }
 
   return (
     <TooltipProvider>
