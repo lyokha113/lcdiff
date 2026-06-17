@@ -22,6 +22,7 @@ const FILE_ENTRY = { path: "config.json", kind: "text" as const, uncompressedSiz
 let summarySourceKind: "file" | "archive" = "file";
 let deepSearchBlock: { promise: Promise<void> } | undefined;
 let deepSearchError: Error | undefined;
+let deferredAppActionListen: Promise<() => void> | undefined;
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
@@ -100,7 +101,15 @@ vi.mock("@tauri-apps/api/window", () => ({
     destroy: vi.fn(),
   }),
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => vi.fn()) }));
+const listen = vi.fn((eventName: string, _handler: unknown) => {
+  if (eventName === "app-action" && deferredAppActionListen) {
+    return deferredAppActionListen;
+  }
+  return Promise.resolve(vi.fn());
+});
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (eventName: string, handler: unknown) => listen(eventName, handler),
+}));
 
 // chooseFile (plugin-dialog `open`) returns a fixed path; openPath then drives
 // validate_path + open_archive.
@@ -216,6 +225,9 @@ describe("App file-merge wiring", () => {
     summarySourceKind = "file";
     deepSearchBlock = undefined;
     deepSearchError = undefined;
+    deferredAppActionListen = undefined;
+    listen.mockClear();
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     localStorage.clear();
   });
 
@@ -462,6 +474,26 @@ describe("App file-merge wiring", () => {
 
     expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
     expect(allowed).toBe(false);
+  });
+
+  it("disposes native app-action listener when listen resolves after unmount", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    let resolveAppActionListen!: (stop: () => void) => void;
+    deferredAppActionListen = new Promise<() => void>((resolve) => { resolveAppActionListen = resolve; });
+    const stop = vi.fn();
+
+    const { unmount } = render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+    await waitFor(() => expect(listen).toHaveBeenCalledWith("app-action", expect.any(Function)));
+
+    unmount();
+    resolveAppActionListen(stop);
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
   it("Move hunk into left copies into left and removes from right (copy+delete)", async () => {

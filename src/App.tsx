@@ -1057,15 +1057,20 @@ export function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: undefined | (() => void);
-    listen<{ actionId: string }>("app-action", (event) => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ actionId: string }>("app-action", (event) => {
       const { actionId } = event.payload;
       if (!isAppActionId(actionId)) return;
       void dispatchRegisteredAction(actionId, document.activeElement);
     }).then((stop) => {
-      unlisten = stop;
-    });
-    return () => unlisten?.();
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((error) => setMessage(`Hotkey listener failed: ${String(error)}`));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [dispatchRegisteredAction]);
 
   if (view === "splash") {
