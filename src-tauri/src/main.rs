@@ -1083,8 +1083,8 @@ fn language_for_path(path: &str) -> &'static str {
     }
 }
 
-fn custom_submenu<'a, R: Runtime, M: Manager<R>>(
-    manager: &'a M,
+fn custom_submenu<R: Runtime, M: Manager<R>>(
+    manager: &M,
     group: &str,
 ) -> tauri::Result<Submenu<R>> {
     let mut submenu = SubmenuBuilder::new(manager, group);
