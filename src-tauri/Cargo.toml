@@ -16,5 +16,6 @@ tauri-plugin-dialog = "2.4"
 
 [dev-dependencies]
 serde_json.workspace = true
+tauri = { version = "2.11", features = ["test"] }
 tempfile.workspace = true
 zip.workspace = true

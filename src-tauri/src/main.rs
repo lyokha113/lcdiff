@@ -1194,9 +1194,15 @@ mod tests {
 
     #[test]
     fn menu_action_accelerators_are_accepted_by_tauri_builder() {
+        let app = tauri::test::mock_app();
+
         for (_, action_id, label, accelerator) in MENU_ACTIONS {
-            let _item =
-                tauri::menu::MenuItemBuilder::with_id(*action_id, *label).accelerator(*accelerator);
+            tauri::menu::MenuItemBuilder::with_id(*action_id, *label)
+                .accelerator(*accelerator)
+                .build(&app)
+                .unwrap_or_else(|error| {
+                    panic!("invalid accelerator {accelerator} for {action_id}: {error}")
+                });
         }
     }
 
