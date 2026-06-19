@@ -169,10 +169,17 @@ describe("action registry", () => {
   });
 
   it("blocks other actions while the keyboard shortcuts dialog is open", () => {
-    expect(getActionState("file.refresh", context({ shortcutDialogOpen: true, loadedSourceCount: 1 }))).toEqual({
-      enabled: false,
-      blockedReason: "Close Keyboard Shortcuts before running another command.",
-    });
+    for (const definition of ACTION_DEFINITIONS) {
+      if (definition.id === "help.showShortcuts") {
+        continue;
+      }
+
+      expect(getActionState(definition.id, context({ shortcutDialogOpen: true }))).toEqual({
+        enabled: false,
+        blockedReason: "Close Keyboard Shortcuts before running another command.",
+      });
+    }
+
     expect(getActionState("help.showShortcuts", context({ shortcutDialogOpen: true }))).toEqual({ enabled: true });
   });
 
