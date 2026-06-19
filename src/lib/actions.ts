@@ -1,7 +1,8 @@
 import type { FocusKind, ShortcutBinding } from "@/lib/shortcuts";
 import type { Mode, Side } from "@/lib/types";
 
-type AppActionGroup = "File" | "Edit" | "Search" | "View" | "Workspace" | "Merge";
+export const APP_ACTION_GROUPS = ["File", "Edit", "Search", "View", "Workspace", "Merge", "Help"] as const;
+export type AppActionGroup = (typeof APP_ACTION_GROUPS)[number];
 
 interface AppActionDefinitionShape {
   id: string;
@@ -9,6 +10,7 @@ interface AppActionDefinitionShape {
   group: AppActionGroup;
   shortcut: string;
   contentChanging?: boolean;
+  availabilityNote?: string;
 }
 
 export interface AppActionContext {
@@ -23,17 +25,21 @@ export interface AppActionContext {
   loadedSourceCount: number;
   hunkMerge: boolean;
   focusKind: FocusKind;
+  shortcutDialogOpen: boolean;
 }
 
 export interface AppActionHandlers {
-  openLeft: () => void | Promise<void>;
-  openRight: () => void | Promise<void>;
+  openLeftFile: () => void | Promise<void>;
+  openLeftDirectory: () => void | Promise<void>;
+  openRightFile: () => void | Promise<void>;
+  openRightDirectory: () => void | Promise<void>;
   refresh: () => void | Promise<void>;
   save: () => void | Promise<void>;
   clearStaged: () => void | Promise<void>;
   toggleSearch: () => void | Promise<void>;
   runContextualSearch: () => void | Promise<void>;
   togglePreferences: () => void | Promise<void>;
+  toggleShortcutDialog: () => void | Promise<void>;
   focusFiles: () => void | Promise<void>;
   nextTab: () => void | Promise<void>;
   previousTab: () => void | Promise<void>;
@@ -53,8 +59,22 @@ export interface AppActionState {
 }
 
 export const ACTION_DEFINITIONS = [
-  { id: "file.openLeft", label: "Open Left Source", group: "File", shortcut: "CmdOrCtrl+O" },
-  { id: "file.openRight", label: "Open Right Target", group: "File", shortcut: "CmdOrCtrl+Shift+O" },
+  { id: "file.openLeftFile", label: "Open Left File", group: "File", shortcut: "CmdOrCtrl+O" },
+  { id: "file.openLeftDirectory", label: "Open Left Directory", group: "File", shortcut: "CmdOrCtrl+Alt+O" },
+  {
+    id: "file.openRightFile",
+    label: "Open Right File",
+    group: "File",
+    shortcut: "CmdOrCtrl+Shift+O",
+    availabilityNote: "Compare only",
+  },
+  {
+    id: "file.openRightDirectory",
+    label: "Open Right Directory",
+    group: "File",
+    shortcut: "CmdOrCtrl+Alt+Shift+O",
+    availabilityNote: "Compare only",
+  },
   { id: "file.refresh", label: "Refresh Sources", group: "File", shortcut: "CmdOrCtrl+R" },
   { id: "file.save", label: "Save Staged Target", group: "File", shortcut: "CmdOrCtrl+S" },
   { id: "edit.clearStaged", label: "Clear Staged Changes", group: "Edit", shortcut: "CmdOrCtrl+Shift+Backspace", contentChanging: true },
@@ -71,6 +91,7 @@ export const ACTION_DEFINITIONS = [
   { id: "merge.takeAllToRight", label: "Take All Into Right", group: "Merge", shortcut: "Alt+Shift+]", contentChanging: true },
   { id: "merge.moveHunkToLeft", label: "Move Hunk Into Left", group: "Merge", shortcut: "CmdOrCtrl+Alt+[", contentChanging: true },
   { id: "merge.moveHunkToRight", label: "Move Hunk Into Right", group: "Merge", shortcut: "CmdOrCtrl+Alt+]", contentChanging: true },
+  { id: "help.showShortcuts", label: "Keyboard Shortcuts", group: "Help", shortcut: "CmdOrCtrl+/" },
 ] as const satisfies readonly AppActionDefinitionShape[];
 
 export type AppActionDefinition = (typeof ACTION_DEFINITIONS)[number];
@@ -81,14 +102,17 @@ type AppActionHandlerName = Exclude<keyof AppActionHandlers, "reportBlocked">;
 const ACTION_IDS = new Set<string>(ACTION_DEFINITIONS.map((definition) => definition.id));
 
 const ACTION_HANDLERS: Record<AppActionId, AppActionHandlerName> = {
-  "file.openLeft": "openLeft",
-  "file.openRight": "openRight",
+  "file.openLeftFile": "openLeftFile",
+  "file.openLeftDirectory": "openLeftDirectory",
+  "file.openRightFile": "openRightFile",
+  "file.openRightDirectory": "openRightDirectory",
   "file.refresh": "refresh",
   "file.save": "save",
   "edit.clearStaged": "clearStaged",
   "search.toggle": "toggleSearch",
   "search.runContextual": "runContextualSearch",
   "view.togglePreferences": "togglePreferences",
+  "help.showShortcuts": "toggleShortcutDialog",
   "workspace.focusFiles": "focusFiles",
   "workspace.nextTab": "nextTab",
   "workspace.previousTab": "previousTab",
@@ -113,12 +137,17 @@ export function isAppActionId(value: string): value is AppActionId {
 }
 
 export function getActionState(actionId: AppActionId, context: AppActionContext): AppActionState {
+  if (context.shortcutDialogOpen && actionId !== "help.showShortcuts") {
+    return blocked("Close Keyboard Shortcuts before running another command.");
+  }
+
   if (isContentChangingAction(actionId) && context.focusKind === "editable") {
     return blocked("Finish editing or leave the editor before running this shortcut.");
   }
 
   switch (actionId) {
-    case "file.openRight":
+    case "file.openRightFile":
+    case "file.openRightDirectory":
       return context.mode === "single" ? blocked("Open right source is available only in Compare mode.") : enabled();
     case "file.refresh":
       return context.loadedSourceCount > 0 ? enabled() : blocked("Open a source before refreshing.");
