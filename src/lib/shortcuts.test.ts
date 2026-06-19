@@ -43,12 +43,16 @@ describe("shortcuts", () => {
   it("matches CmdOrCtrl to Meta on macOS", () => {
     const shortcut = parseShortcut("CmdOrCtrl+O");
     expect(shortcutMatches(event({ key: "o", metaKey: true }), shortcut, "darwin")).toBe(true);
+    expect(shortcutMatches(event({ key: "o", metaKey: true, altKey: true }), parseShortcut("CmdOrCtrl+Alt+O"), "darwin")).toBe(
+      true,
+    );
     expect(shortcutMatches(event({ key: "o", ctrlKey: true }), shortcut, "darwin")).toBe(false);
   });
 
   it("matches CmdOrCtrl to Ctrl outside macOS", () => {
     const shortcut = parseShortcut("CmdOrCtrl+O");
     expect(shortcutMatches(event({ key: "o", ctrlKey: true }), shortcut, "linux")).toBe(true);
+    expect(shortcutMatches(event({ key: "/", ctrlKey: true }), parseShortcut("CmdOrCtrl+/"), "linux")).toBe(true);
     expect(shortcutMatches(event({ key: "o", metaKey: true }), shortcut, "linux")).toBe(false);
   });
 
