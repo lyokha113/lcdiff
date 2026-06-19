@@ -6,6 +6,17 @@ import { chromium } from "playwright";
 const port = Number(process.env.LDIFF_FRONTEND_RENDER_PORT ?? 5174);
 const url = `http://127.0.0.1:${port}`;
 
+async function disableAnimations(page) {
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    `,
+  });
+}
+
 function waitForServer() {
   const deadline = Date.now() + 20_000;
   return new Promise((resolve, reject) => {
@@ -53,6 +64,7 @@ try {
     messages.push(`pageerror: ${error.stack || error.message}`);
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
+  await disableAnimations(page);
   await page.locator("h1", { hasText: "LDiff" }).waitFor({ timeout: 5_000 });
   await page.getByRole("button", { name: /Compare \/ Merge/ }).click();
   await page.locator("text=Open a JAR, ZIP, or folder on each side.").waitFor({ timeout: 5_000 });
@@ -265,22 +277,30 @@ try {
     };
   });
   await mockedPage.goto(url, { waitUntil: "domcontentloaded" });
+  await disableAnimations(mockedPage);
   await mockedPage.locator("h1", { hasText: "LDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: /Compare \/ Merge/ }).click();
 
   // Helpers for the new chip-based source UI. The path Input only renders while
   // the chip's Popover is open, so open the chip, act, then close (Escape).
   const archiveInput = () => mockedPage.getByPlaceholder("~/path/to/archive.jar or folder");
+  const leftSourceTrigger = mockedPage.getByRole("button", { name: "Change left source", exact: true });
+  const rightSourceTrigger = mockedPage.getByRole("button", { name: "Change right source", exact: true });
   async function openLeftPopover() {
-    await mockedPage.getByRole("button", { name: "Change left source", exact: true }).click();
+    await leftSourceTrigger.click();
     await archiveInput().waitFor({ timeout: 5_000 });
   }
   async function openRightPopover() {
-    await mockedPage.getByRole("button", { name: "Change right source", exact: true }).click();
+    await rightSourceTrigger.click();
     await archiveInput().waitFor({ timeout: 5_000 });
   }
-  async function closePopover() {
+  async function closePopover(trigger) {
     await mockedPage.keyboard.press("Escape");
+    await mockedPage.waitForFunction(
+      (element) => element.getAttribute("aria-expanded") === "false",
+      await trigger.elementHandle(),
+      { timeout: 5_000 },
+    );
     await archiveInput().waitFor({ state: "detached", timeout: 5_000 });
   }
 
@@ -300,13 +320,13 @@ try {
   await archiveInput().fill("/fixtures/left.jar");
   await archiveInput().press("Enter");
   await mockedPage.locator("small.path-error", { hasText: "not a valid zip/jar" }).waitFor({ state: "detached", timeout: 5_000 });
-  await closePopover();
+  await closePopover(leftSourceTrigger);
 
   // Open the right side.
   await openRightPopover();
   await archiveInput().fill("/fixtures/right.jar");
   await archiveInput().press("Enter");
-  await closePopover();
+  await closePopover(rightSourceTrigger);
 
   // Tree filter in the workspace tab strip: Identical hides non-identical rows.
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
