@@ -1254,7 +1254,7 @@ fn build_app_menu<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Menu<R>> {
         .find(|(group, _, _, _)| *group == "Help")
         .expect("help menu action");
     let help_item = menu_item_for_action(handle, help_action.1, help_action.2, help_action.3)?;
-    let mut help = SubmenuBuilder::new(handle, "Help").item(&help_item);
+    let help = SubmenuBuilder::new(handle, "Help").item(&help_item);
     #[cfg(not(target_os = "macos"))]
     let help = help.separator().item(&PredefinedMenuItem::about(
         handle,
@@ -1332,6 +1332,7 @@ mod tests {
         is_prefetch_sibling, language_for_path, platform_hints_from, read_entry_preview,
         search_archive, validate_path,
     };
+    #[cfg(not(target_os = "macos"))]
     use super::{build_app_menu, install_app_menu};
     use ldiff_core::{Archive, DecompileEngine};
     #[cfg(not(target_os = "macos"))]
