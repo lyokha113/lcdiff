@@ -76,7 +76,7 @@ try {
   await page.keyboard.press(`${commandKey}+F`);
   await searchInput.waitFor({ timeout: 5_000 });
   await page.keyboard.press(`${commandKey}+Comma`);
-  const preferencesDrawer = page.getByRole("complementary", { name: "Preferences" });
+  const preferencesDrawer = page.getByRole("dialog", { name: "Preferences" });
   await preferencesDrawer.waitFor({ timeout: 5_000 });
   await page.keyboard.press(`${commandKey}+Comma`);
   await preferencesDrawer.waitFor({ state: "detached", timeout: 5_000 });
@@ -368,7 +368,7 @@ try {
 
   // Submit via the SearchBar Search button (MenuBar toggle is now "Toggle search").
   await mockedPage.getByPlaceholder("Search paths, text, constants").fill("right-only");
-  await mockedPage.getByText("Search files", { exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Search files" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Search files", exact: true }).click();
   await mockedPage.locator("text=Search matched 1 entries.").waitFor({ timeout: 5_000 });
   const searchCalls = await mockedPage.evaluate(() => window.__LDIFF_RENDER_SEARCH_CALLS__);
@@ -417,7 +417,7 @@ try {
   const copyRightButton = mockedPage.getByRole("button", { name: "Copy to right", exact: true });
   await copyRightButton.waitFor({ timeout: 5_000 });
   await copyRightButton.click();
-  await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
+  await mockedPage.locator(".command-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await showFilesTab();
   await mockedPage.locator("text=copy → right").waitFor({ timeout: 10_000 });
 
@@ -428,7 +428,7 @@ try {
   await unstageMenuItem.waitFor({ timeout: 5_000 });
   await unstageMenuItem.evaluate((element) => element.click());
   await mockedPage.locator("text=Unstaged com/example/App.class.").waitFor({ timeout: 5_000 });
-  if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
+  if (await mockedPage.locator(".command-bar").locator("text=→ right").count()) {
     throw new Error("MenuBar staged badge still present after unstage");
   }
   await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
@@ -438,7 +438,7 @@ try {
   await showFilesTab();
   await appRow.click();
   await copyRightButton.click();
-  await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
+  await mockedPage.locator(".command-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   await showFilesTab();
   await mockedPage.locator("text=copy → right").waitFor({ timeout: 10_000 });
 
@@ -459,7 +459,7 @@ try {
   // Clear staged (MenuBar icon button): badges gone.
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.locator("text=Cleared unsaved changes.").waitFor({ timeout: 5_000 });
-  if (await mockedPage.locator(".menu-bar").locator("text=→ right").count()) {
+  if (await mockedPage.locator(".command-bar").locator("text=→ right").count()) {
     throw new Error("MenuBar staged badge still present after clear staged");
   }
   await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
@@ -492,7 +492,7 @@ try {
     await compareAppRow.waitFor({ state: "visible", timeout: 5_000 });
     await compareAppRow.click({ force: true });
     await copyRightButton.click(); // auto-waits for enabled (selection committed)
-    await mockedPage.locator(".menu-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
+    await mockedPage.locator(".command-bar").locator("text=→ right").waitFor({ timeout: 10_000 });
   }
   await selectAppAndStageRight();
   // Save via the MenuBar Save staged button (Popovers closed -> single match).

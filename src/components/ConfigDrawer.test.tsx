@@ -39,7 +39,8 @@ describe("ConfigDrawer", () => {
 
   it("shows Appearance with Light and Dark theme sections by default", () => {
     setup();
-    expect(screen.getByRole("complementary", { name: /preferences/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Preference categories" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Light themes")).toBeInTheDocument();
     expect(screen.getByText("Dark themes")).toBeInTheDocument();

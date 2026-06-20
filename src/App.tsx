@@ -1179,6 +1179,7 @@ export function App() {
         onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
         onCancel={cancelDeepSearch}
         onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
+        onClose={() => setSearchOpen(false)}
         onIncludeSourceChange={setIncludeSourceSearch}
       />
       {dropHint && <p className="platform-hint">{dropHint}</p>}

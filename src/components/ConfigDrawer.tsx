@@ -47,13 +47,13 @@ export function ConfigDrawer({
   onBackupEnabledChange,
 }: ConfigDrawerProps) {
   const [section, setSection] = useState<Section>("appearance");
-  if (!open) return <aside className="config-drawer closed" aria-hidden="true" />;
+  if (!open) return null;
 
   const update = (next: UiPreferences) => onPreferencesChange(next);
 
   return (
-    <aside className="config-drawer open preferences-drawer" aria-label="Preferences">
-      <nav className="preferences-nav" aria-label="Preferences sections">
+    <aside className="config-drawer open preferences-drawer" role="dialog" aria-modal="false" aria-label="Preferences">
+      <nav className="preferences-nav" aria-label="Preference categories">
         {sections.map((item) => (
           <Button
             key={item.id}
