@@ -80,6 +80,27 @@ try {
   await preferencesDrawer.waitFor({ timeout: 5_000 });
   await page.keyboard.press(`${commandKey}+Comma`);
   await preferencesDrawer.waitFor({ state: "detached", timeout: 5_000 });
+  await page.setViewportSize({ width: 720, height: 420 });
+  await page.keyboard.down(commandKey);
+  await page.keyboard.press("/");
+  await page.keyboard.up(commandKey);
+  const shortcutsDialog = page.getByRole("dialog", { name: "Keyboard Shortcuts" });
+  await shortcutsDialog.waitFor({ timeout: 5_000 });
+  await page.getByRole("heading", { name: "Keyboard Shortcuts" }).waitFor({ timeout: 5_000 });
+  await shortcutsDialog.getByText("Open Left Directory", { exact: true }).waitFor({ timeout: 5_000 });
+  await shortcutsDialog.getByText("Open Right Directory", { exact: true }).waitFor({ timeout: 5_000 });
+  await shortcutsDialog.getByText("Compare only", { exact: true }).first().waitFor({ timeout: 5_000 });
+  const shortcutsDialogBox = await shortcutsDialog.boundingBox();
+  if (!shortcutsDialogBox) {
+    throw new Error("keyboard shortcuts dialog did not expose a bounding box at 720x420 viewport");
+  }
+  if (shortcutsDialogBox.y < 0 || shortcutsDialogBox.y + shortcutsDialogBox.height > 420) {
+    throw new Error(
+      `keyboard shortcuts dialog overflowed 420px viewport height: y=${shortcutsDialogBox.y}, height=${shortcutsDialogBox.height}, bottom=${shortcutsDialogBox.y + shortcutsDialogBox.height}`,
+    );
+  }
+  await page.keyboard.press("Escape");
+  await shortcutsDialog.waitFor({ state: "detached", timeout: 5_000 });
   const buttonCount = await page.locator("button").count();
   const bodyText = await page.locator("body").innerText();
 

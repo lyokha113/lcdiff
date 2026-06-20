@@ -174,14 +174,17 @@ committed or canceled.
 
 | Action | Shortcut | Scope |
 | --- | --- | --- |
-| Open left/source | `Cmd/Ctrl+O` | Single mode opens the only source; Compare mode opens the left source. |
-| Open right target | `Cmd/Ctrl+Shift+O` | Compare mode only. |
+| Open left file | `Cmd/Ctrl+O` | Single mode opens the only source; Compare mode opens the left source. |
+| Open left directory | `Cmd/Ctrl+Alt+O` | Single mode opens the only source; Compare mode opens the left source. |
+| Open right file | `Cmd/Ctrl+Shift+O` | Compare mode only. |
+| Open right directory | `Cmd/Ctrl+Alt+Shift+O` | Compare mode only. |
 | Refresh sources | `Cmd/Ctrl+R` | Reloads the loaded source or both compare sources. |
 | Save staged target | `Cmd/Ctrl+S` | Requires staged changes. |
 | Clear staged changes | `Cmd/Ctrl+Shift+Backspace` | Blocked while typing or editing. |
 | Toggle search | `Cmd/Ctrl+F` | Files tab searches the file index; diff tabs find in the current diff. |
 | Run contextual search/find | `Cmd/Ctrl+Enter` | Runs the active search context. |
 | Preferences | `Cmd/Ctrl+,` | Opens or closes Preferences. |
+| Keyboard Shortcuts | `Cmd/Ctrl+/` | Opens or closes in-app shortcut reference. |
 | Focus Files tab | `Cmd/Ctrl+1` | Returns to the Files workspace. |
 | Next tab | `Ctrl+Tab` | Moves across open diff tabs. |
 | Previous tab | `Ctrl+Shift+Tab` | Moves across open diff tabs. |
