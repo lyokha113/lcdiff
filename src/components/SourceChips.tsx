@@ -1,8 +1,7 @@
-import { ArrowLeftRight, FileText, Folder, Package } from "lucide-react";
+import { ArrowLeftRight, FileText, Folder, Package, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ArchiveSummary, Mode, Side } from "@/lib/types";
 
 interface SourceChipsProps {
@@ -16,58 +15,66 @@ interface SourceChipsProps {
   onBrowseFolder: (side: Side) => void;
 }
 
+function basename(path: string) {
+  const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
+  return normalized.split("/").pop() || path;
+}
+
 export function SourceChips({
   mode, archives, paths, pathErrors, onPathChange, onOpenPath, onBrowse, onBrowseFolder,
 }: SourceChipsProps) {
-  const renderChip = (side: Side) => {
+  const renderSlot = (side: Side) => {
     const archive = archives[side];
+    const sideLabel = side === "left" ? "Left" : "Right";
+
     return (
-      <span className={`chip-wrap chip-wrap-${side}`} key={side}>
+      <section className={`source-slot source-slot--${side}`} aria-label={`${sideLabel} source`} key={side}>
+        <div className="source-slot__identity">
+          <span className="source-slot__side">{sideLabel}</span>
+          {archive && <span className="source-slot__kind">{archive.metadata.sourceKind}</span>}
+        </div>
         <Popover>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <PopoverTrigger asChild>
-                <Button variant="outline" className={`source-chip${side === "right" ? " source-chip-right" : ""}`} aria-label={`Change ${side} source`}>
-                  <Package />
-                  <span className="source-chip-path">
-                    {archive ? archive.path : `${side.toUpperCase()} — no source`}
-                  </span>
-                </Button>
-              </PopoverTrigger>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className="source-chip-tip">{archive ? archive.path : `${side.toUpperCase()} — no source loaded`}</p>
-            </TooltipContent>
-          </Tooltip>
-          <PopoverContent className="w-96">
+          <PopoverTrigger asChild>
+            <Button variant="ghost" className="source-slot__trigger" aria-label={`Change ${side} source`}>
+              <span className="source-slot__icon">{archive ? <Package /> : <Plus />}</span>
+              <span className="source-slot__text">
+                <span className="source-slot__name">{archive ? basename(archive.path) : "Choose a source"}</span>
+                <span className="source-slot__path">{archive?.path ?? "JAR, ZIP, folder, or text file"}</span>
+              </span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="source-picker">
             <div className="repick">
               <div className="repick-head">
-                <strong>{side.toUpperCase()}</strong>
+                <strong>{sideLabel} source</strong>
                 {archive && <span className="repick-kind">{archive.metadata.sourceKind}</span>}
               </div>
               <Input
                 value={paths[side]}
                 placeholder="~/path/to/archive.jar or folder"
-                onChange={(e) => onPathChange(side, e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") onOpenPath(side, paths[side]); }}
+                aria-label={`${sideLabel} source path`}
+                onChange={(event) => onPathChange(side, event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter") onOpenPath(side, paths[side]); }}
               />
               <div className="repick-actions">
                 <Button variant="outline" onClick={() => onBrowse(side)}><FileText /> Browse file</Button>
                 <Button variant="outline" onClick={() => onBrowseFolder(side)}><Folder /> Browse folder</Button>
               </div>
-              {pathErrors[side] && <small className="path-error">{pathErrors[side]}</small>}
+              {pathErrors[side] && <small className="path-error" role="alert">{pathErrors[side]}</small>}
             </div>
           </PopoverContent>
         </Popover>
-      </span>
+      </section>
     );
   };
 
   return (
-    <div className="source-chips" data-mode={mode}>
-      {renderChip("left")}
-      {mode === "compare" && <ArrowLeftRight className="chip-sep" aria-hidden="true" />}
-      {mode === "compare" && renderChip("right")}
+    <div className="source-rail" data-mode={mode}>
+      {renderSlot("left")}
+      {mode === "compare" && (
+        <span className="source-rail__bridge" aria-hidden="true"><ArrowLeftRight /></span>
+      )}
+      {mode === "compare" && renderSlot("right")}
     </div>
   );
 }

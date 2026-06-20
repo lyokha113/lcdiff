@@ -27,9 +27,15 @@ function setup(overrides = {}) {
 }
 
 describe("SourceChips", () => {
+  it("renders explicit source slots and removes the right slot in View mode", () => {
+    setup({ mode: "single" });
+    expect(screen.getByRole("region", { name: "Left source" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Right source" })).not.toBeInTheDocument();
+  });
+
   it("shows the loaded archive filename on its chip", () => {
     setup();
-    expect(screen.getByText(/app.jar/)).toBeInTheDocument();
+    expect(screen.getByText("app.jar", { exact: true })).toBeInTheDocument();
   });
   it("opens a repick popover when a chip is clicked", async () => {
     setup();

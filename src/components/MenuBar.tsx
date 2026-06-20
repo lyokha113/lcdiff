@@ -1,5 +1,4 @@
-import { ArrowRightLeft, ChevronDown, Pencil, RefreshCw, Save, Search, Settings, Trash2, X } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronDown, Pencil, RefreshCw, Save, Search, Settings, Trash2, X, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
@@ -29,12 +28,13 @@ export function MenuBar({
   onChangeMode, onSave, onRefresh, onClearStaged, onUnstageOne, onToggleSearch, onToggleDrawer,
 }: MenuBarProps) {
   return (
-    <header className="menu-bar">
-      <div className="brand">
-        <h1>LDiff</h1>
-        <span className="tagline">archive diff · merge</span>
+    <header className="command-bar" aria-label="Workspace commands">
+      <div className="command-brand" aria-label="LDiff workspace">
+        <span className="command-brand__mark">LD</span>
+        <span className="command-brand__name">LDiff</span>
       </div>
-      <div className="topbar-controls">
+
+      <div className="command-group command-group--mode" role="group" aria-label="Workspace mode">
         <Select value={mode} onValueChange={(value) => onChangeMode(value as Mode)}>
           <SelectTrigger aria-label="Mode"><SelectValue /></SelectTrigger>
           <SelectContent><SelectGroup>
@@ -45,8 +45,7 @@ export function MenuBar({
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
-              <Button variant="outline" size="icon" aria-label="Refresh sources"
-                disabled={!canRefresh} onClick={onRefresh}>
+              <Button variant="ghost" size="icon" aria-label="Refresh sources" disabled={!canRefresh} onClick={onRefresh}>
                 <RefreshCw />
               </Button>
             </span>
@@ -55,56 +54,63 @@ export function MenuBar({
             <p>{mode === "compare" ? "Reload both sources from disk" : "Reload the source from disk"}</p>
           </TooltipContent>
         </Tooltip>
-        <div className="pending-actions">
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-label={`Save to archive (${pendingOps.length})`}
-            disabled={!stagedTarget}
-            onClick={() => stagedTarget && onSave(stagedTarget)}>
-            <Save /> Save to archive ({pendingOps.length})
-          </Button>
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label="Show pending changes"
-                disabled={!stagedTarget}>
-                <ChevronDown />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="pending-popover">
-              <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
-              <ul>
-                {pendingOps.map((op) => (
-                  <li key={op.key}>
-                    {op.kind === "edit" ? <Pencil size={14} /> : <ArrowRightLeft size={14} />}
-                    <span className="pending-path">{op.path}</span>
-                    <Button variant="ghost" size="icon" aria-label={`Unstage ${op.path}`}
-                      onClick={() => onUnstageOne(op.key)}><X size={14} /></Button>
-                  </li>
-                ))}
-              </ul>
-            </PopoverContent>
-          </Popover>
-          {stagedTarget && (
-            <Badge variant="secondary">{pendingOps.length} unsaved → {stagedTarget}</Badge>
-          )}
-        </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button variant="outline" size="icon" aria-label="Clear staged" onClick={onClearStaged}>
-                <Trash2 />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent><p>Discard all staged copies</p></TooltipContent>
-        </Tooltip>
+      </div>
+
+      <div className="command-spacer" />
+
+      <div className="command-group command-group--tools" role="group" aria-label="Workspace tools">
         <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
           <Search />
         </Button>
         <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Preferences" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
           <Settings />
         </Button>
+      </div>
+
+      <div className="command-divider" aria-hidden="true" />
+
+      <div className="command-group command-group--save" role="group" aria-label="Save changes">
+        {stagedTarget && <span className="pending-summary">{pendingOps.length} unsaved → {stagedTarget}</span>}
+        <Button
+          variant="default"
+          size="sm"
+          aria-label={`Save to archive (${pendingOps.length})`}
+          disabled={!stagedTarget}
+          onClick={() => stagedTarget && onSave(stagedTarget)}
+        >
+          <Save /> <span className="button-label">Save {pendingOps.length > 0 ? pendingOps.length : ""}</span>
+        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label="Show pending changes" disabled={!stagedTarget}>
+              <ChevronDown />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="pending-popover">
+            <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
+            <ul>
+              {pendingOps.map((op) => (
+                <li key={op.key}>
+                  {op.kind === "edit" ? <Pencil size={14} /> : <ArrowRightLeft size={14} />}
+                  <span className="pending-path">{op.path}</span>
+                  <Button variant="ghost" size="icon" aria-label={`Unstage ${op.path}`} onClick={() => onUnstageOne(op.key)}>
+                    <X size={14} />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        </Popover>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button variant="ghost" size="icon" aria-label="Clear staged" disabled={pendingOps.length === 0} onClick={onClearStaged}>
+                <Trash2 />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent><p>Discard all staged changes</p></TooltipContent>
+        </Tooltip>
       </div>
     </header>
   );

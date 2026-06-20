@@ -18,6 +18,13 @@ function setup(overrides = {}) {
 }
 
 describe("MenuBar", () => {
+  it("groups commands by workspace intent", () => {
+    setup();
+    expect(screen.getByRole("banner", { name: "Workspace commands" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Workspace mode" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
+  });
+
   it("shows save-to-archive label and lists pending ops", () => {
     setup({
       stagedTarget: "right",
