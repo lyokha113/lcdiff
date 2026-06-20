@@ -13,7 +13,7 @@
 ## File map
 
 - Modify `package.json` and `package-lock.json`: add GSAP runtime dependencies.
-- Modify `src/main.tsx`: import Satoshi variable font.
+- Keep `src/main.tsx`: Geist variable font is already bundled and imported.
 - Create `src/lib/motion.ts`: reduced-motion decision and shared GSAP constants.
 - Create `src/lib/motion.test.ts`: deterministic reduced-motion tests.
 - Modify `src/components/SplashScreen.tsx` and its test: editorial startup, dense mode grid, recent sessions, GSAP entry.
@@ -66,7 +66,7 @@ Expected: FAIL because `src/lib/motion.ts` does not exist.
 
 - [ ] **Step 3: Add dependencies and the motion policy**
 
-Run: `rtk npm install gsap @gsap/react @fontsource-variable/satoshi`
+Run: `rtk npm install gsap @gsap/react`
 
 Create `src/lib/motion.ts`:
 
@@ -82,7 +82,7 @@ export function shouldAnimateUi(
 }
 ```
 
-Import `@fontsource-variable/satoshi` before `./styles.css` in `src/main.tsx`.
+Keep the existing `@fontsource-variable/geist` import before `./styles.css` in `src/main.tsx`.
 
 - [ ] **Step 4: Run the test and build**
 
@@ -93,7 +93,7 @@ Expected: PASS and successful Vite production build.
 - [ ] **Step 5: Commit the foundation**
 
 ```bash
-rtk git add package.json package-lock.json src/main.tsx src/lib/motion.ts src/lib/motion.test.ts
+rtk git add package.json package-lock.json src/lib/motion.ts src/lib/motion.test.ts docs/superpowers/specs/2026-06-20-full-ui-ux-refactor-design.md docs/superpowers/plans/2026-06-20-full-ui-ux-refactor.md
 rtk git commit -m "feat: add UI motion and typography foundation"
 ```
 
@@ -334,7 +334,7 @@ Remove the old standalone message and bottom search-results placement.
 
 - [ ] **Step 4: Replace application visual tokens and layout CSS**
 
-Use Satoshi as `--font-sans`, retain JetBrains Mono, and keep theme variables as the source of truth. Implement stable z-index tokens, a graphite/brass default palette, a dominant canvas, compact command/source rails, overlay context surfaces, focus-visible rings, pressed states, empty states, and narrow/compact-height media queries. Remove decorative uppercase `zone-label` treatment and redundant card borders.
+Use Geist as `--font-sans`, retain JetBrains Mono, and keep theme variables as the source of truth. Implement stable z-index tokens, a graphite/brass default palette, a dominant canvas, compact command/source rails, overlay context surfaces, focus-visible rings, pressed states, empty states, and narrow/compact-height media queries. Remove decorative uppercase `zone-label` treatment and redundant card borders.
 
 - [ ] **Step 5: Run the complete frontend test suite**
 

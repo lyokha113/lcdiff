@@ -8,7 +8,7 @@ The change is a frontend information-architecture and visual-system refactor, no
 
 ## Design direction
 
-LDiff becomes a focused “precision workspace” rather than a stack of unrelated controls. The visual language uses Satoshi for interface typography, JetBrains Mono for paths and data, deep graphite surfaces, warm brass as the only accent, cool neutral status colors, restrained grain, and clear optical hierarchy.
+LDiff becomes a focused “precision workspace” rather than a stack of unrelated controls. The visual language uses Geist for interface typography, JetBrains Mono for paths and data, deep graphite surfaces, warm brass as the only accent, cool neutral status colors, restrained grain, and clear optical hierarchy. Geist is the bundled fallback for the RNG-selected Satoshi because no maintained Fontsource package exists for an offline desktop bundle.
 
 The selected composition is editorial asymmetry: strong identity and task framing on the left, operational content on the right. Motion is purposeful and reduced in the dense workspace. GSAP drives startup text reveals and image/surface scale-fade transitions; controls use short CSS transitions for immediate feedback. Reduced-motion preferences disable nonessential animation.
 
@@ -77,7 +77,7 @@ Do not animate layout dimensions during normal work. Use transforms and opacity 
 
 ## Visual system
 
-- Typography: Satoshi for UI and headings; JetBrains Mono for paths, counts, keycaps, and code-adjacent labels.
+- Typography: Geist for UI and headings; JetBrains Mono for paths, counts, keycaps, and code-adjacent labels.
 - Palette: graphite base, warm brass accent, one cool gray family, semantic status colors that remain distinguishable without relying only on hue.
 - Surfaces: minimal borders, subtle inner highlights, consistent top-left lighting, low-opacity grain, no generic purple/blue gradients.
 - Radius: small for controls, medium for contextual surfaces, larger only for startup composition.
