@@ -42,7 +42,7 @@ export function WorkspaceTabs({
   onFilterChange = noopFilterChange,
 }: WorkspaceTabsProps) {
   return (
-    <div className="workspace-tabs">
+    <nav className="workspace-tabs" aria-label="Open files">
       <div className="workspace-tabs-files" role="tablist" aria-label="Files workspace view">
         <button
           type="button"
@@ -99,6 +99,6 @@ export function WorkspaceTabs({
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 }

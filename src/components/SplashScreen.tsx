@@ -93,7 +93,7 @@ export function SplashScreen({
           >
             <span className="launch-card__icon"><GitCompareArrows aria-hidden="true" /></span>
             <span className="launch-card__content">
-              <span className="launch-card__title">Compare and merge</span>
+              <span className="launch-card__title">Compare / Merge</span>
               <span className="launch-card__description">
                 Open two JARs, ZIPs, folders, or text files. Inspect differences and stage exact changes.
               </span>
@@ -109,7 +109,7 @@ export function SplashScreen({
           >
             <span className="launch-card__icon"><FileSearch aria-hidden="true" /></span>
             <span className="launch-card__content">
-              <span className="launch-card__title">View and decompile</span>
+              <span className="launch-card__title">Decompile</span>
               <span className="launch-card__description">Browse one source without merge controls.</span>
             </span>
             <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />

@@ -54,6 +54,7 @@ import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
 import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
+import { StatusBar } from "@/components/StatusBar";
 import {
   type HistoryEntry,
   clearHistory,
@@ -1141,7 +1142,12 @@ export function App() {
 
   return (
     <TooltipProvider>
-    <main className="app-shell" ref={appShellRef}>
+    <main
+      className="app-shell"
+      ref={appShellRef}
+      aria-label={mode === "compare" ? "Comparison workspace" : "Source workspace"}
+    >
+      <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
@@ -1169,19 +1175,28 @@ export function App() {
         onBrowseFolder={(side) => void browseFolder(side)}
       />
 
-      <SearchBar
-        open={searchOpen}
-        context={searchContext}
-        query={query}
-        includeSource={includeSourceSearch}
-        searching={searching}
-        onQueryChange={setQuery}
-        onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
-        onCancel={cancelDeepSearch}
-        onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
-        onClose={() => setSearchOpen(false)}
-        onIncludeSourceChange={setIncludeSourceSearch}
-      />
+      {searchOpen && (
+        <aside className="search-surface" aria-label="Search workspace">
+          <SearchBar
+            open
+            context={searchContext}
+            query={query}
+            includeSource={includeSourceSearch}
+            searching={searching}
+            onQueryChange={setQuery}
+            onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
+            onCancel={cancelDeepSearch}
+            onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
+            onClose={() => setSearchOpen(false)}
+            onIncludeSourceChange={setIncludeSourceSearch}
+          />
+          <SearchResultsPanel
+            results={searchResults}
+            grouping={preferences.search.resultGrouping}
+            onInspect={inspectSearchResult}
+          />
+        </aside>
+      )}
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
@@ -1196,7 +1211,12 @@ export function App() {
             onCloseTab={(path) => closeTab(path)}
             onFilterChange={setTreeFilter}
           />
-          <div className="workspace-tabpanels">
+          <div
+            className="workspace-tabpanels"
+            id="workspace-canvas"
+            role="region"
+            aria-label="Workspace canvas"
+          >
             <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
               <FileTree
                 visiblePairs={visiblePairs}
@@ -1255,11 +1275,10 @@ export function App() {
           onBackupEnabledChange={setBackupEnabled}
         />
       </div>
-      <p className="message">{message}</p>
-      <SearchResultsPanel
-        results={searchResults}
-        grouping={preferences.search.resultGrouping}
-        onInspect={inspectSearchResult}
+      <StatusBar
+        message={message}
+        searching={searching}
+        pendingCount={Object.keys(stagedEntries).length}
       />
       <KeyboardShortcutsDialog
         open={shortcutDialogOpen}

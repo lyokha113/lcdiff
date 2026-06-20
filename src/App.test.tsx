@@ -272,6 +272,17 @@ describe("App file-merge wiring", () => {
     localStorage.clear();
   });
 
+  it("renders a landmark-based comparison workspace", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Workspace canvas" })).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+
   it("Take all into right stages the left buffer onto the right", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
@@ -657,14 +668,14 @@ describe("App file-merge wiring", () => {
     render(<App />);
     await user.click(screen.getByText("Compare / Merge"));
 
-    expect(screen.queryByLabelText("Preferences sections")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
-    expect(await screen.findByLabelText("Preferences sections")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Preference categories")).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
     await waitFor(() =>
-      expect(screen.queryByLabelText("Preferences sections")).not.toBeInTheDocument(),
+      expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument(),
     );
   });
 

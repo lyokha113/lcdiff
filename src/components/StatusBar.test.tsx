@@ -11,7 +11,8 @@ describe("StatusBar", () => {
 
   it("announces active search work", () => {
     render(<StatusBar message="Ready" searching pendingCount={0} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Searching sources");
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    expect(screen.getByText("Searching sources")).toBeInTheDocument();
     expect(screen.getByText("No pending changes")).toBeInTheDocument();
   });
 });

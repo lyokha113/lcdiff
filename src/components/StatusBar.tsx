@@ -9,11 +9,14 @@ export function StatusBar({ message, searching, pendingCount }: StatusBarProps) 
     <footer className="status-bar">
       <p role="status" aria-live="polite">
         <span className={`status-bar__pulse${searching ? " active" : ""}`} aria-hidden="true" />
-        {searching ? "Searching sources" : message}
+        {message}
       </p>
-      <span className="status-bar__pending">
-        {pendingCount === 0 ? "No pending changes" : `${pendingCount} pending`}
-      </span>
+      <div className="status-bar__meta">
+        {searching && <span>Searching sources</span>}
+        <span className="status-bar__pending">
+          {pendingCount === 0 ? "No pending changes" : `${pendingCount} pending`}
+        </span>
+      </div>
     </footer>
   );
 }
