@@ -1,5 +1,5 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
-import { ArrowLeft, ArrowRight, Binary, Code } from "lucide-react";
+import { Binary, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { UiPreferences } from "@/lib/preferences";
@@ -76,64 +76,73 @@ export function DiffView({
           </Button>
         </div>
 
-        {/* Far left: copy the whole entry/file onto the LEFT pane. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button variant="outline" size="icon" aria-label="Copy to left"
-                disabled={mode === "single" || !selected?.right || selected.right.kind === "directory"}
-                onClick={() => onCopy("right", "left")}>
-                <ArrowLeft />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent><p>{fileMerge ? "Copy the entire right file onto the left (saved bytes on disk, ignores unsaved edits)" : "Copy right entry to left"}</p></TooltipContent>
-        </Tooltip>
+        {mode === "compare" && (
+          <div className="compare-actions" role="group" aria-label="Compare actions">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="Copy file to left"
+                    disabled={!selected?.right || selected.right.kind === "directory"}
+                    onClick={() => onCopy("right", "left")}
+                  >
+                    Copy file ←
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent><p>{fileMerge ? "Copy the entire right file onto the left (saved bytes on disk, ignores unsaved edits)" : "Copy right entry to left"}</p></TooltipContent>
+            </Tooltip>
 
-        {/* Center: per-hunk merge. Left-target group, divider, right-target group. */}
-        {hunkMerge && (
-          <div className="hunk-cluster" role="group" aria-label="Merge hunks">
+            {hunkMerge && (
+              <div className="hunk-cluster" role="group" aria-label="Merge hunks">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" aria-label="Take all into left" onClick={() => onTakeAll("left")}>Take all ←</Button>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Replace the left pane with the right pane's current content (includes unsaved edits)</p></TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" aria-label="Move hunk into left" onClick={() => onMoveHunk("left")}>Move hunk ←</Button>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Move the change at the cursor into the left pane and remove it from the right</p></TooltipContent>
+                </Tooltip>
+                <span className="hunk-divider" aria-hidden="true" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" aria-label="Move hunk into right" onClick={() => onMoveHunk("right")}>Move hunk →</Button>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Move the change at the cursor into the right pane and remove it from the left</p></TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" aria-label="Take all into right" onClick={() => onTakeAll("right")}>Take all →</Button>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Replace the right pane with the left pane's current content (includes unsaved edits)</p></TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Take all into left" onClick={() => onTakeAll("left")}>← Take all</Button>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label="Copy file to right"
+                    disabled={!selected?.left || selected.left.kind === "directory"}
+                    onClick={() => onCopy("left", "right")}
+                  >
+                    Copy file →
+                  </Button>
+                </span>
               </TooltipTrigger>
-              <TooltipContent><p>Replace the left pane with the right pane's current content (includes unsaved edits)</p></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Move hunk into left" onClick={() => onMoveHunk("left")}>← Move hunk</Button>
-              </TooltipTrigger>
-              <TooltipContent><p>Move the change at the cursor into the left pane and remove it from the right</p></TooltipContent>
-            </Tooltip>
-            <span className="hunk-divider" aria-hidden="true" />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Move hunk into right" onClick={() => onMoveHunk("right")}>Move hunk →</Button>
-              </TooltipTrigger>
-              <TooltipContent><p>Move the change at the cursor into the right pane and remove it from the left</p></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="sm" aria-label="Take all into right" onClick={() => onTakeAll("right")}>Take all →</Button>
-              </TooltipTrigger>
-              <TooltipContent><p>Replace the right pane with the left pane's current content (includes unsaved edits)</p></TooltipContent>
+              <TooltipContent><p>{fileMerge ? "Copy the entire left file onto the right (saved bytes on disk, ignores unsaved edits)" : "Copy left entry to right"}</p></TooltipContent>
             </Tooltip>
           </div>
         )}
-
-        {/* Far right: copy the whole entry/file onto the RIGHT pane. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button variant="outline" size="icon" aria-label="Copy to right"
-                disabled={mode === "single" || !selected?.left || selected.left.kind === "directory"}
-                onClick={() => onCopy("left", "right")}>
-                <ArrowRight />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent><p>{fileMerge ? "Copy the entire left file onto the right (saved bytes on disk, ignores unsaved edits)" : "Copy left entry to right"}</p></TooltipContent>
-        </Tooltip>
       </div>
       <div className="editors">
         {(preview.left?.details || preview.right?.details) && (

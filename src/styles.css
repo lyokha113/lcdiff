@@ -885,10 +885,12 @@ h1 {
 .copy-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 0.5rem;
   padding: 0.25rem;
 }
+.compare-actions { display: flex; align-items: center; gap: 0.25rem; min-width: 0; margin-left: auto; overflow-x: auto; }
+.compare-actions > * { flex: 0 0 auto; }
 .preview-details {
   margin: 0;
   padding: 7px 12px;

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DiffView } from "@/components/DiffView";
@@ -40,14 +40,26 @@ describe("DiffView", () => {
     setup();
     expect(screen.getByTestId("diff-editor")).toBeInTheDocument();
   });
-  it("disables copy buttons in single mode", () => {
-    setup({ mode: "single" });
-    expect(screen.getByLabelText("Copy to left")).toBeDisabled();
-    expect(screen.getByLabelText("Copy to right")).toBeDisabled();
-  });
   it("renders file view toggles in the editor toolbar", () => {
     setup({ canShowBytecode: false });
     expect(screen.getByLabelText("Show source").getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByLabelText("Show bytecode")).toBeDisabled();
+  });
+
+  it("hides compare-only actions in View mode", () => {
+    setup({ mode: "single", hunkMerge: true });
+    expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy file to right")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy to left")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy to right")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Compare actions" })).not.toBeInTheDocument();
+  });
+
+  it("groups labeled copy and hunk actions in Compare mode", () => {
+    setup({ hunkMerge: true });
+    const actions = screen.getByRole("group", { name: "Compare actions" });
+    expect(within(actions).getByRole("button", { name: "Copy file to left" })).toHaveTextContent("Copy file ←");
+    expect(within(actions).getByRole("button", { name: "Copy file to right" })).toHaveTextContent("Copy file →");
+    expect(within(actions).getByRole("group", { name: "Merge hunks" })).toBeInTheDocument();
   });
 });
