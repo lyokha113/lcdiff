@@ -284,6 +284,40 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
+  it("shows the Source/Bytecode switch only on the active Diff tab", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    const viewSwitch = screen.getByRole("group", { name: "Diff view mode" });
+    expect(viewSwitch).toBeInTheDocument();
+    expect(viewSwitch).toContainElement(screen.getByRole("button", { name: "Show source" }));
+    expect(viewSwitch).toContainElement(screen.getByRole("button", { name: "Show bytecode" }));
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    expect(screen.queryByRole("group", { name: "Diff view mode" })).not.toBeInTheDocument();
+  });
+
+  it("renders pane-specific actions in Compare mode and removes them in View mode", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(screen.getByRole("group", { name: "Actions into left pane" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Actions into right pane" })).toBeInTheDocument();
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+      fireEvent.click(await screen.findByRole("option", { name: "View" }));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+
+    expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+  });
+
   it("Take all into right stages the left buffer onto the right", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);

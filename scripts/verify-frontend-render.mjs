@@ -182,7 +182,10 @@ try {
   await disableAnimations(viewPage);
   await viewPage.getByRole("button", { name: "Open one source" }).click();
   await viewPage.getByRole("region", { name: "Workspace canvas" }).waitFor({ timeout: 5_000 });
-  if (await viewPage.getByRole("group", { name: "Compare actions" }).count() !== 0) {
+  if (
+    await viewPage.getByRole("group", { name: "Actions into left pane" }).count() !== 0 ||
+    await viewPage.getByRole("group", { name: "Actions into right pane" }).count() !== 0
+  ) {
     throw new Error("View mode exposes compare-only actions");
   }
   await viewPage.close();
@@ -212,6 +215,7 @@ try {
           { path: "com/example/App.class", kind: "class", uncompressedSize: 64 },
           { path: "com/example/Meta.class", kind: "class", uncompressedSize: 66 },
           { path: "assets/blob.bin", kind: "binary", uncompressedSize: 4 },
+          { path: "config.txt", kind: "text", uncompressedSize: 8 },
           { path: "left-only.txt", kind: "text", uncompressedSize: 4 },
         ],
       },
@@ -222,6 +226,7 @@ try {
           { path: "com/example/App.class", kind: "class", uncompressedSize: 65 },
           { path: "com/example/Meta.class", kind: "class", uncompressedSize: 67 },
           { path: "assets/blob.bin", kind: "binary", uncompressedSize: 4 },
+          { path: "config.txt", kind: "text", uncompressedSize: 9 },
           { path: "right-only.txt", kind: "text", uncompressedSize: 5 },
         ],
       },
@@ -244,6 +249,12 @@ try {
         status: "different",
         left: { path: "assets/blob.bin", kind: "binary" },
         right: { path: "assets/blob.bin", kind: "binary" },
+      },
+      {
+        path: "config.txt",
+        status: "different",
+        left: { path: "config.txt", kind: "text" },
+        right: { path: "config.txt", kind: "text" },
       },
       {
         path: "left-only.txt",
@@ -403,6 +414,9 @@ try {
   // tree-row interaction.
   async function showFilesTab() {
     await mockedPage.getByRole("tab", { name: /Files/ }).click();
+    if (await mockedPage.getByRole("group", { name: "Diff view mode" }).count()) {
+      throw new Error("Files tab still rendered the Source/Bytecode switch");
+    }
   }
 
   // Bad-path error shows inside the open left Popover as <small class="path-error">.
@@ -470,10 +484,97 @@ try {
   await mockedPage.locator(".tree-file.differentMetadataOnly", { hasText: "Meta.class" }).waitFor({ timeout: 10_000 });
 
   await showFilesTab();
+  const configRow = mockedPage.locator(".tree-file", { hasText: "config.txt" });
+  await configRow.waitFor({ timeout: 5_000 });
+  await configRow.click();
   const appRow = mockedPage.locator(".tree-file", { hasText: "App.class" });
+  const leftPaneActions = mockedPage.getByRole("group", { name: "Actions into left pane" });
+  const rightPaneActions = mockedPage.getByRole("group", { name: "Actions into right pane" });
+  await leftPaneActions.waitFor({ timeout: 5_000 });
+  await rightPaneActions.waitFor({ timeout: 5_000 });
+  const leftActionLabels = await leftPaneActions.getByRole("button").allTextContents();
+  const rightActionLabels = await rightPaneActions.getByRole("button").allTextContents();
+  if (JSON.stringify(leftActionLabels) !== JSON.stringify(["Copy file ←", "Take all ←", "Move hunk ←"])) {
+    throw new Error(`Unexpected left-pane action order: ${JSON.stringify(leftActionLabels)}`);
+  }
+  if (JSON.stringify(rightActionLabels) !== JSON.stringify(["Move hunk →", "Take all →", "Copy file →"])) {
+    throw new Error(`Unexpected right-pane action order: ${JSON.stringify(rightActionLabels)}`);
+  }
+  await mockedPage.getByRole("group", { name: "Diff view mode" }).waitFor({ timeout: 5_000 });
+  const populatedCompareText = await mockedPage.locator("body").innerText();
+  if (populatedCompareText.includes("Left Target") || populatedCompareText.includes("Right Target")) {
+    throw new Error("Diff toolbar rendered obsolete target labels");
+  }
+
+  // Compact-width regression: a populated Diff keeps a usable tab-scroll lane
+  // beside the fixed Source/Bytecode switch instead of collapsing to zero.
+  await assertViewportFits(mockedPage, 720, 520, "populated compact diff");
+  const compactTabScroll = mockedPage.locator(".workspace-tabs-scroll");
+  const compactViewSwitch = mockedPage.getByRole("group", { name: "Diff view mode" });
+  const [tabScrollBox, viewSwitchBox, tabScrollMinWidth] = await Promise.all([
+    compactTabScroll.boundingBox(),
+    compactViewSwitch.boundingBox(),
+    compactTabScroll.evaluate((element) => getComputedStyle(element).minWidth),
+  ]);
+  if (tabScrollMinWidth !== "48px") {
+    throw new Error(`Compact Diff tab scroll minimum is ${tabScrollMinWidth}; expected 48px`);
+  }
+  if (!tabScrollBox || tabScrollBox.width < 48) {
+    throw new Error(`Compact Diff tab scroll collapsed: ${JSON.stringify(tabScrollBox)}`);
+  }
+  if (!viewSwitchBox || viewSwitchBox.width <= 0) {
+    throw new Error("Compact Diff view switch is not visible");
+  }
+  const verticalOverlap = Math.min(
+    tabScrollBox.y + tabScrollBox.height,
+    viewSwitchBox.y + viewSwitchBox.height,
+  ) - Math.max(tabScrollBox.y, viewSwitchBox.y);
+  if (verticalOverlap <= 0) {
+    throw new Error("Compact Diff tab scroll and view switch do not coexist in the same strip");
+  }
+  const geometryTolerance = 1;
+  const tabScrollRight = tabScrollBox.x + tabScrollBox.width;
+  if (tabScrollRight > viewSwitchBox.x + geometryTolerance) {
+    throw new Error(
+      `Compact Diff tab scroll overlays view switch: tabsRight=${tabScrollRight}, switchLeft=${viewSwitchBox.x}`,
+    );
+  }
+
+  const mergeActions = mockedPage.locator(".merge-actions");
+  const [mergeActionsBox, leftPaneActionsBox, rightPaneActionsBox] = await Promise.all([
+    mergeActions.boundingBox(),
+    leftPaneActions.boundingBox(),
+    rightPaneActions.boundingBox(),
+  ]);
+  if (!mergeActionsBox || !leftPaneActionsBox || !rightPaneActionsBox) {
+    throw new Error("Compact Diff pane-action geometry is unavailable");
+  }
+  const mergeLeft = mergeActionsBox.x;
+  const mergeRight = mergeActionsBox.x + mergeActionsBox.width;
+  const mergeMidpoint = mergeActionsBox.x + mergeActionsBox.width / 2;
+  const leftActionsRight = leftPaneActionsBox.x + leftPaneActionsBox.width;
+  const rightActionsRight = rightPaneActionsBox.x + rightPaneActionsBox.width;
+  if (
+    leftPaneActionsBox.x < mergeLeft - geometryTolerance ||
+    leftActionsRight > mergeMidpoint + geometryTolerance
+  ) {
+    throw new Error(
+      `Compact left-pane actions crossed their half: group=${JSON.stringify(leftPaneActionsBox)}, midpoint=${mergeMidpoint}`,
+    );
+  }
+  if (
+    rightPaneActionsBox.x < mergeMidpoint - geometryTolerance ||
+    rightActionsRight > mergeRight + geometryTolerance
+  ) {
+    throw new Error(
+      `Compact right-pane actions crossed their half: group=${JSON.stringify(rightPaneActionsBox)}, midpoint=${mergeMidpoint}`,
+    );
+  }
+  await mockedPage.setViewportSize({ width: 1280, height: 720 });
+
+  await showFilesTab();
   await appRow.waitFor({ timeout: 5_000 });
   await appRow.click();
-  await mockedPage.getByRole("group", { name: "Compare actions" }).waitFor({ timeout: 5_000 });
 
   // Bytecode view (LEFT/RIGHT ASM) then source view (LeftApp/RightApp).
   await mockedPage.getByRole("button", { name: "Show bytecode", exact: true }).click();
@@ -538,7 +639,10 @@ try {
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "View" }).click();
   await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
-  if (await mockedPage.getByRole("group", { name: "Compare actions" }).count()) {
+  if (
+    await mockedPage.getByRole("group", { name: "Actions into left pane" }).count() ||
+    await mockedPage.getByRole("group", { name: "Actions into right pane" }).count()
+  ) {
     throw new Error("Single mode still rendered compare-only actions");
   }
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {

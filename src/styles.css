@@ -179,6 +179,26 @@ main.app-shell {
   overflow-y: hidden;
   scrollbar-width: thin;
 }
+.workspace-view-toggle {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  gap: 2px;
+  min-width: max-content;
+  padding-left: 0.35rem;
+  background: color-mix(in oklab, var(--ink-0) 94%, transparent);
+  box-shadow: -10px 0 14px color-mix(in oklab, var(--ink-0) 72%, transparent);
+}
+.workspace-view-toggle [data-slot="button"] {
+  height: 1.75rem;
+  padding-inline: 0.5rem;
+  border-radius: 0.35rem;
+  font-size: 0.68rem;
+}
 .workspace-tab {
   display: inline-flex;
   align-items: center;
@@ -890,6 +910,8 @@ h1 {
   align-items: center;
   gap: 0.25rem;
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 0.35rem 0.55rem;
   overflow-x: auto;
   scrollbar-width: thin;
@@ -1539,6 +1561,10 @@ main.app-shell {
   .search-inline-check { margin-right: auto; }
   .preferences-body { grid-template-columns: 7.4rem minmax(0, 1fr); }
   .theme-grid { grid-template-columns: 1fr; }
+  .workspace-tabs-scroll { min-width: 3rem; }
+  .workspace-view-toggle { padding-left: 0.2rem; }
+  .workspace-view-toggle [data-slot="button"] { padding-inline: 0.4rem; }
+  .pane-actions { padding-inline: 0.35rem; }
 }
 
 @media (max-width: 560px) {
