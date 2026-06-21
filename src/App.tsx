@@ -1208,10 +1208,15 @@ export function App() {
             mode={mode}
             tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
             treeFilter={treeFilter}
+            viewMode={viewMode}
+            canShowSource={!!selected}
+            canShowBytecode={pairHasClass(selected)}
             onSelectFiles={() => setActiveTab("files")}
             onSelectTab={(path) => focusTab(path)}
             onCloseTab={(path) => closeTab(path)}
             onFilterChange={setTreeFilter}
+            onShowSource={() => selected && void inspect(selected, true)}
+            onShowBytecode={showBytecode}
           />
           <div
             className="workspace-tabpanels"

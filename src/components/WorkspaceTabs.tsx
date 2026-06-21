@@ -1,8 +1,9 @@
-import { FileDiff, ListTree, X } from "lucide-react";
+import { Binary, Code, FileDiff, ListTree, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import type { Mode, PairStatus, TreeFilter } from "@/lib/types";
+import type { Mode, PairStatus, TreeFilter, ViewMode } from "@/lib/types";
 import { statusPresentation } from "@/lib/status";
 
 const noopFilterChange = () => undefined;
@@ -24,10 +25,15 @@ export interface WorkspaceTabsProps {
   mode: Mode;
   tabs: WorkspaceTabDescriptor[];
   treeFilter?: TreeFilter;
+  viewMode: ViewMode;
+  canShowSource: boolean;
+  canShowBytecode: boolean;
   onSelectFiles: () => void;
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onFilterChange?: (filter: TreeFilter) => void;
+  onShowSource: () => void;
+  onShowBytecode: () => void;
 }
 
 export function WorkspaceTabs({
@@ -36,10 +42,15 @@ export function WorkspaceTabs({
   mode,
   tabs,
   treeFilter = "diff",
+  viewMode,
+  canShowSource,
+  canShowBytecode,
   onSelectFiles,
   onSelectTab,
   onCloseTab,
   onFilterChange = noopFilterChange,
+  onShowSource,
+  onShowBytecode,
 }: WorkspaceTabsProps) {
   return (
     <nav className="workspace-tabs" aria-label="Open files">
@@ -99,6 +110,30 @@ export function WorkspaceTabs({
           );
         })}
       </div>
+      {activeId !== "files" && (
+        <div className="workspace-view-toggle" role="group" aria-label="Diff view mode">
+          <Button
+            variant={viewMode === "source" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show source"
+            aria-pressed={viewMode === "source"}
+            disabled={!canShowSource}
+            onClick={onShowSource}
+          >
+            <Code /> Source
+          </Button>
+          <Button
+            variant={viewMode === "bytecode" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show bytecode"
+            aria-pressed={viewMode === "bytecode"}
+            disabled={!canShowBytecode}
+            onClick={onShowBytecode}
+          >
+            <Binary /> Bytecode
+          </Button>
+        </div>
+      )}
     </nav>
   );
 }
