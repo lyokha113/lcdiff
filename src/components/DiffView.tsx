@@ -1,9 +1,8 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
-import { Binary, Code } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { UiPreferences } from "@/lib/preferences";
-import type { ComparePair, EntryPreview, Mode, Side, ViewMode } from "@/lib/types";
+import type { ComparePair, EntryPreview, Mode, Side } from "@/lib/types";
 
 export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
@@ -14,9 +13,6 @@ interface DiffViewProps {
   selected?: ComparePair;
   preview: Partial<Record<Side, EntryPreview>>;
   preferences: UiPreferences;
-  viewMode: ViewMode;
-  canShowSource: boolean;
-  canShowBytecode: boolean;
   ignoreTrimWhitespace: boolean;
   onCopy: (from: Side, to: Side) => void;
   onEditorMount: OnMount;
@@ -30,15 +26,13 @@ interface DiffViewProps {
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
   onMoveHunk: (target: Side) => void;
-  onShowSource: () => void;
-  onShowBytecode: () => void;
 }
 
 export function DiffView({
-  mode, selected, preview, preferences, viewMode, canShowSource, canShowBytecode, ignoreTrimWhitespace,
+  mode, selected, preview, preferences, ignoreTrimWhitespace,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
-  fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk, onShowSource, onShowBytecode,
+  fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
 }: DiffViewProps) {
   const monacoTheme = preferences.appearance.colorMode === "light" ? "light" : "vs-dark";
   const editorOptions = {
@@ -50,100 +44,80 @@ export function DiffView({
     automaticLayout: true,
   } as const;
 
+  const renderCopyButton = (target: Side) => {
+    const source: Side = target === "left" ? "right" : "left";
+    const arrow = target === "left" ? "←" : "→";
+    const sourceEntry = selected?.[source];
+    const tooltip = fileMerge
+      ? `Copy the entire ${source} file onto the ${target} (saved bytes on disk, ignores unsaved edits)`
+      : `Copy ${source} entry to ${target}`;
+
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`Copy file to ${target}`}
+              disabled={!sourceEntry || sourceEntry.kind === "directory"}
+              onClick={() => onCopy(source, target)}
+            >
+              Copy file {arrow}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent><p>{tooltip}</p></TooltipContent>
+      </Tooltip>
+    );
+  };
+
+  const renderTakeAllButton = (target: Side) => {
+    const source = target === "left" ? "right" : "left";
+    const arrow = target === "left" ? "←" : "→";
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="sm" aria-label={`Take all into ${target}`} onClick={() => onTakeAll(target)}>
+            Take all {arrow}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent><p>Replace the {target} pane with the {source} pane's current content (includes unsaved edits)</p></TooltipContent>
+      </Tooltip>
+    );
+  };
+
+  const renderMoveHunkButton = (target: Side) => {
+    const source = target === "left" ? "right" : "left";
+    const arrow = target === "left" ? "←" : "→";
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="outline" size="sm" aria-label={`Move hunk into ${target}`} onClick={() => onMoveHunk(target)}>
+            Move hunk {arrow}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent><p>Move the change at the cursor into the {target} pane and remove it from the {source}</p></TooltipContent>
+      </Tooltip>
+    );
+  };
+
   return (
     <div className="editor-panel">
-      <div className="copy-actions">
-        <div className="view-toggle" role="group" aria-label="Diff view mode">
-          <Button
-            variant={viewMode === "source" ? "secondary" : "ghost"}
-            size="sm"
-            aria-label="Show source"
-            aria-pressed={viewMode === "source"}
-            disabled={!canShowSource}
-            onClick={onShowSource}
-          >
-            <Code /> Source
-          </Button>
-          <Button
-            variant={viewMode === "bytecode" ? "secondary" : "ghost"}
-            size="sm"
-            aria-label="Show bytecode"
-            aria-pressed={viewMode === "bytecode"}
-            disabled={!canShowBytecode}
-            onClick={onShowBytecode}
-          >
-            <Binary /> Bytecode
-          </Button>
-        </div>
-
-        {mode === "compare" && (
-          <div className="compare-actions" role="group" aria-label="Compare actions">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="Copy file to left"
-                    disabled={!selected?.right || selected.right.kind === "directory"}
-                    onClick={() => onCopy("right", "left")}
-                  >
-                    Copy file ←
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent><p>{fileMerge ? "Copy the entire right file onto the left (saved bytes on disk, ignores unsaved edits)" : "Copy right entry to left"}</p></TooltipContent>
-            </Tooltip>
-
-            {hunkMerge && (
-              <div className="hunk-cluster" role="group" aria-label="Merge hunks">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" aria-label="Take all into left" onClick={() => onTakeAll("left")}>Take all ←</Button>
-                  </TooltipTrigger>
-                  <TooltipContent><p>Replace the left pane with the right pane's current content (includes unsaved edits)</p></TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" aria-label="Move hunk into left" onClick={() => onMoveHunk("left")}>Move hunk ←</Button>
-                  </TooltipTrigger>
-                  <TooltipContent><p>Move the change at the cursor into the left pane and remove it from the right</p></TooltipContent>
-                </Tooltip>
-                <span className="hunk-divider" aria-hidden="true" />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" aria-label="Move hunk into right" onClick={() => onMoveHunk("right")}>Move hunk →</Button>
-                  </TooltipTrigger>
-                  <TooltipContent><p>Move the change at the cursor into the right pane and remove it from the left</p></TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="sm" aria-label="Take all into right" onClick={() => onTakeAll("right")}>Take all →</Button>
-                  </TooltipTrigger>
-                  <TooltipContent><p>Replace the right pane with the left pane's current content (includes unsaved edits)</p></TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="Copy file to right"
-                    disabled={!selected?.left || selected.left.kind === "directory"}
-                    onClick={() => onCopy("left", "right")}
-                  >
-                    Copy file →
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent><p>{fileMerge ? "Copy the entire left file onto the right (saved bytes on disk, ignores unsaved edits)" : "Copy left entry to right"}</p></TooltipContent>
-            </Tooltip>
+      {mode === "compare" && (
+        <div className="merge-actions">
+          <div className="pane-actions pane-actions-left" role="group" aria-label="Actions into left pane">
+            {renderCopyButton("left")}
+            {hunkMerge && renderTakeAllButton("left")}
+            {hunkMerge && renderMoveHunkButton("left")}
           </div>
-        )}
-      </div>
+          <div className="pane-actions pane-actions-right" role="group" aria-label="Actions into right pane">
+            {hunkMerge && renderMoveHunkButton("right")}
+            {hunkMerge && renderTakeAllButton("right")}
+            {renderCopyButton("right")}
+          </div>
+        </div>
+      )}
       <div className="editors">
         {(preview.left?.details || preview.right?.details) && (
           <p className="preview-details">
