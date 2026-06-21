@@ -29,10 +29,6 @@ export function SourceChips({
 
     return (
       <section className={`source-slot source-slot--${side}`} aria-label={`${sideLabel} source`} key={side}>
-        <div className="source-slot__identity">
-          <span className="source-slot__side">{sideLabel}</span>
-          {archive && <span className="source-slot__kind">{archive.metadata.sourceKind}</span>}
-        </div>
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="ghost" className="source-slot__trigger" aria-label={`Change ${side} source`}>

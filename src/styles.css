@@ -535,10 +535,7 @@ main.app-shell {
   background: color-mix(in oklab, var(--ink-1) 72%, transparent);
 }
 .source-rail[data-mode="single"] { grid-template-columns: minmax(0, 1fr); }
-.source-slot { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); min-width: 0; }
-.source-slot__identity { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 0.2rem; padding: 0.55rem 0.75rem; border-right: 1px solid var(--line-soft); }
-.source-slot__side { color: var(--text-0); font-size: 0.72rem; font-weight: 650; }
-.source-slot__kind { max-width: 100%; overflow: hidden; color: var(--text-2); font-family: var(--font-mono); font-size: 0.55rem; text-overflow: ellipsis; white-space: nowrap; }
+.source-slot { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .source-slot__trigger { justify-content: flex-start; width: 100%; height: auto; min-width: 0; padding: 0.55rem 0.75rem; border-radius: 0; }
 .source-slot__icon { display: grid; place-items: center; flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: 0.5rem; background: var(--ink-2); color: var(--brass); }
 .source-slot__icon svg { width: 0.95rem; height: 0.95rem; }
@@ -1522,8 +1519,6 @@ main.app-shell {
 @media (max-width: 900px) {
   .command-brand { min-width: auto; }
   .command-brand__name, .pending-summary { display: none; }
-  .source-slot { grid-template-columns: 3.6rem minmax(0, 1fr); }
-  .source-slot__identity { padding-inline: 0.55rem; }
   .search-surface { width: calc(100% - 1.25rem); }
 }
 
@@ -1534,8 +1529,6 @@ main.app-shell {
   .command-group--mode { padding-left: 0; border-left: 0; }
   .command-divider { display: none; }
   .source-rail[data-mode="compare"] { grid-template-columns: minmax(0, 1fr) 1.8rem minmax(0, 1fr); }
-  .source-slot { grid-template-columns: 1fr; }
-  .source-slot__identity { display: none; }
   .source-slot__trigger { padding-inline: 0.5rem; }
   .source-slot__path { display: none; }
   .search-surface__controls { flex-wrap: wrap; }
@@ -1549,7 +1542,7 @@ main.app-shell {
   main.app-shell { gap: 0.35rem; padding-block: 0.35rem 0.2rem; }
   .command-bar { min-height: 2.35rem; }
   .source-rail { min-height: 3.35rem; }
-  .source-slot__identity, .source-slot__trigger { padding-block: 0.32rem; }
+  .source-slot__trigger { padding-block: 0.32rem; }
   .search-surface { top: 6.25rem; max-height: calc(100% - 7rem); }
   .status-bar { min-height: 1.45rem; }
   .tree-empty { min-height: calc(100% - 2rem); padding: 1rem; }
