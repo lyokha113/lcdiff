@@ -172,7 +172,7 @@ function isBuiltInFontFamily(value: string): boolean {
 
 function normalizeFontFamily(value: unknown, availableFonts?: readonly string[]): string {
   const candidate = stringValue(value, DEFAULT_EDITOR_FONT_FAMILY);
-  if (!availableFonts || availableFonts.length === 0) {
+  if (availableFonts === undefined) {
     return candidate;
   }
   if (isBuiltInFontFamily(candidate) || availableFonts.includes(candidate)) {

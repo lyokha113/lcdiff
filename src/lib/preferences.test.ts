@@ -100,6 +100,33 @@ describe("UI preferences persistence", () => {
     expect(preferences.editor.fontFamily).toBe(DEFAULT_EDITOR_FONT_FAMILY);
   });
 
+  it("keeps a custom font when no allowlist is provided", () => {
+    const preferences = normalizeUiPreferences({
+      ...DEFAULT_UI_PREFERENCES,
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "Menlo",
+      },
+    });
+
+    expect(preferences.editor.fontFamily).toBe("Menlo");
+  });
+
+  it("falls back to the default editor font when an empty allowlist is provided", () => {
+    const preferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: "Menlo",
+        },
+      },
+      [],
+    );
+
+    expect(preferences.editor.fontFamily).toBe(DEFAULT_EDITOR_FONT_FAMILY);
+  });
+
   it("preserves built-in fallback font families even when not installed", () => {
     const monospacePreferences = normalizeUiPreferences(
       {
@@ -109,7 +136,7 @@ describe("UI preferences persistence", () => {
           fontFamily: SYSTEM_MONO_FONT_FAMILY,
         },
       },
-      ["Menlo"],
+      [],
     );
 
     const sansPreferences = normalizeUiPreferences(
@@ -120,7 +147,7 @@ describe("UI preferences persistence", () => {
           fontFamily: SYSTEM_SANS_FONT_FAMILY,
         },
       },
-      ["Menlo"],
+      [],
     );
 
     expect(monospacePreferences.editor.fontFamily).toBe(SYSTEM_MONO_FONT_FAMILY);
