@@ -1,7 +1,7 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { UiPreferences } from "@/lib/preferences";
+import type { EffectiveColorPattern, UiPreferences } from "@/lib/preferences";
 import type { ComparePair, EntryPreview, Mode, Side } from "@/lib/types";
 
 export function pairHasClass(pair?: ComparePair) {
@@ -13,6 +13,7 @@ interface DiffViewProps {
   selected?: ComparePair;
   preview: Partial<Record<Side, EntryPreview>>;
   preferences: UiPreferences;
+  effectiveColorPattern: EffectiveColorPattern;
   ignoreTrimWhitespace: boolean;
   onCopy: (from: Side, to: Side) => void;
   onEditorMount: OnMount;
@@ -29,15 +30,15 @@ interface DiffViewProps {
 }
 
 export function DiffView({
-  mode, selected, preview, preferences, ignoreTrimWhitespace,
+  mode, selected, preview, preferences, effectiveColorPattern, ignoreTrimWhitespace,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
   fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
 }: DiffViewProps) {
-  const monacoTheme = preferences.appearance.colorMode === "light" ? "light" : "vs-dark";
+  const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
   const editorOptions = {
-    fontFamily: "var(--font-mono)",
-    fontSize: preferences.typography.editorScale,
+    fontFamily: preferences.editor.fontFamily,
+    fontSize: preferences.editor.fontSize,
     minimap: { enabled: preferences.editor.minimap === "on" },
     wordWrap: preferences.editor.wordWrap,
     lineNumbers: preferences.editor.lineNumbers,
