@@ -4,6 +4,7 @@ import {
   normalizeSystemFonts,
   type SystemFont,
 } from "@/lib/system-fonts";
+import { DEFAULT_EDITOR_FONT_FAMILY } from "@/lib/preferences";
 
 describe("system font helpers", () => {
   it("sorts monospace fonts first and removes duplicate families", () => {
@@ -23,5 +24,18 @@ describe("system font helpers", () => {
 
   it("uses fallback choices when native enumeration returns nothing", () => {
     expect(normalizeSystemFonts([])).toEqual(FALLBACK_SYSTEM_FONTS);
+  });
+
+  it("keeps fallback results isolated from later callers", () => {
+    const first = normalizeSystemFonts([]);
+    first[0].family = "Mutated";
+    first[0].monospaceLikely = false;
+
+    expect(normalizeSystemFonts([])).toEqual(FALLBACK_SYSTEM_FONTS);
+    expect(FALLBACK_SYSTEM_FONTS).toEqual([
+      { family: DEFAULT_EDITOR_FONT_FAMILY, monospaceLikely: true },
+      { family: "ui-monospace, monospace", monospaceLikely: true },
+      { family: "ui-sans-serif, system-ui, sans-serif", monospaceLikely: false },
+    ]);
   });
 });
