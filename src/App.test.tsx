@@ -314,6 +314,8 @@ describe("App file-merge wiring", () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
 
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1);
+
     const viewSwitch = screen.getByRole("group", { name: "Diff view mode" });
     expect(viewSwitch).toBeInTheDocument();
     expect(viewSwitch).toContainElement(screen.getByRole("button", { name: "Show source" }));

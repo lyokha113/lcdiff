@@ -179,6 +179,8 @@ export function App() {
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
+  const selectedRef = useRef<ComparePair | undefined>(selected);
+  const inspectRef = useRef(inspect);
   const handleEditorMount = useCallback<OnMount>((editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; }, []);
   const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; }, []);
   const availableFontFamilies =
@@ -211,6 +213,12 @@ export function App() {
     return () => document.removeEventListener("focusin", updateLastFocusKind);
   }, []);
   useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  useEffect(() => {
+    inspectRef.current = inspect;
+  }, [inspect]);
+  useEffect(() => {
     setIncludeSourceSearch(preferences.misc.search.includeSourceByDefault);
   }, [preferences.misc.search.includeSourceByDefault]);
   const engine = preferences.misc.decompiler.engine;
@@ -218,7 +226,8 @@ export function App() {
     let cancelled = false;
     invoke("set_engine", { engine })
       .then(() => {
-        if (!cancelled && selected) void inspect(selected, true);
+        const currentSelected = selectedRef.current;
+        if (!cancelled && currentSelected) void inspectRef.current(currentSelected, true);
       })
       .catch((error) => {
         if (!cancelled) setMessage(error instanceof Error ? error.message : String(error));
@@ -226,7 +235,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [engine, selected]);
+  }, [engine]);
   const loadSystemFonts = useCallback(async () => {
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");
