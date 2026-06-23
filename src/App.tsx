@@ -215,13 +215,18 @@ export function App() {
   }, [preferences.misc.search.includeSourceByDefault]);
   const engine = preferences.misc.decompiler.engine;
   useEffect(() => {
-    invoke("set_engine", { engine }).catch((error) => {
-      setMessage(error instanceof Error ? error.message : String(error));
-    });
-    if (selected) {
-      void inspect(selected, true);
-    }
-  }, [engine]);
+    let cancelled = false;
+    invoke("set_engine", { engine })
+      .then(() => {
+        if (!cancelled && selected) void inspect(selected, true);
+      })
+      .catch((error) => {
+        if (!cancelled) setMessage(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine, selected]);
   const loadSystemFonts = useCallback(async () => {
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");

@@ -389,6 +389,11 @@ describe("App file-merge wiring", () => {
     await waitFor(() =>
       expect(JSON.parse(localStorage.getItem("ldiff.uiPreferences.v1") ?? "{}").editor.fontFamily).toBe("Menlo"),
     );
+
+    await user.click(screen.getByLabelText("Preferences"));
+    await user.click(screen.getByRole("button", { name: "Editor" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_system_fonts"));
+    await waitFor(() => expect(screen.getByLabelText("Editor font family")).toHaveTextContent("Menlo"));
   });
 
   it("loads installed fonts when Editor preferences open", async () => {
