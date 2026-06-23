@@ -211,14 +211,15 @@ export function App() {
   useEffect(() => {
     setIncludeSourceSearch(preferences.misc.search.includeSourceByDefault);
   }, [preferences.misc.search.includeSourceByDefault]);
+  const engine = preferences.misc.decompiler.engine;
   useEffect(() => {
-    invoke("set_engine", { engine: preferences.misc.decompiler.engine }).catch((error) => {
+    invoke("set_engine", { engine }).catch((error) => {
       setMessage(error instanceof Error ? error.message : String(error));
     });
     if (selected) {
       void inspect(selected, true);
     }
-  }, [preferences.misc.decompiler.engine]);
+  }, [engine]);
   const loadSystemFonts = useCallback(async () => {
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");
