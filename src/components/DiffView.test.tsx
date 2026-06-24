@@ -5,8 +5,8 @@ import { DiffView } from "@/components/DiffView";
 import { DEFAULT_UI_PREFERENCES, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
 import type { ComparePair, Mode } from "@/lib/types";
 
-const editorMock = vi.hoisted(() => vi.fn(() => <div data-testid="editor" />));
-const diffEditorMock = vi.hoisted(() => vi.fn(() => <div data-testid="diff-editor" />));
+const editorMock = vi.hoisted(() => vi.fn((_props: unknown) => <div data-testid="editor" />));
+const diffEditorMock = vi.hoisted(() => vi.fn((_props: unknown) => <div data-testid="diff-editor" />));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,

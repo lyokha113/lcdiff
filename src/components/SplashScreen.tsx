@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import type { HistoryEntry, Mode } from "@/lib/history";
 import { motionDuration, motionEase, shouldAnimateUi } from "@/lib/motion";
-import type { Motion } from "@/lib/preferences";
 
 gsap.registerPlugin(useGSAP);
 
@@ -16,7 +15,7 @@ interface SplashScreenProps {
   onPickMode: (mode: Mode) => void;
   onOpenEntry: (entry: HistoryEntry) => void;
   onClear: () => void;
-  motion: Motion;
+  motion: "standard" | "reduced";
 }
 
 function basename(path: string) {
