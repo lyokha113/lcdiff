@@ -27,19 +27,41 @@ interface DiffViewProps {
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
   onMoveHunk: (target: Side) => void;
+  diffNavigator?: DiffNavigatorProps;
 }
+
+interface DiffNavigatorProps {
+  current: number;
+  total: number;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}
+
+const emptyDiffNavigator: DiffNavigatorProps = {
+  current: 0,
+  total: 0,
+  canGoPrevious: false,
+  canGoNext: false,
+  onPrevious: () => {},
+  onNext: () => {},
+};
 
 export function DiffView({
   mode, selected, preview, preferences, effectiveColorPattern, ignoreTrimWhitespace,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
   fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
   const editorOptions = {
     fontFamily: preferences.editor.fontFamily,
     fontSize: preferences.editor.fontSize,
-    minimap: { enabled: preferences.editor.minimap === "on" },
+    minimap: preferences.editor.minimap === "on"
+      ? { enabled: true, side: "right", size: "proportional", showSlider: "mouseover" }
+      : { enabled: false },
     wordWrap: preferences.editor.wordWrap,
     lineNumbers: preferences.editor.lineNumbers,
     automaticLayout: true,
@@ -103,6 +125,17 @@ export function DiffView({
     );
   };
 
+  const renderDiffNavigator = () => {
+    if (mode !== "compare") return null;
+    return (
+      <div className="diff-navigator" role="group" aria-label="Diff block navigation">
+        <Button variant="outline" size="sm" aria-label="Previous diff block" disabled={!diffNavigator.canGoPrevious} onClick={diffNavigator.onPrevious}>↑</Button>
+        <span className="diff-navigator__count" aria-label="Current diff block">{diffNavigator.current}/{diffNavigator.total}</span>
+        <Button variant="outline" size="sm" aria-label="Next diff block" disabled={!diffNavigator.canGoNext} onClick={diffNavigator.onNext}>↓</Button>
+      </div>
+    );
+  };
+
   return (
     <div className="editor-panel">
       {mode === "compare" && (
@@ -112,6 +145,7 @@ export function DiffView({
             {hunkMerge && renderTakeAllButton("left")}
             {hunkMerge && renderMoveHunkButton("left")}
           </div>
+          {renderDiffNavigator()}
           <div className="pane-actions pane-actions-right" role="group" aria-label="Actions into right pane">
             {hunkMerge && renderMoveHunkButton("right")}
             {hunkMerge && renderTakeAllButton("right")}

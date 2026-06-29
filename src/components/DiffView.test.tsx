@@ -190,11 +190,11 @@ describe("DiffView", () => {
       },
     });
 
-    const navigator = screen.getByRole("group", { name: "Diff navigator" });
+    const navigator = screen.getByRole("group", { name: "Diff block navigation" });
     expect(within(navigator).getByText("3/12")).toBeInTheDocument();
 
-    await user.click(within(navigator).getByRole("button", { name: "Previous diff" }));
-    await user.click(within(navigator).getByRole("button", { name: "Next diff" }));
+    await user.click(within(navigator).getByRole("button", { name: "Previous diff block" }));
+    await user.click(within(navigator).getByRole("button", { name: "Next diff block" }));
 
     expect(onPrevious).toHaveBeenCalledTimes(1);
     expect(onNext).toHaveBeenCalledTimes(1);
@@ -203,10 +203,10 @@ describe("DiffView", () => {
   it("disables the diff navigator when no diff blocks exist", () => {
     renderDiffView("compare", DEFAULT_UI_PREFERENCES);
 
-    const navigator = screen.getByRole("group", { name: "Diff navigator" });
+    const navigator = screen.getByRole("group", { name: "Diff block navigation" });
     expect(within(navigator).getByText("0/0")).toBeInTheDocument();
-    expect(within(navigator).getByRole("button", { name: "Previous diff" })).toBeDisabled();
-    expect(within(navigator).getByRole("button", { name: "Next diff" })).toBeDisabled();
+    expect(within(navigator).getByRole("button", { name: "Previous diff block" })).toBeDisabled();
+    expect(within(navigator).getByRole("button", { name: "Next diff block" })).toBeDisabled();
   });
 
   it("hides the diff navigator in single mode", () => {
@@ -222,7 +222,7 @@ describe("DiffView", () => {
       },
     });
 
-    expect(screen.queryByRole("group", { name: "Diff navigator" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Diff block navigation" })).not.toBeInTheDocument();
   });
 
   it("hides compare-only actions in View mode", () => {
