@@ -263,8 +263,20 @@ describe("UI preferences persistence", () => {
     );
 
     expect(root.dataset.effectiveColorPattern).toBe("light");
-    expect(root.style.getPropertyValue("--ink-0")).not.toBe(root.style.getPropertyValue("--ink-1"));
-    expect(root.style.getPropertyValue("--ink-1")).not.toBe(root.style.getPropertyValue("--ink-2"));
+    const background = root.style.getPropertyValue("--background");
+    const ink0 = root.style.getPropertyValue("--ink-0");
+    const ink1 = root.style.getPropertyValue("--ink-1");
+    const ink2 = root.style.getPropertyValue("--ink-2");
+    const popover = root.style.getPropertyValue("--popover");
+    const input = root.style.getPropertyValue("--input");
+
+    expect(background).not.toBe("");
+    expect(ink0).not.toBe("");
+    expect(ink1).not.toBe("");
+    expect(ink2).not.toBe("");
+    expect(popover).not.toBe("");
+    expect(input).not.toBe("");
+    expect(new Set([background, ink0, ink1, ink2, popover, input]).size).toBe(6);
     expect(root.style.getPropertyValue("--line")).not.toBe("");
     expect(root.style.getPropertyValue("--text-0")).not.toBe(root.style.getPropertyValue("--text-2"));
   });
