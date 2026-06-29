@@ -1,4 +1,5 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { EffectiveColorPattern, UiPreferences } from "@/lib/preferences";
@@ -56,7 +57,7 @@ export function DiffView({
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
-  const editorOptions = {
+  const editorOptions: editor.IEditorConstructionOptions = {
     fontFamily: preferences.editor.fontFamily,
     fontSize: preferences.editor.fontSize,
     minimap: preferences.editor.minimap === "on"
@@ -65,7 +66,7 @@ export function DiffView({
     wordWrap: preferences.editor.wordWrap,
     lineNumbers: preferences.editor.lineNumbers,
     automaticLayout: true,
-  } as const;
+  };
 
   const renderCopyButton = (target: Side) => {
     const source: Side = target === "left" ? "right" : "left";
