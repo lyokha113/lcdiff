@@ -490,6 +490,9 @@ main.app-shell {
   width: 100%;
   max-width: 100%;
 }
+.editor-font-select-item > span:last-child {
+  min-width: 0;
+}
 .editor-font-select-trigger [data-slot="select-value"],
 .editor-font-select-item [data-slot="select-item-text"] {
   min-width: 0;
