@@ -1,6 +1,6 @@
 pkgbase = lcdiff
 	pkgdesc = Inspect, compare, and merge JAR/ZIP archives and folders
-	pkgver = 0.2.1
+	pkgver = 0.3.0
 	pkgrel = 1
 	url = https://github.com/lyokha113/lcdiff
 	arch = x86_64
@@ -27,5 +27,5 @@ pkgbase = lcdiff
 	depends = xdotool
 	options = !strip
 	install = lcdiff.install
-	source = git+https://github.com/lyokha113/lcdiff.git#tag=v0.2.1
+	source = git+https://github.com/lyokha113/lcdiff.git#tag=v0.3.0
 	sha256sums = SKIP
