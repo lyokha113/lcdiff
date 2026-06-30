@@ -53,6 +53,14 @@ function boxesOverlap(a, b, tolerance = 1) {
   );
 }
 
+function colorAlpha(color) {
+  const rgbaMatch = color.match(/rgba?\([^)]*,\s*([0-9.]+)\s*\)$/);
+  if (rgbaMatch && color.startsWith("rgba")) return Number(rgbaMatch[1]);
+  const slashAlphaMatch = color.match(/\/\s*([0-9.]+)\s*\)$/);
+  if (slashAlphaMatch) return Number(slashAlphaMatch[1]);
+  return 1;
+}
+
 async function assertBoxInside(containerLocator, childLocator, label, tolerance = 1) {
   const [containerBox, childBox] = await Promise.all([
     containerLocator.boundingBox(),
@@ -165,6 +173,9 @@ try {
       { id: "render-5", mode: "single", paths: ["/fixtures/fifth.jar"], openedAt: openedAt - 240_000 },
       { id: "render-6", mode: "single", paths: ["/fixtures/sixth.jar"], openedAt: openedAt - 300_000 },
     ]));
+    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "light" },
+    }));
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(page);
@@ -211,6 +222,66 @@ try {
   await preferencesDrawer.getByRole("button", { name: "Appearance" }).click();
   const appearanceGroup = preferencesDrawer.getByRole("region", { name: "Appearance preferences" });
   await appearanceGroup.waitFor({ timeout: 5_000 });
+  const lightPreferencesState = await page.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const drawer = document.querySelector(".config-drawer.open");
+    const outlineButtons = [...document.querySelectorAll(".preference-choice[data-variant='outline']")];
+    const navButtons = [...document.querySelectorAll(".preferences-nav button")];
+    const shellStyle = shell ? getComputedStyle(shell) : null;
+    return {
+      effectiveColorPattern: shell?.getAttribute("data-effective-color-pattern"),
+      shellColor: shellStyle?.color,
+      shellTextToken: shellStyle?.getPropertyValue("--text-0").trim(),
+      drawerBackground: drawer ? getComputedStyle(drawer).backgroundColor : "",
+      drawerBackdropFilter: drawer ? getComputedStyle(drawer).backdropFilter : "",
+      drawerBoxShadow: drawer ? getComputedStyle(drawer).boxShadow : "",
+      outlineButtons: outlineButtons.map((button) => {
+        const style = getComputedStyle(button);
+        return {
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+          borderColor: style.borderColor,
+        };
+      }),
+      navButtons: navButtons.map((button) => {
+        const style = getComputedStyle(button);
+        return {
+          text: button.textContent?.trim(),
+          pressed: button.getAttribute("aria-pressed"),
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+        };
+      }),
+    };
+  });
+  if (lightPreferencesState.effectiveColorPattern !== "light") {
+    throw new Error(`Preferences render did not enter light mode: ${lightPreferencesState.effectiveColorPattern}`);
+  }
+  if (lightPreferencesState.shellColor === "oklch(0.93 0.008 250)") {
+    throw new Error("light app shell is still inheriting the dark foreground color");
+  }
+  if (colorAlpha(lightPreferencesState.drawerBackground) < 0.995) {
+    throw new Error(`light Preferences drawer is translucent: ${lightPreferencesState.drawerBackground}`);
+  }
+  if (lightPreferencesState.drawerBackdropFilter !== "none") {
+    throw new Error(`light Preferences drawer still blurs the workspace: ${lightPreferencesState.drawerBackdropFilter}`);
+  }
+  if (lightPreferencesState.drawerBoxShadow.includes("rgba(0, 0, 0")) {
+    throw new Error(`light Preferences drawer still uses a dark-mode shadow: ${lightPreferencesState.drawerBoxShadow}`);
+  }
+  for (const [index, button] of lightPreferencesState.outlineButtons.entries()) {
+    if (colorAlpha(button.backgroundColor) < 0.995) {
+      throw new Error(`light Preferences outline button ${index} is translucent: ${button.backgroundColor}`);
+    }
+    if (button.color === button.backgroundColor || button.borderColor === button.backgroundColor) {
+      throw new Error(`light Preferences outline button ${index} has collapsed color tokens: ${JSON.stringify(button)}`);
+    }
+  }
+  for (const button of lightPreferencesState.navButtons) {
+    if (button.pressed === "false" && button.color === "oklch(0.93 0.008 250)") {
+      throw new Error(`light Preferences nav button still looks disabled: ${JSON.stringify(button)}`);
+    }
+  }
   await assertBoxInside(appearanceGroup, appearanceGroup.getByRole("button", { name: "Light", exact: true }), "Preferences Light button");
   await assertBoxInside(appearanceGroup, appearanceGroup.getByRole("button", { name: "System", exact: true }), "Preferences System button");
   await preferencesDrawer.getByRole("button", { name: "Editor" }).click();

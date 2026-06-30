@@ -298,6 +298,11 @@ describe("UI preferences persistence", () => {
     const line = root.style.getPropertyValue("--line");
     const text0 = root.style.getPropertyValue("--text-0");
     const text2 = root.style.getPropertyValue("--text-2");
+    const drawerSurface = root.style.getPropertyValue("--drawer-surface");
+    const drawerBorder = root.style.getPropertyValue("--drawer-border");
+    const drawerShadow = root.style.getPropertyValue("--drawer-shadow");
+    const preferenceControlBg = root.style.getPropertyValue("--preference-control-bg");
+    const preferenceControlBorder = root.style.getPropertyValue("--preference-control-border");
 
     expect(background).not.toBe("");
     expect(popover).not.toBe("");
@@ -308,6 +313,11 @@ describe("UI preferences persistence", () => {
     expect(line).not.toBe("");
     expect(text0).not.toBe("");
     expect(text2).not.toBe("");
+    expect(drawerSurface).not.toBe("");
+    expect(drawerBorder).not.toBe("");
+    expect(drawerShadow).not.toBe("");
+    expect(preferenceControlBg).not.toBe("");
+    expect(preferenceControlBorder).not.toBe("");
     expect(ink0).not.toBe(ink1);
     expect(ink0).not.toBe(ink2);
     expect(ink1).not.toBe(ink2);
@@ -315,6 +325,9 @@ describe("UI preferences persistence", () => {
     expect(input).not.toBe(background);
     expect(popover).not.toBe(input);
     expect(text0).not.toBe(text2);
+    expect(drawerSurface).not.toContain("transparent");
+    expect(drawerShadow).not.toContain("black 54%");
+    expect(preferenceControlBg).not.toBe(background);
   });
 
   it("keeps light accent tokens readable for small text use", () => {
@@ -339,6 +352,18 @@ describe("UI preferences persistence", () => {
       contrastRatio(
         root.style.getPropertyValue("--brass-dim"),
         root.style.getPropertyValue("--ink-0"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--text-0"),
+        root.style.getPropertyValue("--preference-control-bg"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--text-0"),
+        root.style.getPropertyValue("--drawer-surface"),
       ),
     ).toBeGreaterThanOrEqual(4.5);
   });

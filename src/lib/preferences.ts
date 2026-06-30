@@ -75,11 +75,11 @@ const BUILT_IN_FONT_FAMILIES = [
 ] as const;
 
 const lightVariables: Record<string, string> = {
-  "--background": "oklch(0.982 0.006 235)",
+  "--background": "#edf2f7",
   "--foreground": "oklch(0.18 0.022 245)",
-  "--card": "oklch(0.965 0.008 235)",
+  "--card": "#f8fafc",
   "--card-foreground": "oklch(0.18 0.022 245)",
-  "--popover": "oklch(0.992 0.004 235)",
+  "--popover": "#ffffff",
   "--popover-foreground": "oklch(0.18 0.022 245)",
   "--primary": "#286f9f",
   "--primary-foreground": "#f7fbff",
@@ -93,12 +93,12 @@ const lightVariables: Record<string, string> = {
   "--border": "oklch(0.53 0.026 245 / 28%)",
   "--input": "oklch(0.53 0.026 245 / 30%)",
   "--ring": "oklch(0.55 0.12 225 / 40%)",
-  "--ink-0": "#eef3f8",
-  "--ink-1": "#fbfdff",
-  "--ink-2": "#e4ebf2",
-  "--ink-3": "#d3dde8",
-  "--line": "#c0cad6",
-  "--line-soft": "#dce4ec",
+  "--ink-0": "#e7edf4",
+  "--ink-1": "#f8fafc",
+  "--ink-2": "#dce5ee",
+  "--ink-3": "#c9d5e1",
+  "--line": "#b6c3d0",
+  "--line-soft": "#d2dbe5",
   "--text-0": "#17212b",
   "--text-1": "#405060",
   "--text-2": "#687789",
@@ -108,6 +108,13 @@ const lightVariables: Record<string, string> = {
   "--st-only": "#1d63b8",
   "--st-same": "#167347",
   "--danger": "#c92a2a",
+  "--drawer-surface": "#f8fbff",
+  "--drawer-border": "#96abc0",
+  "--drawer-shadow": "-1.4rem 0 3rem rgba(68, 84, 100, 0.18), 0 1rem 3rem rgba(68, 84, 100, 0.10), inset 0 1px rgba(255, 255, 255, 0.9)",
+  "--drawer-backdrop-filter": "none",
+  "--preference-control-bg": "#f3f7fb",
+  "--preference-control-border": "#bac7d4",
+  "--preference-control-hover": "#e6eef6",
 };
 
 const darkVariables: Record<string, string> = {
@@ -144,6 +151,13 @@ const darkVariables: Record<string, string> = {
   "--st-only": "#84a9e0",
   "--st-same": "#7fc69a",
   "--danger": "#ef9a9a",
+  "--drawer-surface": "color-mix(in oklab, var(--ink-1) 97%, transparent)",
+  "--drawer-border": "color-mix(in oklab, var(--brass) 24%, var(--line))",
+  "--drawer-shadow": "-2rem 0 5rem color-mix(in oklab, black 54%, transparent), inset 0 1px color-mix(in oklab, white 5%, transparent)",
+  "--drawer-backdrop-filter": "blur(22px)",
+  "--preference-control-bg": "var(--ink-0)",
+  "--preference-control-border": "var(--line)",
+  "--preference-control-hover": "var(--ink-2)",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

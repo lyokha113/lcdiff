@@ -76,6 +76,13 @@
   --st-only: #84a9e0;
   --st-same: #7fc69a;
   --danger: #ef9a9a;
+  --drawer-surface: color-mix(in oklab, var(--ink-1) 97%, transparent);
+  --drawer-border: color-mix(in oklab, var(--brass) 24%, var(--line));
+  --drawer-shadow: -2rem 0 5rem color-mix(in oklab, black 54%, transparent), inset 0 1px color-mix(in oklab, white 5%, transparent);
+  --drawer-backdrop-filter: blur(22px);
+  --preference-control-bg: var(--ink-0);
+  --preference-control-border: var(--line);
+  --preference-control-hover: var(--ink-2);
 
   color: var(--text-0);
   background: var(--ink-0);
@@ -129,6 +136,7 @@ main.app-shell {
   overflow: hidden;
   padding: 12px 16px;
   gap: 10px;
+  color: var(--text-0);
   animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -441,11 +449,11 @@ main.app-shell {
   width: min(34rem, calc(100% - 1rem));
   padding: 0.75rem;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--brass) 24%, var(--line));
+  border: 1px solid var(--drawer-border);
   border-radius: 0.9rem;
-  background: color-mix(in oklab, var(--ink-1) 97%, transparent);
-  box-shadow: -2rem 0 5rem color-mix(in oklab, black 54%, transparent), inset 0 1px color-mix(in oklab, white 5%, transparent);
-  backdrop-filter: blur(22px);
+  background: var(--drawer-surface);
+  box-shadow: var(--drawer-shadow);
+  backdrop-filter: var(--drawer-backdrop-filter);
 }
 .app-shell[data-drawer-width="wide"] .config-drawer.open { width: min(42rem, calc(100% - 1rem)); }
 .preferences-drawer { display: grid; grid-template-rows: auto minmax(0, 1fr); align-content: start; gap: 0; }
@@ -467,6 +475,17 @@ main.app-shell {
 .segmented-control__button {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.preference-choice[data-variant="outline"],
+.segmented-control__button[data-variant="outline"] {
+  border-color: var(--preference-control-border);
+  background: var(--preference-control-bg);
+  color: var(--text-0);
+}
+.preference-choice[data-variant="outline"]:hover,
+.segmented-control__button[data-variant="outline"]:hover {
+  background: var(--preference-control-hover);
+  color: var(--text-0);
 }
 .appearance-pattern-grid {
   display: grid;
