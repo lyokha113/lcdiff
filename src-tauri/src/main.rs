@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use ldiff_core::{
+use lcdiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions,
     CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan,
     NestedArchiveCache, compare, edit, search_constant_pool,
@@ -14,19 +14,124 @@ use ldiff_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{Emitter, Manager, State, Window};
+use tauri::{
+    Emitter, Manager, Runtime, State, Window,
+    menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder},
+};
 
 mod sidecar_process;
+mod system_fonts;
 
 use sidecar_process::SidecarClient;
+use system_fonts::list_system_fonts;
 
 type SharedState = Arc<Mutex<AppState>>;
+
+const MENU_ACTIONS: &[(&str, &str, &str, &str)] = &[
+    ("File", "file.openLeftFile", "Open Left File", "CmdOrCtrl+O"),
+    (
+        "File",
+        "file.openLeftDirectory",
+        "Open Left Directory",
+        "CmdOrCtrl+Alt+O",
+    ),
+    (
+        "File",
+        "file.openRightFile",
+        "Open Right File",
+        "CmdOrCtrl+Shift+O",
+    ),
+    (
+        "File",
+        "file.openRightDirectory",
+        "Open Right Directory",
+        "CmdOrCtrl+Alt+Shift+O",
+    ),
+    ("File", "file.refresh", "Refresh Sources", "CmdOrCtrl+R"),
+    ("File", "file.save", "Save Staged Target", "CmdOrCtrl+S"),
+    (
+        "Edit",
+        "edit.clearStaged",
+        "Clear Staged Changes",
+        "CmdOrCtrl+Shift+Backspace",
+    ),
+    ("Search", "search.toggle", "Toggle Search", "CmdOrCtrl+F"),
+    (
+        "Search",
+        "search.runContextual",
+        "Run Search Or Find",
+        "CmdOrCtrl+Enter",
+    ),
+    (
+        "View",
+        "view.togglePreferences",
+        "Toggle Preferences",
+        "CmdOrCtrl+,",
+    ),
+    (
+        "Workspace",
+        "workspace.focusFiles",
+        "Focus Files",
+        "CmdOrCtrl+1",
+    ),
+    ("Workspace", "workspace.nextTab", "Next Tab", "Ctrl+Tab"),
+    (
+        "Workspace",
+        "workspace.previousTab",
+        "Previous Tab",
+        "Ctrl+Shift+Tab",
+    ),
+    (
+        "Workspace",
+        "workspace.closeTab",
+        "Close Active Tab",
+        "CmdOrCtrl+W",
+    ),
+    ("Merge", "merge.copyToLeft", "Copy Entry To Left", "Alt+["),
+    ("Merge", "merge.copyToRight", "Copy Entry To Right", "Alt+]"),
+    (
+        "Merge",
+        "merge.takeAllToLeft",
+        "Take All Into Left",
+        "Alt+Shift+[",
+    ),
+    (
+        "Merge",
+        "merge.takeAllToRight",
+        "Take All Into Right",
+        "Alt+Shift+]",
+    ),
+    (
+        "Merge",
+        "merge.moveHunkToLeft",
+        "Move Hunk Into Left",
+        "CmdOrCtrl+Alt+[",
+    ),
+    (
+        "Merge",
+        "merge.moveHunkToRight",
+        "Move Hunk Into Right",
+        "CmdOrCtrl+Alt+]",
+    ),
+    (
+        "Help",
+        "help.showShortcuts",
+        "Keyboard Shortcuts",
+        "CmdOrCtrl+/",
+    ),
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum Side {
     Left,
     Right,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppActionPayload {
+    action_id: String,
 }
 
 impl Side {
@@ -374,7 +479,7 @@ fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Op
 }
 
 fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
-    use ldiff_core::{ComparePair, PairStatus};
+    use lcdiff_core::{ComparePair, PairStatus};
     let pairs = archive
         .entries()
         .map(|entry| {
@@ -998,10 +1103,181 @@ fn language_for_path(path: &str) -> &'static str {
     }
 }
 
+fn menu_item_for_action<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    action_id: &str,
+    label: &str,
+    shortcut: &str,
+) -> tauri::Result<tauri::menu::MenuItem<R>> {
+    MenuItemBuilder::with_id(action_id, label)
+        .accelerator(shortcut)
+        .build(manager)
+}
+
+fn custom_submenu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    group: &str,
+) -> tauri::Result<Submenu<R>> {
+    let mut submenu = SubmenuBuilder::new(manager, group);
+    for (_, action_id, label, shortcut) in MENU_ACTIONS
+        .iter()
+        .filter(|(action_group, _, _, _)| *action_group == group)
+    {
+        let item = menu_item_for_action(manager, action_id, label, shortcut)?;
+        submenu = submenu.item(&item);
+    }
+    submenu.build()
+}
+
+struct CloseWindowPlacement {
+    file: bool,
+    window: bool,
+}
+
+fn close_window_placement(target_os: &str) -> CloseWindowPlacement {
+    CloseWindowPlacement {
+        file: false,
+        window: target_os != "macos",
+    }
+}
+
+fn build_app_menu<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Menu<R>> {
+    let handle = app.handle();
+    let menu = Menu::new(handle)?;
+    let close_window = close_window_placement(std::env::consts::OS);
+    let package = app.package_info();
+    let about_metadata = AboutMetadata {
+        name: Some(package.name.clone()),
+        version: Some(package.version.to_string()),
+        copyright: app.config().bundle.copyright.clone(),
+        authors: app
+            .config()
+            .bundle
+            .publisher
+            .clone()
+            .map(|author| vec![author]),
+        ..Default::default()
+    };
+
+    #[cfg(target_os = "macos")]
+    menu.append(
+        &SubmenuBuilder::new(handle, &package.name)
+            .item(&PredefinedMenuItem::about(
+                handle,
+                None,
+                Some(about_metadata),
+            )?)
+            .separator()
+            .item(&PredefinedMenuItem::services(handle, None)?)
+            .separator()
+            .item(&PredefinedMenuItem::hide(handle, None)?)
+            .item(&PredefinedMenuItem::hide_others(handle, None)?)
+            .separator()
+            .item(&PredefinedMenuItem::quit(handle, None)?)
+            .build()?,
+    )?;
+
+    let mut file = SubmenuBuilder::new(handle, "File");
+    for (_, action_id, label, shortcut) in MENU_ACTIONS
+        .iter()
+        .filter(|(group, _, _, _)| *group == "File")
+    {
+        let item = MenuItemBuilder::with_id(*action_id, *label)
+            .accelerator(*shortcut)
+            .build(handle)?;
+        file = file.item(&item);
+    }
+    if close_window.file {
+        file = file
+            .separator()
+            .item(&PredefinedMenuItem::close_window(handle, None)?);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        file = file
+            .separator()
+            .item(&PredefinedMenuItem::quit(handle, None)?);
+    }
+    menu.append(&file.build()?)?;
+
+    let clear_staged = MENU_ACTIONS
+        .iter()
+        .find(|(_, action_id, _, _)| *action_id == "edit.clearStaged")
+        .expect("clear staged menu action");
+    let clear_staged = MenuItemBuilder::with_id(clear_staged.1, clear_staged.2)
+        .accelerator(clear_staged.3)
+        .build(handle)?;
+    menu.append(
+        &SubmenuBuilder::new(handle, "Edit")
+            .item(&PredefinedMenuItem::undo(handle, None)?)
+            .item(&PredefinedMenuItem::redo(handle, None)?)
+            .separator()
+            .item(&PredefinedMenuItem::cut(handle, None)?)
+            .item(&PredefinedMenuItem::copy(handle, None)?)
+            .item(&PredefinedMenuItem::paste(handle, None)?)
+            .item(&PredefinedMenuItem::select_all(handle, None)?)
+            .separator()
+            .item(&clear_staged)
+            .build()?,
+    )?;
+
+    menu.append(&custom_submenu(handle, "Search")?)?;
+
+    let preferences = MENU_ACTIONS
+        .iter()
+        .find(|(_, action_id, _, _)| *action_id == "view.togglePreferences")
+        .expect("preferences menu action");
+    let preferences = MenuItemBuilder::with_id(preferences.1, preferences.2)
+        .accelerator(preferences.3)
+        .build(handle)?;
+    menu.append(
+        &SubmenuBuilder::new(handle, "View")
+            .item(&preferences)
+            .separator()
+            .item(&PredefinedMenuItem::fullscreen(handle, None)?)
+            .build()?,
+    )?;
+
+    menu.append(&custom_submenu(handle, "Workspace")?)?;
+    menu.append(&custom_submenu(handle, "Merge")?)?;
+
+    let mut window = SubmenuBuilder::new(handle, "Window")
+        .item(&PredefinedMenuItem::minimize(handle, None)?)
+        .item(&PredefinedMenuItem::maximize(handle, None)?);
+    if close_window.window {
+        window = window
+            .separator()
+            .item(&PredefinedMenuItem::close_window(handle, None)?);
+    }
+    menu.append(&window.build()?)?;
+
+    let help_action = MENU_ACTIONS
+        .iter()
+        .find(|(group, _, _, _)| *group == "Help")
+        .expect("help menu action");
+    let help_item = menu_item_for_action(handle, help_action.1, help_action.2, help_action.3)?;
+    let help = SubmenuBuilder::new(handle, "Help").item(&help_item);
+    #[cfg(not(target_os = "macos"))]
+    let help = help.separator().item(&PredefinedMenuItem::about(
+        handle,
+        None,
+        Some(about_metadata),
+    )?);
+    menu.append(&help.build()?)?;
+
+    Ok(menu)
+}
+
+fn install_app_menu<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    app.set_menu(build_app_menu(app)?)?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            install_app_menu(app)?;
             let state = AppState::new(app.path().resource_dir().ok());
             let sidecar = Arc::clone(&state.sidecar);
             std::thread::spawn(move || {
@@ -1012,9 +1288,20 @@ fn main() {
             app.manage(Arc::new(Mutex::new(state)));
             Ok(())
         })
+        .on_menu_event(|app, event| {
+            let action_id = event.id().as_ref().to_owned();
+            if MENU_ACTIONS
+                .iter()
+                .any(|(_, known_id, _, _)| *known_id == action_id)
+                && let Err(error) = app.emit("app-action", AppActionPayload { action_id })
+            {
+                eprintln!("failed to emit app-action: {error}");
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             validate_path,
             platform_hints,
+            list_system_fonts,
             open_archive,
             compute_diff,
             compute_nested_diff,
@@ -1032,22 +1319,285 @@ fn main() {
             prefetch_siblings
         ])
         .run(tauri::generate_context!())
-        .expect("error while running LDiff");
+        .expect("error while running LCDiff");
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write, path::Path};
+    use std::{collections::HashSet, fs::File, io::Write, path::Path};
 
     use tempfile::tempdir;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::{
-        AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, class_source_path,
-        deep_search_hit, is_prefetch_sibling, language_for_path, platform_hints_from,
-        read_entry_preview, search_archive, validate_path,
+        AppActionPayload, AppState, MENU_ACTIONS, SearchHit, SearchHitKind, SearchOptions, Side,
+        SidecarClient, class_source_path, close_window_placement, deep_search_hit,
+        is_prefetch_sibling, language_for_path, platform_hints_from, read_entry_preview,
+        search_archive, validate_path,
     };
-    use ldiff_core::{Archive, DecompileEngine};
+    #[cfg(not(target_os = "macos"))]
+    use super::{build_app_menu, install_app_menu};
+    use lcdiff_core::{Archive, DecompileEngine};
+    #[cfg(not(target_os = "macos"))]
+    use tauri::Manager;
+
+    #[test]
+    fn menu_action_ids_are_unique() {
+        let ids = MENU_ACTIONS
+            .iter()
+            .map(|(_, action_id, _, _)| *action_id)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(ids.len(), MENU_ACTIONS.len());
+    }
+
+    #[test]
+    fn menu_action_accelerators_are_unique() {
+        let accelerators = MENU_ACTIONS
+            .iter()
+            .map(|(_, _, _, accelerator)| *accelerator)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(accelerators.len(), MENU_ACTIONS.len());
+    }
+
+    #[test]
+    fn menu_action_accelerators_are_accepted_by_tauri_builder() {
+        let app = tauri::test::mock_app();
+
+        for (_, action_id, label, accelerator) in MENU_ACTIONS {
+            tauri::menu::MenuItemBuilder::with_id(*action_id, *label)
+                .accelerator(*accelerator)
+                .build(&app)
+                .unwrap_or_else(|error| {
+                    panic!("invalid accelerator {accelerator} for {action_id}: {error}")
+                });
+        }
+    }
+
+    #[test]
+    fn menu_actions_include_expected_file_and_help_entries() {
+        assert_eq!(
+            &MENU_ACTIONS[..4],
+            [
+                ("File", "file.openLeftFile", "Open Left File", "CmdOrCtrl+O"),
+                (
+                    "File",
+                    "file.openLeftDirectory",
+                    "Open Left Directory",
+                    "CmdOrCtrl+Alt+O",
+                ),
+                (
+                    "File",
+                    "file.openRightFile",
+                    "Open Right File",
+                    "CmdOrCtrl+Shift+O",
+                ),
+                (
+                    "File",
+                    "file.openRightDirectory",
+                    "Open Right Directory",
+                    "CmdOrCtrl+Alt+Shift+O",
+                ),
+            ]
+        );
+        assert_eq!(
+            MENU_ACTIONS.last().copied(),
+            Some((
+                "Help",
+                "help.showShortcuts",
+                "Keyboard Shortcuts",
+                "CmdOrCtrl+/",
+            ))
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn constructed_non_macos_menu_owns_close_window_only_in_window() {
+        let app = tauri::test::mock_app();
+        let menu = build_app_menu(&app).unwrap();
+
+        assert_eq!(close_window_count(&menu, "File"), 0);
+        assert_eq!(close_window_count(&menu, "Window"), 1);
+    }
+
+    #[test]
+    fn macos_menu_policy_omits_predefined_close_window() {
+        let placement = close_window_placement("macos");
+
+        assert!(!placement.file);
+        assert!(!placement.window);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn close_window_count<R: tauri::Runtime>(menu: &tauri::menu::Menu<R>, group: &str) -> usize {
+        let items = menu.items().expect("top-level menu items");
+        let submenu = items
+            .iter()
+            .filter_map(|item| item.as_submenu())
+            .find(|submenu| submenu.text().is_ok_and(|text| text == group))
+            .unwrap_or_else(|| panic!("missing {group} submenu"));
+
+        submenu
+            .items()
+            .expect("submenu items")
+            .into_iter()
+            .filter_map(|item| item.as_predefined_menuitem().cloned())
+            .filter(|item| {
+                item.text().is_ok_and(|text| {
+                    matches!(text.replace('&', "").as_str(), "Close" | "Close Window")
+                })
+            })
+            .count()
+    }
+
+    #[test]
+    fn menu_actions_follow_expected_group_order() {
+        let groups = MENU_ACTIONS.iter().map(|(group, _, _, _)| *group).fold(
+            Vec::new(),
+            |mut groups, group| {
+                if groups.last() != Some(&group) {
+                    groups.push(group);
+                }
+                groups
+            },
+        );
+
+        assert_eq!(
+            groups,
+            [
+                "File",
+                "Edit",
+                "Search",
+                "View",
+                "Workspace",
+                "Merge",
+                "Help"
+            ]
+        );
+        for (group, expected_count) in [
+            ("File", 6),
+            ("Edit", 1),
+            ("Search", 2),
+            ("View", 1),
+            ("Workspace", 4),
+            ("Merge", 6),
+            ("Help", 1),
+        ] {
+            let actual_count = MENU_ACTIONS
+                .iter()
+                .filter(|(action_group, _, _, _)| *action_group == group)
+                .count();
+            assert_eq!(
+                actual_count, expected_count,
+                "unexpected {group} action count"
+            );
+        }
+    }
+
+    #[test]
+    fn menu_actions_match_frontend_action_definitions() {
+        let frontend = include_str!("../../src/lib/actions.ts");
+        let normalized_frontend = frontend
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+        let action_count = frontend.matches("group: \"").count();
+
+        assert_eq!(action_count, MENU_ACTIONS.len());
+        for (group, action_id, label, shortcut) in MENU_ACTIONS {
+            let signature = format!(
+                "{{id:\"{action_id}\",label:\"{label}\",group:\"{group}\",shortcut:\"{shortcut}\""
+            );
+            let normalized_signature = signature
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            assert!(
+                normalized_frontend.contains(&normalized_signature),
+                "frontend action definition does not match: {signature}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_action_payload_serializes_camel_case() {
+        let payload = AppActionPayload {
+            action_id: "search.toggle".to_owned(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            serde_json::json!({ "actionId": "search.toggle" })
+        );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn full_app_menu_builds_with_standard_and_custom_groups() {
+        let app = tauri::test::mock_app();
+
+        install_app_menu(&app).unwrap();
+        let labels = app
+            .menu()
+            .unwrap()
+            .items()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.as_submenu_unchecked().text().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            [
+                "File",
+                "Edit",
+                "Search",
+                "View",
+                "Workspace",
+                "Merge",
+                "Window",
+                "Help",
+            ]
+        );
+
+        let help_texts = menu_texts_for_group(&app.menu().unwrap(), "Help");
+        assert_eq!(help_texts.len(), 3);
+        assert_eq!(help_texts[0], "Keyboard Shortcuts");
+        assert_eq!(help_texts[1], "");
+        assert!(help_texts[2].contains("About"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn menu_texts_for_group<R: tauri::Runtime>(
+        menu: &tauri::menu::Menu<R>,
+        group: &str,
+    ) -> Vec<String> {
+        let items = menu.items().expect("top-level menu items");
+        let submenu = items
+            .iter()
+            .filter_map(|item| item.as_submenu())
+            .find(|submenu| submenu.text().is_ok_and(|text| text == group))
+            .unwrap_or_else(|| panic!("missing {group} submenu"));
+
+        submenu
+            .items()
+            .expect("submenu items")
+            .into_iter()
+            .map(|item| {
+                if let Some(menu_item) = item.as_menuitem() {
+                    menu_item.text().expect("menu item text")
+                } else if let Some(predefined) = item.as_predefined_menuitem() {
+                    predefined.text().expect("predefined menu item text")
+                } else if let Some(submenu) = item.as_submenu() {
+                    submenu.text().expect("submenu text")
+                } else {
+                    panic!("unsupported menu item type")
+                }
+            })
+            .collect()
+    }
 
     #[test]
     fn app_state_defaults_to_vineflower() {
@@ -1424,7 +1974,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(preview.kind, ldiff_core::EntryKind::Directory);
+        assert_eq!(preview.kind, lcdiff_core::EntryKind::Directory);
         assert_eq!(preview.language, "plaintext");
         assert_eq!(preview.details, None);
         assert_eq!(preview.content, "");

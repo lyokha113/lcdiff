@@ -14,6 +14,7 @@ function setup(overrides = {}) {
     onSearch: vi.fn(),
     onCancel: vi.fn(),
     onClear: vi.fn(),
+    onClose: vi.fn(),
     onIncludeSourceChange: vi.fn(),
     ...overrides,
   };
@@ -22,6 +23,13 @@ function setup(overrides = {}) {
 }
 
 describe("SearchBar", () => {
+  it("renders as a named contextual search surface", async () => {
+    const props = setup();
+    expect(screen.getByRole("search", { name: "Search files" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close search" }));
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
   it("shows Files index controls on the Files tab", async () => {
     const props = setup({ query: "needle" });
 

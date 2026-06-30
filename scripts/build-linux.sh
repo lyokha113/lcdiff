@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build LDiff on Linux (Ubuntu / Arch) end to end:
+# Build LCDiff on Linux (Ubuntu / Arch) end to end:
 #   1. install the GTK/WebKit system libraries Tauri v2 needs,
 #   2. assemble the JVM decompiler sidecar + bundled jlink runtime,
 #   3. build the desktop bundles (AppImage + deb by default).
@@ -11,7 +11,7 @@
 #   scripts/build-linux.sh                 # install deps, then build appimage,deb
 #   scripts/build-linux.sh --no-deps       # skip dependency install (deps already present)
 #   scripts/build-linux.sh --bundles appimage
-#   LDIFF_JLINK=/path/to/jdk17/bin/jlink scripts/build-linux.sh
+#   LCDIFF_JLINK=/path/to/jdk17/bin/jlink scripts/build-linux.sh
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -77,18 +77,23 @@ require node
 require npm
 require mvn
 
-JLINK="${LDIFF_JLINK:-jlink}"
+JLINK="${LCDIFF_JLINK:-jlink}"
 command -v "$JLINK" >/dev/null 2>&1 || {
-  printf 'jlink not found. Install a Java 17+ JDK or set LDIFF_JLINK.\n' >&2
+  printf 'jlink not found. Install a Java 17+ JDK or set LCDIFF_JLINK.\n' >&2
   exit 1
 }
 
 # --- 2. Frontend deps + sidecar resources ------------------------------------
-printf '==> npm install\n'
-npm --prefix "$ROOT" install
+printf '==> npm ci\n'
+npm --prefix "$ROOT" ci \
+  --fetch-retries=5 \
+  --fetch-retry-factor=2 \
+  --fetch-retry-mintimeout=20000 \
+  --fetch-retry-maxtimeout=180000 \
+  --fetch-timeout=600000
 
 printf '==> Assembling JVM sidecar + jlink runtime\n'
-LDIFF_JLINK="$JLINK" "$ROOT/scripts/assemble-sidecar-resources.sh"
+LCDIFF_JLINK="$JLINK" "$ROOT/scripts/assemble-sidecar-resources.sh"
 
 # --- 3. Build bundles ---------------------------------------------------------
 printf '==> Building Linux bundles: %s\n' "$BUNDLES"

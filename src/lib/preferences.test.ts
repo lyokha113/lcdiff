@@ -1,14 +1,44 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_THEME_ID, themeToCssVariables } from "@/lib/themes";
 import {
   applyPreferencesToRoot,
+  DEFAULT_EDITOR_FONT_FAMILY,
   DEFAULT_UI_PREFERENCES,
+  effectiveColorPattern,
   loadUiPreferences,
   mergeUiPreferences,
+  normalizeUiPreferences,
   saveUiPreferences,
+  SYSTEM_MONO_FONT_FAMILY,
+  SYSTEM_SANS_FONT_FAMILY,
   UI_PREFERENCES_STORAGE_KEY,
   type UiPreferences,
 } from "@/lib/preferences";
+
+function hexChannelToLinear(channel: string): number {
+  const value = Number.parseInt(channel, 16) / 255;
+  return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function relativeLuminance(hexColor: string): number {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hexColor);
+  if (!match) {
+    throw new Error(`Expected a six-digit hex color, received ${hexColor}`);
+  }
+  const [, red, green, blue] = match;
+  return (
+    0.2126 * hexChannelToLinear(red) +
+    0.7152 * hexChannelToLinear(green) +
+    0.0722 * hexChannelToLinear(blue)
+  );
+}
+
+function contrastRatio(firstColor: string, secondColor: string): number {
+  const firstLuminance = relativeLuminance(firstColor);
+  const secondLuminance = relativeLuminance(secondColor);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
 
 describe("UI preferences persistence", () => {
   beforeEach(() => {
@@ -31,101 +61,170 @@ describe("UI preferences persistence", () => {
     expect(preferences).not.toBe(DEFAULT_UI_PREFERENCES);
   });
 
-  it("merges persisted partial values with defaults", () => {
+  it("merges old persisted shape into the new Preferences contract", () => {
     localStorage.setItem(
       UI_PREFERENCES_STORAGE_KEY,
       JSON.stringify({
         appearance: { colorMode: "light", themeId: "github-light" },
+        typography: { editorFont: "systemMono", editorScale: 15 },
         editor: { wordWrap: "on" },
+        search: { includeSourceByDefault: true, resultGrouping: "side" },
       }),
     );
 
     expect(loadUiPreferences()).toEqual({
       ...DEFAULT_UI_PREFERENCES,
-      appearance: {
-        ...DEFAULT_UI_PREFERENCES.appearance,
-        colorMode: "light",
-        themeId: "github-light",
-      },
+      appearance: { colorPattern: "light" },
       editor: {
         ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "ui-monospace, monospace",
+        fontSize: 15,
         wordWrap: "on",
       },
+      misc: {
+        ...DEFAULT_UI_PREFERENCES.misc,
+        search: {
+          includeSourceByDefault: true,
+          resultGrouping: "side",
+        },
+      },
     });
   });
 
-  it("falls back to defaults for unknown enum values", () => {
+  it("falls back to defaults for unknown enum and invalid numeric values", () => {
     expect(
       mergeUiPreferences({
-        appearance: {
-          colorMode: "sepia",
-          accent: "orange",
-          density: "spacious",
+        appearance: { colorPattern: "sepia" },
+        editor: {
+          fontFamily: "",
+          fontSize: 99,
+          wordWrap: "sometimes",
+          lineNumbers: "maybe",
+          minimap: "huge",
         },
-        typography: {
-          editorScale: 20,
-          uiFont: "comicSans",
+        misc: {
+          search: { includeSourceByDefault: "yes", resultGrouping: "folder" },
+          decompiler: { engine: "fernflower", ignoreTrimWhitespace: "yes" },
+          save: { backupEnabled: "always" },
         },
       }),
-    ).toMatchObject({
-      appearance: {
-        colorMode: DEFAULT_UI_PREFERENCES.appearance.colorMode,
-        accent: DEFAULT_UI_PREFERENCES.appearance.accent,
-        density: DEFAULT_UI_PREFERENCES.appearance.density,
+    ).toEqual(DEFAULT_UI_PREFERENCES);
+  });
+
+  it("falls back when a selected font is unavailable", () => {
+    const preferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: "Missing Font",
+        },
       },
-      typography: {
-        editorScale: DEFAULT_UI_PREFERENCES.typography.editorScale,
-        uiFont: DEFAULT_UI_PREFERENCES.typography.uiFont,
-      },
-    });
+      ["Menlo", DEFAULT_EDITOR_FONT_FAMILY],
+    );
+
+    expect(preferences.editor.fontFamily).toBe(DEFAULT_EDITOR_FONT_FAMILY);
   });
 
-  it("falls back to default theme for unknown theme ids", () => {
-    expect(
-      mergeUiPreferences({
-        appearance: { themeId: "missing-theme" },
-      }).appearance.themeId,
-    ).toBe(DEFAULT_THEME_ID);
-  });
-
-  it("falls back to default theme when theme mode mismatches color mode", () => {
-    expect(
-      mergeUiPreferences({
-        appearance: { colorMode: "dark", themeId: "github-light" },
-      }).appearance.themeId,
-    ).toBe(DEFAULT_THEME_ID);
-  });
-
-  it("falls back to the light default theme when light mode has no persisted theme", () => {
-    expect(
-      mergeUiPreferences({
-        appearance: { colorMode: "light" },
-      }).appearance.themeId,
-    ).toBe("github-light");
-  });
-
-  it("falls back to the light default theme for unknown light theme ids", () => {
-    expect(
-      mergeUiPreferences({
-        appearance: { colorMode: "light", themeId: "missing-theme" },
-      }).appearance.themeId,
-    ).toBe("github-light");
-  });
-
-  it("falls back to the light default theme when persisted theme is dark", () => {
-    expect(
-      mergeUiPreferences({
-        appearance: { colorMode: "light", themeId: "github-dark" },
-      }).appearance.themeId,
-    ).toBe("github-light");
-  });
-
-  it("writes preferences JSON to localStorage", () => {
-    const preferences: UiPreferences = {
+  it("keeps a custom font when no allowlist is provided", () => {
+    const preferences = normalizeUiPreferences({
       ...DEFAULT_UI_PREFERENCES,
       editor: {
         ...DEFAULT_UI_PREFERENCES.editor,
-        wordWrap: "on",
+        fontFamily: "Menlo",
+      },
+    });
+
+    expect(preferences.editor.fontFamily).toBe("Menlo");
+  });
+
+  it("falls back to the default editor font when an empty allowlist is provided", () => {
+    const preferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: "Menlo",
+        },
+      },
+      [],
+    );
+
+    expect(preferences.editor.fontFamily).toBe(DEFAULT_EDITOR_FONT_FAMILY);
+  });
+
+  it("preserves built-in fallback font families even when not installed", () => {
+    const monospacePreferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: SYSTEM_MONO_FONT_FAMILY,
+        },
+      },
+      [],
+    );
+
+    const sansPreferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: SYSTEM_SANS_FONT_FAMILY,
+        },
+      },
+      [],
+    );
+
+    expect(monospacePreferences.editor.fontFamily).toBe(SYSTEM_MONO_FONT_FAMILY);
+    expect(sansPreferences.editor.fontFamily).toBe(SYSTEM_SANS_FONT_FAMILY);
+  });
+
+  it("keeps a selected font when it is available", () => {
+    const preferences = normalizeUiPreferences(
+      {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: {
+          ...DEFAULT_UI_PREFERENCES.editor,
+          fontFamily: "Menlo",
+        },
+      },
+      ["Menlo", DEFAULT_EDITOR_FONT_FAMILY],
+    );
+
+    expect(preferences.editor.fontFamily).toBe("Menlo");
+  });
+
+  it("trims font-family strings before normalization and persistence", () => {
+    const normalized = normalizeUiPreferences({
+      ...DEFAULT_UI_PREFERENCES,
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "  Menlo  ",
+      },
+    });
+
+    saveUiPreferences({
+      ...DEFAULT_UI_PREFERENCES,
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "  Menlo  ",
+      },
+    });
+
+    expect(normalized.editor.fontFamily).toBe("Menlo");
+    expect(JSON.parse(localStorage.getItem(UI_PREFERENCES_STORAGE_KEY) ?? "")).toMatchObject({
+      editor: { fontFamily: "Menlo" },
+    });
+  });
+
+  it("writes normalized preferences JSON to localStorage", () => {
+    const preferences: UiPreferences = {
+      ...DEFAULT_UI_PREFERENCES,
+      appearance: { colorPattern: "system" },
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontSize: 16,
       },
     };
 
@@ -136,99 +235,136 @@ describe("UI preferences persistence", () => {
     );
   });
 
-  it("normalizes mismatched theme mode before saving preferences", () => {
-    const preferences: UiPreferences = {
-      ...DEFAULT_UI_PREFERENCES,
-      appearance: {
-        ...DEFAULT_UI_PREFERENCES.appearance,
-        colorMode: "light",
-        themeId: "github-dark",
-      },
-    };
-
-    saveUiPreferences(preferences);
-
-    expect(JSON.parse(localStorage.getItem(UI_PREFERENCES_STORAGE_KEY) ?? "")).toMatchObject({
-      appearance: {
-        colorMode: "light",
-        themeId: "github-light",
-      },
-    });
+  it("computes effective color pattern from system preference", () => {
+    expect(effectiveColorPattern("light", true)).toBe("light");
+    expect(effectiveColorPattern("dark", false)).toBe("dark");
+    expect(effectiveColorPattern("system", true)).toBe("dark");
+    expect(effectiveColorPattern("system", false)).toBe("light");
   });
 
-  it("applies data attributes and CSS variables to the root element", () => {
+  it("applies only appearance variables to the app root", () => {
     const root = document.createElement("div");
+    root.dataset.colorMode = "dark";
+    root.dataset.theme = "github-dark";
+    root.dataset.density = "compact";
+    root.dataset.radius = "default";
+    root.dataset.motion = "standard";
+    root.dataset.iconLabels = "auto";
+    root.dataset.drawerWidth = "wide";
+    root.dataset.searchResultsDensity = "compact";
     const preferences: UiPreferences = {
       ...DEFAULT_UI_PREFERENCES,
-      appearance: {
-        ...DEFAULT_UI_PREFERENCES.appearance,
-        accent: "blue",
-        density: "comfortable",
-        radius: "soft",
-        motion: "reduced",
-        iconLabels: "always",
-      },
-      typography: {
-        ...DEFAULT_UI_PREFERENCES.typography,
-        uiFont: "system",
-        treeFont: "systemMono",
-        editorFont: "systemMono",
-        uiScale: 14,
-        treeScale: 13,
-        editorScale: 15,
-      },
-      layout: {
-        preferencesDrawerWidth: "wide",
-        searchResultsDensity: "comfortable",
+      appearance: { colorPattern: "light" },
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "Menlo",
+        fontSize: 18,
       },
     };
 
-    applyPreferencesToRoot(root, preferences);
+    applyPreferencesToRoot(root, preferences, false);
 
-    expect(root.dataset.colorMode).toBe("dark");
-    expect(root.dataset.theme).toBe(DEFAULT_THEME_ID);
-    expect(root.dataset.density).toBe("comfortable");
-    expect(root.dataset.radius).toBe("soft");
-    expect(root.dataset.motion).toBe("reduced");
-    expect(root.dataset.iconLabels).toBe("always");
-    expect(root.dataset.drawerWidth).toBe("wide");
-    expect(root.dataset.searchResultsDensity).toBe("comfortable");
-    expect(root.style.getPropertyValue("--primary")).toBe(
-      themeToCssVariables(DEFAULT_THEME_ID, "blue")["--primary"],
-    );
-    expect(root.style.getPropertyValue("--font-sans")).toBe(
-      "ui-sans-serif, system-ui, sans-serif",
-    );
-    expect(root.style.getPropertyValue("--font-tree")).toBe("ui-monospace, monospace");
-    expect(root.style.getPropertyValue("--font-mono")).toBe("ui-monospace, monospace");
-    expect(root.style.getPropertyValue("--ldiff-ui-font-size")).toBe("14px");
-    expect(root.style.getPropertyValue("--ldiff-tree-font-size")).toBe("13px");
-    expect(root.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
+    expect(root.dataset.colorPattern).toBe("light");
+    expect(root.dataset.effectiveColorPattern).toBe("light");
+    expect(root.dataset.colorMode).toBeUndefined();
+    expect(root.dataset.theme).toBeUndefined();
+    expect(root.dataset.density).toBeUndefined();
+    expect(root.dataset.radius).toBeUndefined();
+    expect(root.dataset.motion).toBeUndefined();
+    expect(root.dataset.iconLabels).toBeUndefined();
+    expect(root.dataset.drawerWidth).toBeUndefined();
+    expect(root.dataset.searchResultsDensity).toBeUndefined();
+    expect(root.style.getPropertyValue("--background")).not.toBe("");
+    expect(root.style.getPropertyValue("--font-mono")).toBe("");
+    expect(root.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
   });
 
-  it("normalizes mismatched theme mode before applying preferences to root", () => {
+  it("applies light appearance tokens with distinct drawer-safe surfaces", () => {
     const root = document.createElement("div");
-    const preferences: UiPreferences = {
-      ...DEFAULT_UI_PREFERENCES,
-      appearance: {
-        ...DEFAULT_UI_PREFERENCES.appearance,
-        colorMode: "light",
-        themeId: "github-dark",
-      },
-    };
 
-    applyPreferencesToRoot(root, preferences);
+    applyPreferencesToRoot(
+      root,
+      { ...DEFAULT_UI_PREFERENCES, appearance: { colorPattern: "light" } },
+      false,
+    );
 
-    expect(root.dataset.colorMode).toBe("light");
-    expect(root.dataset.theme).toBe("github-light");
-    expect(root.style.getPropertyValue("--background")).toBe(
-      themeToCssVariables("github-light", "brass")["--background"],
+    expect(root.dataset.effectiveColorPattern).toBe("light");
+    const background = root.style.getPropertyValue("--background");
+    const ink0 = root.style.getPropertyValue("--ink-0");
+    const ink1 = root.style.getPropertyValue("--ink-1");
+    const ink2 = root.style.getPropertyValue("--ink-2");
+    const popover = root.style.getPropertyValue("--popover");
+    const input = root.style.getPropertyValue("--input");
+    const line = root.style.getPropertyValue("--line");
+    const text0 = root.style.getPropertyValue("--text-0");
+    const text2 = root.style.getPropertyValue("--text-2");
+    const drawerSurface = root.style.getPropertyValue("--drawer-surface");
+    const drawerBorder = root.style.getPropertyValue("--drawer-border");
+    const drawerShadow = root.style.getPropertyValue("--drawer-shadow");
+    const preferenceControlBg = root.style.getPropertyValue("--preference-control-bg");
+    const preferenceControlBorder = root.style.getPropertyValue("--preference-control-border");
+
+    expect(background).not.toBe("");
+    expect(popover).not.toBe("");
+    expect(input).not.toBe("");
+    expect(ink0).not.toBe("");
+    expect(ink1).not.toBe("");
+    expect(ink2).not.toBe("");
+    expect(line).not.toBe("");
+    expect(text0).not.toBe("");
+    expect(text2).not.toBe("");
+    expect(drawerSurface).not.toBe("");
+    expect(drawerBorder).not.toBe("");
+    expect(drawerShadow).not.toBe("");
+    expect(preferenceControlBg).not.toBe("");
+    expect(preferenceControlBorder).not.toBe("");
+    expect(ink0).not.toBe(ink1);
+    expect(ink0).not.toBe(ink2);
+    expect(ink1).not.toBe(ink2);
+    expect(popover).not.toBe(background);
+    expect(input).not.toBe(background);
+    expect(popover).not.toBe(input);
+    expect(text0).not.toBe(text2);
+    expect(drawerSurface).not.toContain("transparent");
+    expect(drawerShadow).not.toContain("black 54%");
+    expect(preferenceControlBg).not.toBe(background);
+  });
+
+  it("keeps light accent tokens readable for small text use", () => {
+    const root = document.createElement("div");
+
+    applyPreferencesToRoot(
+      root,
+      { ...DEFAULT_UI_PREFERENCES, appearance: { colorPattern: "light" } },
+      false,
     );
-    expect(root.style.getPropertyValue("--background")).not.toBe(
-      themeToCssVariables("github-dark", "brass")["--background"],
-    );
-    expect(root.style.getPropertyValue("--background")).not.toBe(
-      themeToCssVariables(DEFAULT_THEME_ID, "brass")["--background"],
-    );
+
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--primary"),
+        root.style.getPropertyValue("--primary-foreground"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(root.style.getPropertyValue("--brass"), root.style.getPropertyValue("--ink-0")),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--brass-dim"),
+        root.style.getPropertyValue("--ink-0"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--text-0"),
+        root.style.getPropertyValue("--preference-control-bg"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(
+        root.style.getPropertyValue("--text-0"),
+        root.style.getPropertyValue("--drawer-surface"),
+      ),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });

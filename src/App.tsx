@@ -8,9 +8,7 @@ import {
   type CommitResult,
   type ComparePair,
   type DecorationRef,
-  DEFAULT_ENGINE,
   type DiffCodeEditor,
-  type Engine,
   type EntryKind,
   type EntryPreview,
   type Mode,
@@ -45,20 +43,43 @@ import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
+import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
-import { applyPreferencesToRoot, loadUiPreferences, saveUiPreferences } from "@/lib/preferences";
+import {
+  applyPreferencesToRoot,
+  effectiveColorPattern,
+  loadUiPreferences,
+  normalizeUiPreferences,
+  saveUiPreferences,
+} from "@/lib/preferences";
+import {
+  FALLBACK_SYSTEM_FONTS,
+  fontFamilies,
+  normalizeSystemFonts,
+  type SystemFont,
+} from "@/lib/system-fonts";
 import { searchContextForActiveTab, searchResultKey } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
 import { FileTree } from "@/components/FileTree";
 import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
+import { StatusBar } from "@/components/StatusBar";
 import {
   type HistoryEntry,
   clearHistory,
   loadHistory,
   recordSession,
 } from "@/lib/history";
+import {
+  dispatchAppAction,
+  getActionState,
+  isAppActionId,
+  shortcutBindings,
+  type AppActionContext,
+  type AppActionHandlers,
+} from "@/lib/actions";
+import { classifyFocusTarget, currentPlatform, matchShortcut } from "@/lib/shortcuts";
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -71,8 +92,15 @@ const MAX_DIFF_TABS = 10;
 const SIDE_PREFIX_RE = /^(left|right):/;
 const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
 
-// Keep in sync with EDITABLE_EXTENSIONS in crates/ldiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
+// Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
+
+type DiffLineChange = NonNullable<ReturnType<DiffCodeEditor["getLineChanges"]>>[number];
+
+type DiffNavigatorState = {
+  currentIndex: number;
+  total: number;
+};
 
 function applySearchLineHighlight(
   editor: CodeEditor | undefined,
@@ -100,6 +128,69 @@ function dropSideForPosition(mode: Mode, x: number, width: number): Side {
   return x < width / 2 ? "left" : "right";
 }
 
+function lineChangeRangeForSide(change: DiffLineChange, side: Side) {
+  const start =
+    side === "left"
+      ? change.originalStartLineNumber
+      : change.modifiedStartLineNumber;
+  const end =
+    side === "left"
+      ? change.originalEndLineNumber
+      : change.modifiedEndLineNumber;
+  return { start, end };
+}
+
+function hasChangedLinesForSide(change: DiffLineChange, side: Side) {
+  const { start, end } = lineChangeRangeForSide(change, side);
+  return start >= 1 && end >= start;
+}
+
+function oppositeSide(side: Side): Side {
+  return side === "left" ? "right" : "left";
+}
+
+function resolveDiffNavigationSide(change: DiffLineChange, preferredSide: Side): Side {
+  if (hasChangedLinesForSide(change, preferredSide)) return preferredSide;
+  const fallbackSide = oppositeSide(preferredSide);
+  if (hasChangedLinesForSide(change, fallbackSide)) return fallbackSide;
+  return preferredSide;
+}
+
+function revealLineForChange(change: DiffLineChange, side: Side, editor: CodeEditor) {
+  const { start, end } = lineChangeRangeForSide(change, side);
+  const modelLineCount = editor.getModel()?.getLineCount() ?? 0;
+  if (modelLineCount < 1) return undefined;
+  return Math.max(1, Math.min(start, modelLineCount));
+}
+
+function lineDistanceToChange(change: DiffLineChange, side: Side, line: number) {
+  const { start, end } = lineChangeRangeForSide(change, side);
+  const rangeStart = Math.max(1, start);
+  const rangeEnd = Math.max(rangeStart, end === 0 ? start : end);
+  if (line >= rangeStart && line <= rangeEnd) return 0;
+  if (line < rangeStart) return rangeStart - line;
+  return line - rangeEnd;
+}
+
+function currentDiffBlockIndex(
+  changes: DiffLineChange[],
+  side: Side,
+  cursorLine: number | undefined,
+) {
+  if (changes.length === 0) return -1;
+  if (cursorLine === undefined || cursorLine < 1) return 0;
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  changes.forEach((change, index) => {
+    const distance = lineDistanceToChange(change, side, cursorLine);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
 export function App() {
   const [paths, setPaths] = useState(emptyPaths);
   const [pathErrors, setPathErrors] = useState<Partial<Record<Side, string>>>({});
@@ -110,18 +201,25 @@ export function App() {
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
-  const [engine, setEngine] = useState<Engine>(DEFAULT_ENGINE);
+  const [treeExpandAllVersion, setTreeExpandAllVersion] = useState(0);
+  const [treeCollapseAllVersion, setTreeCollapseAllVersion] = useState(0);
   const [preferences, setPreferences] = useState(loadUiPreferences);
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
+  );
+  const [systemFonts, setSystemFonts] = useState<SystemFont[]>(FALLBACK_SYSTEM_FONTS);
+  const [fontStatus, setFontStatus] = useState<"idle" | "loading" | "ready" | "fallback">("idle");
+  const engine = preferences.misc.decompiler.engine;
   const [query, setQuery] = useState("");
-  const [includeSourceSearch, setIncludeSourceSearch] = useState(preferences.search.includeSourceByDefault);
+  const [includeSourceSearch, setIncludeSourceSearch] = useState(
+    preferences.misc.search.includeSourceByDefault,
+  );
   const [searchPaths, setSearchPaths] = useState<Set<string>>();
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedSearchResult, setSelectedSearchResult] = useState<SearchResult>();
   const [mode, setMode] = useState<Mode>("compare");
   const [view, setView] = useState<"splash" | "workspace">("splash");
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
-  const [backupEnabled, setBackupEnabled] = useState(false);
-  const [ignoreTrimWhitespace, setIgnoreTrimWhitespace] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("source");
   const [stagedTarget, setStagedTarget] = useState<Side>();
   const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
@@ -133,9 +231,14 @@ export function App() {
   const [suppressSignedWarningForFile, setSuppressSignedWarningForFile] = useState(false);
   const [signedWarningSuppressions, setSignedWarningSuppressions] = useState<Record<string, boolean>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"files" | string>("files");
   const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
+  const [diffNavigatorState, setDiffNavigatorState] = useState<DiffNavigatorState>({
+    currentIndex: -1,
+    total: 0,
+  });
   const appShellRef = useRef<HTMLElement>(null);
   const focusCounter = useRef(0);
   const openTabsCountRef = useRef(0);
@@ -144,19 +247,150 @@ export function App() {
   const cancelableSearchActiveRef = useRef(false);
   const editorRef = useRef<CodeEditor | undefined>(undefined);
   const diffEditorRef = useRef<DiffCodeEditor | undefined>(undefined);
+  const diffNavigatorFocusSideRef = useRef<Side>("right");
   const monacoRef = useRef<MonacoApi | undefined>(undefined);
+  const actionContextRef = useRef<AppActionContext | undefined>(undefined);
+  const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
+  const shortcutDialogOpenRef = useRef(shortcutDialogOpen);
+  const viewRef = useRef(view);
+  const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
   const rightSearchDecorations = useRef<string[]>([]);
+  const selectedRef = useRef<ComparePair | undefined>(selected);
+  const inspectRef = useRef(inspect);
+  const appliedEngineRef = useRef(engine);
+  const updateDiffNavigatorState = useCallback(() => {
+    const editor = diffEditorRef.current;
+    if (mode !== "compare" || !editor) {
+      setDiffNavigatorState({ currentIndex: -1, total: 0 });
+      return;
+    }
+    const changes = editor.getLineChanges() ?? [];
+    if (changes.length === 0) {
+      setDiffNavigatorState({ currentIndex: -1, total: 0 });
+      return;
+    }
+    const side = diffNavigatorFocusSideRef.current ?? "right";
+    const focusedEditor = side === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    const currentIndex = currentDiffBlockIndex(
+      changes,
+      side,
+      focusedEditor.getPosition()?.lineNumber,
+    );
+    setDiffNavigatorState({ currentIndex, total: changes.length });
+  }, [mode]);
   const handleEditorMount = useCallback<OnMount>((editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; }, []);
-  const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; }, []);
+  const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => {
+    diffEditorRef.current = editor;
+    monacoRef.current = monaco;
+    const original = editor.getOriginalEditor();
+    const modified = editor.getModifiedEditor();
+    const updateForSide = (side: Side) => {
+      diffNavigatorFocusSideRef.current = side;
+      updateDiffNavigatorState();
+    };
+    const disposables = [
+      editor.onDidUpdateDiff(updateDiffNavigatorState),
+      original.onDidChangeCursorPosition(() => updateForSide("left")),
+      modified.onDidChangeCursorPosition(() => updateForSide("right")),
+      original.onDidFocusEditorText(() => updateForSide("left")),
+      modified.onDidFocusEditorText(() => updateForSide("right")),
+    ];
+    updateDiffNavigatorState();
+    editor.onDidDispose(() => disposables.forEach((disposable) => disposable.dispose()));
+  }, [updateDiffNavigatorState]);
+  const availableFontFamilies = useMemo(
+    () => (fontStatus === "ready" ? fontFamilies(systemFonts) : undefined),
+    [fontStatus, systemFonts],
+  );
   useEffect(() => {
-    saveUiPreferences(preferences);
-    if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, preferences);
-  }, [preferences, view]);
+    const normalized = normalizeUiPreferences(preferences, availableFontFamilies);
+    if (normalized !== preferences && JSON.stringify(normalized) !== JSON.stringify(preferences)) {
+      setPreferences(normalized);
+      return;
+    }
+    saveUiPreferences(normalized);
+    applyPreferencesToRoot(document.documentElement, normalized, systemPrefersDark);
+    if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, normalized, systemPrefersDark);
+  }, [preferences, availableFontFamilies, systemPrefersDark, view]);
   useEffect(() => {
-    setIncludeSourceSearch(preferences.search.includeSourceByDefault);
-  }, [preferences.search.includeSourceByDefault]);
+    viewRef.current = view;
+  }, [view]);
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return;
+    const updateSystemPreference = () => setSystemPrefersDark(query.matches);
+    updateSystemPreference();
+    query.addEventListener("change", updateSystemPreference);
+    return () => query.removeEventListener("change", updateSystemPreference);
+  }, []);
+  useEffect(() => {
+    const updateLastFocusKind = (event: FocusEvent) => {
+      lastFocusKindRef.current = classifyFocusTarget(event.target);
+    };
+    document.addEventListener("focusin", updateLastFocusKind);
+    return () => document.removeEventListener("focusin", updateLastFocusKind);
+  }, []);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  useEffect(() => {
+    inspectRef.current = inspect;
+  }, [inspect]);
+  useEffect(() => {
+    setIncludeSourceSearch(preferences.misc.search.includeSourceByDefault);
+  }, [preferences.misc.search.includeSourceByDefault]);
+  useEffect(() => {
+    let cancelled = false;
+    const requestedEngine = engine;
+    const previousEngine = appliedEngineRef.current;
+    invoke("set_engine", { engine: requestedEngine })
+      .then(() => {
+        appliedEngineRef.current = requestedEngine;
+        const currentSelected = selectedRef.current;
+        if (!cancelled && currentSelected) void inspectRef.current(currentSelected, true);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setMessage(error instanceof Error ? error.message : String(error));
+        if (requestedEngine === previousEngine) return;
+        setPreferences((current) => {
+          if (current.misc.decompiler.engine !== requestedEngine) return current;
+          return {
+            ...current,
+            misc: {
+              ...current.misc,
+              decompiler: {
+                ...current.misc.decompiler,
+                engine: previousEngine,
+              },
+            },
+          };
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
+  const loadSystemFonts = useCallback(async () => {
+    if (fontStatus === "loading" || fontStatus === "ready") return;
+    setFontStatus("loading");
+    try {
+      const fonts = normalizeSystemFonts(await invoke<SystemFont[]>("list_system_fonts"));
+      setSystemFonts(fonts);
+      setFontStatus("ready");
+    } catch {
+      setSystemFonts(FALLBACK_SYSTEM_FONTS);
+      setFontStatus("fallback");
+    }
+  }, [fontStatus]);
+
+  const updateShortcutDialogOpen = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(shortcutDialogOpenRef.current) : next;
+    shortcutDialogOpenRef.current = resolved;
+    setShortcutDialogOpen(resolved);
+  }, []);
   const displayedPairs = useMemo<ComparePair[]>(
     () =>
       mode === "compare"
@@ -276,7 +510,7 @@ export function App() {
     window
       .onCloseRequested((event) => {
         event.preventDefault();
-        if (!globalThis.confirm("Discard unsaved changes and close LDiff?")) return;
+        if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
         void invoke("clear_staged").then(() => window.destroy());
       })
       .then((stop) => {
@@ -357,6 +591,18 @@ export function App() {
   }, [mode, preview.left?.content, preview.right?.content, selected?.path, selectedSearchResult]);
 
   useEffect(() => {
+    updateDiffNavigatorState();
+  }, [
+    activeTab,
+    mode,
+    preview.left?.content,
+    preview.right?.content,
+    selected?.path,
+    updateDiffNavigatorState,
+    viewMode,
+  ]);
+
+  useEffect(() => {
     if (activeTab === "files" || !selected) return;
     setOpenTabs((prev) =>
       prev.map((t) => (t.path === activeTab ? { ...t, pair: selected, preview, viewMode } : t)),
@@ -364,37 +610,45 @@ export function App() {
   }, [activeTab, selected, preview, viewMode]);
 
   async function browse(side: Side) {
-    const path = await chooseFile({
-      multiple: false,
-      // "All files" is the default so any file is selectable — the backend
-      // opens any file and auto-detects text vs binary. The other entries are
-      // convenience filters that narrow the dialog, not gates.
-      filters: [
-        { name: "All files", extensions: ["*"] },
-        {
-          name: "Text file",
-          extensions: [
-            "json", "xml", "properties", "toml", "sql", "txt", "text", "yaml", "yml",
-            "ini", "cfg", "conf", "config", "env", "md", "markdown", "rst", "csv", "tsv", "log",
-            "js", "jsx", "mjs", "cjs", "ts", "tsx", "html", "htm", "xhtml",
-            "css", "scss", "sass", "less", "java", "kt", "kts", "groovy", "gradle",
-            "rs", "go", "py", "rb", "php", "pl", "lua", "c", "h", "cpp", "hpp", "cc",
-            "cs", "swift", "scala", "dart", "sh", "bash", "zsh", "fish", "bat", "ps1",
-            "svg", "graphql", "gql", "proto", "mf", "plist", "tex", "vue", "svelte", "astro",
-          ],
-        },
-        { name: "JAR or ZIP archive", extensions: ["jar", "zip", "war", "ear"] },
-      ],
-    });
-    if (path) await openPath(side, path);
+    try {
+      const path = await chooseFile({
+        multiple: false,
+        // "All files" is the default so any file is selectable — the backend
+        // opens any file and auto-detects text vs binary. The other entries are
+        // convenience filters that narrow the dialog, not gates.
+        filters: [
+          { name: "All files", extensions: ["*"] },
+          {
+            name: "Text file",
+            extensions: [
+              "json", "xml", "properties", "toml", "sql", "txt", "text", "yaml", "yml",
+              "ini", "cfg", "conf", "config", "env", "md", "markdown", "rst", "csv", "tsv", "log",
+              "js", "jsx", "mjs", "cjs", "ts", "tsx", "html", "htm", "xhtml",
+              "css", "scss", "sass", "less", "java", "kt", "kts", "groovy", "gradle",
+              "rs", "go", "py", "rb", "php", "pl", "lua", "c", "h", "cpp", "hpp", "cc",
+              "cs", "swift", "scala", "dart", "sh", "bash", "zsh", "fish", "bat", "ps1",
+              "svg", "graphql", "gql", "proto", "mf", "plist", "tex", "vue", "svelte", "astro",
+            ],
+          },
+          { name: "JAR or ZIP archive", extensions: ["jar", "zip", "war", "ear"] },
+        ],
+      });
+      if (path) await openPath(side, path);
+    } catch (error) {
+      setMessage(`Open file picker failed: ${String(error)}`);
+    }
   }
 
   async function browseFolder(side: Side) {
-    const path = await chooseFile({
-      multiple: false,
-      directory: true,
-    });
-    if (path) await openPath(side, path);
+    try {
+      const path = await chooseFile({
+        multiple: false,
+        directory: true,
+      });
+      if (path) await openPath(side, path);
+    } catch (error) {
+      setMessage(`Open directory picker failed: ${String(error)}`);
+    }
   }
 
   function refreshSources() {
@@ -478,6 +732,22 @@ export function App() {
     setOpenTabs((prev) => prev.filter((t) => t.path !== path));
   }
 
+  function focusRelativeTab(direction: 1 | -1) {
+    if (openTabs.length === 0) return;
+    if (activeTab === "files") {
+      const target = direction > 0 ? openTabs[0] : openTabs.at(-1);
+      if (target) focusTab(target.path);
+      return;
+    }
+    const index = openTabs.findIndex((tab) => tab.path === activeTab);
+    const nextIndex = index < 0 ? 0 : (index + direction + openTabs.length) % openTabs.length;
+    focusTab(openTabs[nextIndex].path);
+  }
+
+  function closeActiveTab() {
+    if (activeTab !== "files") closeTab(activeTab);
+  }
+
   async function showBytecode() {
     const pair = selected;
     if (!pair) return;
@@ -505,12 +775,6 @@ export function App() {
     } catch (error) {
       setMessage(String(error));
     }
-  }
-
-  async function changeEngine(next: Engine) {
-    await invoke("set_engine", { engine: next });
-    setEngine(next);
-    if (selected) await inspect(selected, true);
   }
 
   function pickMode(next: Mode) {
@@ -729,6 +993,34 @@ export function App() {
     };
   }
 
+  function navigateDiffBlock(direction: 1 | -1) {
+    const editor = diffEditorRef.current;
+    if (mode !== "compare" || !editor) {
+      setDiffNavigatorState({ currentIndex: -1, total: 0 });
+      return;
+    }
+    const changes = editor.getLineChanges() ?? [];
+    if (changes.length === 0) {
+      setDiffNavigatorState({ currentIndex: -1, total: 0 });
+      return;
+    }
+    const side = diffNavigatorFocusSideRef.current ?? "right";
+    const focusedEditor = side === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    const currentIndex =
+      diffNavigatorState.currentIndex >= 0 && diffNavigatorState.currentIndex < changes.length
+        ? diffNavigatorState.currentIndex
+        : currentDiffBlockIndex(changes, side, focusedEditor.getPosition()?.lineNumber);
+    const targetIndex = (currentIndex + direction + changes.length) % changes.length;
+    const targetSide = resolveDiffNavigationSide(changes[targetIndex], side);
+    const targetEditor = targetSide === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
+    const targetLine = revealLineForChange(changes[targetIndex], targetSide, targetEditor);
+    if (targetLine !== undefined) {
+      targetEditor.setPosition({ lineNumber: targetLine, column: 1 });
+      targetEditor.revealLineInCenter(targetLine);
+    }
+    setDiffNavigatorState({ currentIndex: targetIndex, total: changes.length });
+  }
+
   async function takeAllTo(target: Side) {
     if (!isTextMerge || !selected) return;
     const ed = diffEditorRef.current;
@@ -911,25 +1203,20 @@ export function App() {
     if (!pair) return;
     if (!pairPassesTreeFilter(pair, treeFilter)) setTreeFilter("all");
     setSelectedSearchResult(result);
+    setSearchOpen(false);
     void inspect(pair);
-  }
-
-  if (view === "splash") {
-    return (
-      <SplashScreen
-        history={history}
-        now={Date.now()}
-        onPickMode={pickMode}
-        onOpenEntry={openEntry}
-        onClear={clearRecent}
-      />
-    );
   }
 
   const isFileMerge =
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
+  const backupEnabled = preferences.misc.save.backupEnabled;
+  const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
+  const activeColorPattern = effectiveColorPattern(
+    preferences.appearance.colorPattern,
+    systemPrefersDark,
+  );
 
   // Per-hunk merge (Take all / Move hunk, editable diff) applies to ANY compare
   // where both sides show the same entry as editable text — standalone plain
@@ -956,10 +1243,163 @@ export function App() {
   const leftLabel = baseName(archives.left?.path ?? paths.left) ?? "Left";
   const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
+  const hunkMerge = isTextMerge;
+
+  const actionContext = useMemo<AppActionContext>(() => ({
+    mode,
+    activeTab,
+    openTabs: openTabs.map((tab) => tab.path),
+    selectedPath: selected?.path,
+    selectedCanCopyLeft: mode === "compare" && !!selected?.right && selected.right.kind !== "directory",
+    selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
+    stagedTarget,
+    stagedCount: Object.keys(stagedEntries).length,
+    loadedSourceCount: Number(Boolean(archives.left)) + Number(Boolean(archives.right)),
+    hunkMerge: activeTab !== "files" && hunkMerge,
+    focusKind: classifyFocusTarget(document.activeElement),
+    shortcutDialogOpen,
+  }), [activeTab, archives.left, archives.right, hunkMerge, mode, openTabs, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
+
+  const actionHandlers = useMemo<AppActionHandlers>(() => ({
+    openLeftFile: () => void browse("left"),
+    openLeftDirectory: () => void browseFolder("left"),
+    openRightFile: () => void browse("right"),
+    openRightDirectory: () => void browseFolder("right"),
+    refresh: refreshSources,
+    save: () => stagedTarget && void save(stagedTarget),
+    clearStaged: () => void clearStaged(),
+    toggleSearch: () => setSearchOpen((open) => !open),
+    runContextualSearch: () => void (searchContext === "files" ? runSearch() : findInCurrentDiff()),
+    togglePreferences: () => setDrawerOpen((open) => !open),
+    toggleShortcutDialog: () => updateShortcutDialogOpen((open) => !open),
+    focusFiles: () => setActiveTab("files"),
+    nextTab: () => focusRelativeTab(1),
+    previousTab: () => focusRelativeTab(-1),
+    closeActiveTab,
+    copyToLeft: () => void copy("right", "left"),
+    copyToRight: () => void copy("left", "right"),
+    takeAllToLeft: () => void takeAllTo("left"),
+    takeAllToRight: () => void takeAllTo("right"),
+    moveHunkToLeft: () => void moveHunkTo("left"),
+    moveHunkToRight: () => void moveHunkTo("right"),
+    reportBlocked: setMessage,
+  }), [
+    browse,
+    browseFolder,
+    clearStaged,
+    closeActiveTab,
+    copy,
+    findInCurrentDiff,
+    focusRelativeTab,
+    moveHunkTo,
+    refreshSources,
+    runSearch,
+    save,
+    searchContext,
+    stagedTarget,
+    takeAllTo,
+    updateShortcutDialogOpen,
+  ]);
+
+  useEffect(() => {
+    actionContextRef.current = actionContext;
+  }, [actionContext]);
+
+  useEffect(() => {
+    actionHandlersRef.current = actionHandlers;
+  }, [actionHandlers]);
+
+  const dispatchRegisteredAction = useCallback(async (
+    actionId: Parameters<typeof dispatchAppAction>[0],
+    focusTarget: EventTarget | null | undefined,
+    focusKind = classifyFocusTarget(focusTarget),
+  ) => {
+    if (viewRef.current === "splash") return false;
+    const context = actionContextRef.current;
+    const handlers = actionHandlersRef.current;
+    if (!context || !handlers) return false;
+    return dispatchAppAction(actionId, {
+      ...context,
+      focusKind,
+      shortcutDialogOpen: shortcutDialogOpenRef.current,
+    }, handlers);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const actionId = matchShortcut(event, shortcutBindings());
+      if (!actionId) return;
+
+      if (viewRef.current === "splash") return;
+      const context = actionContextRef.current;
+      const handlers = actionHandlersRef.current;
+      if (!context || !handlers) return;
+      const focusedContext = {
+        ...context,
+        focusKind: classifyFocusTarget(event.target),
+        shortcutDialogOpen: shortcutDialogOpenRef.current,
+      };
+      const state = getActionState(actionId, focusedContext);
+      if (state.enabled || focusedContext.shortcutDialogOpen) {
+        event.preventDefault();
+      }
+      void dispatchAppAction(actionId, focusedContext, handlers);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dispatchRegisteredAction]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ actionId: string }>("app-action", (event) => {
+      const { actionId } = event.payload;
+      if (!isAppActionId(actionId)) return;
+      void dispatchRegisteredAction(actionId, document.activeElement, lastFocusKindRef.current);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      if (!disposed) setMessage(`Hotkey listener failed: ${String(error)}`);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [dispatchRegisteredAction]);
+
+  const diffNavigator = {
+    current: diffNavigatorState.total === 0 ? 0 : diffNavigatorState.currentIndex + 1,
+    total: diffNavigatorState.total,
+    canGoPrevious: diffNavigatorState.total > 0,
+    canGoNext: diffNavigatorState.total > 0,
+    onPrevious: () => navigateDiffBlock(-1),
+    onNext: () => navigateDiffBlock(1),
+  };
+
+  if (view === "splash") {
+    return (
+      <SplashScreen
+        history={history}
+        now={Date.now()}
+        onPickMode={pickMode}
+        onOpenEntry={openEntry}
+        onClear={clearRecent}
+        motion="standard"
+      />
+    );
+  }
 
   return (
     <TooltipProvider>
-    <main className="app-shell" ref={appShellRef}>
+    <main
+      className="app-shell"
+      ref={appShellRef}
+      aria-label={mode === "compare" ? "Comparison workspace" : "Source workspace"}
+    >
+      <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
@@ -987,18 +1427,28 @@ export function App() {
         onBrowseFolder={(side) => void browseFolder(side)}
       />
 
-      <SearchBar
-        open={searchOpen}
-        context={searchContext}
-        query={query}
-        includeSource={includeSourceSearch}
-        searching={searching}
-        onQueryChange={setQuery}
-        onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
-        onCancel={cancelDeepSearch}
-        onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
-        onIncludeSourceChange={setIncludeSourceSearch}
-      />
+      {searchOpen && (
+        <aside className="search-surface" aria-label="Search workspace">
+          <SearchBar
+            open
+            context={searchContext}
+            query={query}
+            includeSource={includeSourceSearch}
+            searching={searching}
+            onQueryChange={setQuery}
+            onSearch={searchContext === "files" ? runSearch : findInCurrentDiff}
+            onCancel={cancelDeepSearch}
+            onClear={() => void (searchContext === "files" ? clearSearchResults() : clearFind())}
+            onClose={() => setSearchOpen(false)}
+            onIncludeSourceChange={setIncludeSourceSearch}
+          />
+          <SearchResultsPanel
+            results={searchResults}
+            grouping={preferences.misc.search.resultGrouping}
+            onInspect={inspectSearchResult}
+          />
+        </aside>
+      )}
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
@@ -1008,12 +1458,24 @@ export function App() {
             mode={mode}
             tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
             treeFilter={treeFilter}
+            viewMode={viewMode}
+            canShowSource={!!selected}
+            canShowBytecode={pairHasClass(selected)}
             onSelectFiles={() => setActiveTab("files")}
             onSelectTab={(path) => focusTab(path)}
             onCloseTab={(path) => closeTab(path)}
             onFilterChange={setTreeFilter}
+            onExpandTree={() => setTreeExpandAllVersion((version) => version + 1)}
+            onCollapseTree={() => setTreeCollapseAllVersion((version) => version + 1)}
+            onShowSource={() => selected && void inspect(selected, true)}
+            onShowBytecode={showBytecode}
           />
-          <div className="workspace-tabpanels">
+          <div
+            className="workspace-tabpanels"
+            id="workspace-canvas"
+            role="region"
+            aria-label="Workspace canvas"
+          >
             <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
               <FileTree
                 visiblePairs={visiblePairs}
@@ -1024,6 +1486,8 @@ export function App() {
                 nestedPairs={nestedPairs}
                 leftLabel={leftLabel}
                 rightLabel={rightLabel}
+                expandAllVersion={treeExpandAllVersion}
+                collapseAllVersion={treeCollapseAllVersion}
                 onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                 onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
                 onCopy={(from, to, pair) => void copy(from, to, pair)}
@@ -1037,9 +1501,7 @@ export function App() {
                 selected={selected}
                 preview={preview}
                 preferences={preferences}
-                viewMode={viewMode}
-                canShowSource={!!selected}
-                canShowBytecode={pairHasClass(selected)}
+                effectiveColorPattern={activeColorPattern}
                 ignoreTrimWhitespace={ignoreTrimWhitespace}
                 onCopy={(from, to) => void copy(from, to)}
                 onEditorMount={handleEditorMount}
@@ -1053,8 +1515,7 @@ export function App() {
                 onDiffEditEither={(side, content) => void stageFileSide(side, content)}
                 onTakeAll={(t) => void takeAllTo(t)}
                 onMoveHunk={(t) => void moveHunkTo(t)}
-                onShowSource={() => selected && void inspect(selected, true)}
-                onShowBytecode={showBytecode}
+                diffNavigator={diffNavigator}
               />
             </div>
           </div>
@@ -1062,21 +1523,23 @@ export function App() {
         <ConfigDrawer
           open={drawerOpen}
           mode={mode}
-          engine={engine}
-          ignoreTrimWhitespace={ignoreTrimWhitespace}
-          backupEnabled={backupEnabled}
           preferences={preferences}
+          systemFonts={systemFonts}
+          fontStatus={fontStatus}
+          onLoadSystemFonts={loadSystemFonts}
           onPreferencesChange={setPreferences}
-          onEngineChange={(next) => void changeEngine(next)}
-          onIgnoreWhitespaceChange={setIgnoreTrimWhitespace}
-          onBackupEnabledChange={setBackupEnabled}
+          onClose={() => setDrawerOpen(false)}
         />
       </div>
-      <p className="message">{message}</p>
-      <SearchResultsPanel
-        results={searchResults}
-        grouping={preferences.search.resultGrouping}
-        onInspect={inspectSearchResult}
+      <StatusBar
+        message={message}
+        searching={searching}
+        pendingCount={Object.keys(stagedEntries).length}
+      />
+      <KeyboardShortcutsDialog
+        open={shortcutDialogOpen}
+        onOpenChange={updateShortcutDialogOpen}
+        platform={currentPlatform()}
       />
       <Dialog open={pendingOpen !== undefined} onOpenChange={(open) => !open && setPendingOpen(undefined)}>
         <DialogContent>

@@ -203,7 +203,7 @@ if (
   failures.push("src/App.tsx: source preview must ignore stale async inspect results");
 }
 
-const bytecodeBody = app.match(/async function showBytecode\(\) {([\s\S]*?)\n  async function changeEngine/)?.[1] ?? "";
+const bytecodeBody = app.match(/async function showBytecode\(\) {([\s\S]*?)\n  function pickMode/)?.[1] ?? "";
 if (
   !bytecodeBody.includes("const pair = selected;") ||
   !bytecodeBody.includes("const requestId = previewRequestId.current + 1;") ||

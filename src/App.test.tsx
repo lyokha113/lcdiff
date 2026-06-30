@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,6 +22,8 @@ const FILE_ENTRY = { path: "config.json", kind: "text" as const, uncompressedSiz
 let summarySourceKind: "file" | "archive" = "file";
 let deepSearchBlock: { promise: Promise<void> } | undefined;
 let deepSearchError: Error | undefined;
+let deferredAppActionListen: Promise<() => void> | undefined;
+let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
@@ -50,10 +52,15 @@ function entryPreview(side: "left" | "right") {
   };
 }
 
-const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "platform_hints":
       return { os: "linux", sessionType: null, wayland: false, dropHint: null };
+    case "list_system_fonts":
+      return [
+        { family: "Menlo", monospaceLikely: true },
+        { family: "Helvetica Neue", monospaceLikely: false },
+      ];
     case "validate_path":
       return (args?.raw as string) ?? "/tmp/config.json";
     case "open_archive":
@@ -86,12 +93,14 @@ const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     default:
       return undefined;
   }
-});
+};
+const invoke = vi.fn(defaultInvoke);
 
 // Deferred arrow: vi.mock factories are hoisted above the `invoke`/`chooseFile`
 // declarations, so reference them lazily to avoid a TDZ error at mock time.
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (cmd: string, args?: Record<string, unknown>) => invoke(cmd, args),
+  invoke: (cmd: string, args?: Record<string, unknown>) =>
+    (args === undefined ? invoke(cmd) : invoke(cmd, args)),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -100,12 +109,54 @@ vi.mock("@tauri-apps/api/window", () => ({
     destroy: vi.fn(),
   }),
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => vi.fn()) }));
+const listen = vi.fn((eventName: string, handler: unknown) => {
+  if (eventName === "app-action") {
+    appActionHandler = handler as typeof appActionHandler;
+  }
+  if (eventName === "app-action" && deferredAppActionListen) {
+    return deferredAppActionListen;
+  }
+  return Promise.resolve(vi.fn());
+});
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (eventName: string, handler: unknown) => listen(eventName, handler),
+}));
+
+type OpenDialogOptions = {
+  multiple?: boolean;
+  directory?: boolean;
+  filters?: Array<{ name: string; extensions: string[] }>;
+};
+
+const FILE_PICKER_OPTIONS: OpenDialogOptions = {
+  multiple: false,
+  filters: [
+    { name: "All files", extensions: ["*"] },
+    {
+      name: "Text file",
+      extensions: [
+        "json", "xml", "properties", "toml", "sql", "txt", "text", "yaml", "yml",
+        "ini", "cfg", "conf", "config", "env", "md", "markdown", "rst", "csv", "tsv", "log",
+        "js", "jsx", "mjs", "cjs", "ts", "tsx", "html", "htm", "xhtml",
+        "css", "scss", "sass", "less", "java", "kt", "kts", "groovy", "gradle",
+        "rs", "go", "py", "rb", "php", "pl", "lua", "c", "h", "cpp", "hpp", "cc",
+        "cs", "swift", "scala", "dart", "sh", "bash", "zsh", "fish", "bat", "ps1",
+        "svg", "graphql", "gql", "proto", "mf", "plist", "tex", "vue", "svelte", "astro",
+      ],
+    },
+    { name: "JAR or ZIP archive", extensions: ["jar", "zip", "war", "ear"] },
+  ],
+};
+
+const DIRECTORY_PICKER_OPTIONS: OpenDialogOptions = {
+  multiple: false,
+  directory: true,
+};
 
 // chooseFile (plugin-dialog `open`) returns a fixed path; openPath then drives
 // validate_path + open_archive.
-const chooseFile = vi.fn(async () => "/tmp/config.json");
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => chooseFile() }));
+const chooseFile = vi.fn(async (_options?: OpenDialogOptions): Promise<string | null> => "/tmp/config.json");
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (options?: OpenDialogOptions) => chooseFile(options) }));
 
 // Mutable buffers so setValue is observable and moveHunk has real text to chew.
 const LEFT_TEXT = '{\n  "v": 1\n}\n';
@@ -113,6 +164,9 @@ const RIGHT_TEXT = '{\n  "v": 2\n}\n';
 const buffers = { left: LEFT_TEXT, right: RIGHT_TEXT };
 const setOriginal = vi.fn((v: string) => { buffers.left = v; });
 const setModified = vi.fn((v: string) => { buffers.right = v; });
+const revealOriginal = vi.fn();
+const revealModified = vi.fn();
+let focusOriginalEditor: (() => void) | undefined;
 
 // Line changes the fake diff editor reports. Default: a modification on line 2
 // of both sides. Tests can override before render to exercise other hunk shapes
@@ -124,29 +178,38 @@ const MODIFY_LINE_2 = {
   modifiedEndLineNumber: 2,
 };
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
+let diffEditorMounted = false;
 
 function makeFakeDiffEditor() {
   // App's search-highlight effect calls deltaDecorations/revealLineInCenter on
   // each sub-editor whenever preview changes, so the fakes must expose them.
-  const subEditor = (buf: "left" | "right", set: typeof setOriginal) => ({
+  const subEditor = (buf: "left" | "right", set: typeof setOriginal, reveal: typeof revealOriginal) => ({
     getValue: () => buffers[buf],
     setValue: set,
     onDidBlurEditorText: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidFocusEditorText: vi.fn((handler: () => void) => {
+      if (buf === "left") focusOriginalEditor = handler;
+      return { dispose: vi.fn() };
+    }),
+    setPosition: vi.fn(),
     getPosition: () => ({ lineNumber: 2 }),
     getModel: () => ({
+      getLineCount: () => buffers[buf].split("\n").length,
       findMatches: vi.fn(() => [
         { range: { startLineNumber: 2 } },
       ]),
     }),
     deltaDecorations: vi.fn(() => []),
-    revealLineInCenter: vi.fn(),
+    revealLineInCenter: reveal,
   });
-  const original = subEditor("left", setOriginal);
-  const modified = subEditor("right", setModified);
+  const original = subEditor("left", setOriginal, revealOriginal);
+  const modified = subEditor("right", setModified, revealModified);
   return {
     getOriginalEditor: () => original,
     getModifiedEditor: () => modified,
     getLineChanges: () => lineChanges,
+    onDidUpdateDiff: vi.fn(() => ({ dispose: vi.fn() })),
     onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
     setModel: vi.fn(),
   };
@@ -163,18 +226,31 @@ vi.mock("@monaco-editor/react", () => ({
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: ({ onMount }: { onMount?: (e: unknown, m: unknown) => void }) => {
-    onMount?.(makeFakeDiffEditor(), {});
-    return <div data-testid="diff-editor" />;
+    if (!diffEditorMounted) {
+      diffEditorMounted = true;
+      queueMicrotask(() => onMount?.(makeFakeDiffEditor(), {}));
+    }
+    return <div className="monaco-editor" data-testid="diff-editor"><span data-testid="diff-editor-cell" /></div>;
   },
 }));
 
 // App must be imported AFTER the mocks are registered.
 import { App } from "@/App";
 
+function cmdOrCtrl(overrides: KeyboardEventInit = {}): KeyboardEventInit {
+  const mac = navigator.platform.toLowerCase().includes("mac");
+  return {
+    metaKey: mac,
+    ctrlKey: !mac,
+    ...overrides,
+  };
+}
+
 async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
   // Splash → Compare / Merge workspace.
   await user.click(screen.getByText("Compare / Merge"));
+  await user.click(screen.getByLabelText("Toggle search"));
 
   // Open the left source via its repick popover → Browse file.
   await user.click(screen.getByLabelText("Change left source"));
@@ -195,19 +271,167 @@ async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_entry", { side: "left", entryPath: "config.json" }));
 }
 
+async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
+  render(<App />);
+  await user.click(screen.getByText("Compare / Merge"));
+}
+
 describe("App file-merge wiring", () => {
   beforeEach(() => {
     invoke.mockClear();
+    invoke.mockImplementation(defaultInvoke);
     chooseFile.mockClear();
     setOriginal.mockClear();
     setModified.mockClear();
+    revealOriginal.mockClear();
+    revealModified.mockClear();
+    focusOriginalEditor = undefined;
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
     lineChanges = [MODIFY_LINE_2];
+    diffEditorMounted = false;
     summarySourceKind = "file";
     deepSearchBlock = undefined;
     deepSearchError = undefined;
+    deferredAppActionListen = undefined;
+    appActionHandler = undefined;
+    listen.mockClear();
+    Object.defineProperty(Element.prototype, "hasPointerCapture", {
+      configurable: true,
+      writable: true,
+      value: () => false,
+    });
+    Object.defineProperty(Element.prototype, "setPointerCapture", {
+      configurable: true,
+      writable: true,
+      value: () => undefined,
+    });
+    Object.defineProperty(Element.prototype, "releasePointerCapture", {
+      configurable: true,
+      writable: true,
+      value: () => undefined,
+    });
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: () => undefined,
+    });
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     localStorage.clear();
+  });
+
+  it("renders a landmark-based comparison workspace", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Workspace canvas" })).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+
+  it("shows the Source/Bytecode switch only on the active Diff tab", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1);
+
+    const viewSwitch = screen.getByRole("group", { name: "Diff view mode" });
+    expect(viewSwitch).toBeInTheDocument();
+    expect(viewSwitch).toContainElement(screen.getByRole("button", { name: "Show source" }));
+    expect(viewSwitch).toContainElement(screen.getByRole("button", { name: "Show bytecode" }));
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    expect(screen.queryByRole("group", { name: "Diff view mode" })).not.toBeInTheDocument();
+  });
+
+  it("renders pane-specific actions in Compare mode and removes them in View mode", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(screen.getByRole("group", { name: "Actions into left pane" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Actions into right pane" })).toBeInTheDocument();
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+      fireEvent.click(await screen.findByRole("option", { name: "View" }));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+
+    expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+  });
+
+  it("wires diff navigator state from Monaco line changes and reveals the next block", async () => {
+    const user = userEvent.setup();
+    lineChanges = [
+      MODIFY_LINE_2,
+      {
+        originalStartLineNumber: 3,
+        originalEndLineNumber: 3,
+        modifiedStartLineNumber: 3,
+        modifiedEndLineNumber: 3,
+      },
+    ];
+    await driveIntoFileCompare(user);
+
+    const navigator = await screen.findByRole("group", { name: "Diff block navigation" });
+    expect(navigator).toHaveTextContent("1/2");
+
+    revealModified.mockClear();
+    await user.click(screen.getByRole("button", { name: "Next diff block" }));
+
+    await waitFor(() => expect(revealModified).toHaveBeenCalledWith(3));
+    expect(navigator).toHaveTextContent("2/2");
+  });
+
+  it("reveals the original side for a left-only deletion with default right focus", async () => {
+    const user = userEvent.setup();
+    lineChanges = [
+      {
+        originalStartLineNumber: 2,
+        originalEndLineNumber: 2,
+        modifiedStartLineNumber: 2,
+        modifiedEndLineNumber: 0,
+      },
+    ];
+    await driveIntoFileCompare(user);
+
+    await screen.findByRole("group", { name: "Diff block navigation" });
+    revealOriginal.mockClear();
+    revealModified.mockClear();
+    await user.click(screen.getByRole("button", { name: "Next diff block" }));
+
+    await waitFor(() => expect(revealOriginal).toHaveBeenCalledWith(2));
+    expect(revealModified).not.toHaveBeenCalled();
+  });
+
+  it("reveals the modified side for a right-only insertion with left focus", async () => {
+    const user = userEvent.setup();
+    lineChanges = [
+      {
+        originalStartLineNumber: 2,
+        originalEndLineNumber: 0,
+        modifiedStartLineNumber: 2,
+        modifiedEndLineNumber: 2,
+      },
+    ];
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(focusOriginalEditor).toBeDefined());
+    act(() => focusOriginalEditor?.());
+
+    await screen.findByRole("group", { name: "Diff block navigation" });
+    revealOriginal.mockClear();
+    revealModified.mockClear();
+    await user.click(screen.getByRole("button", { name: "Next diff block" }));
+
+    await waitFor(() => expect(revealModified).toHaveBeenCalledWith(2));
+    expect(revealOriginal).not.toHaveBeenCalled();
   });
 
   it("Take all into right stages the left buffer onto the right", async () => {
@@ -227,21 +451,84 @@ describe("App file-merge wiring", () => {
     );
   });
 
-  it("applies persisted UI preferences to the app shell", async () => {
+  it("applies persisted Appearance preferences to the app shell", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
-      appearance: { density: "comfortable", radius: "soft", motion: "reduced" },
-      typography: { editorScale: 15 },
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "light" },
+      editor: { fontFamily: "Menlo", fontSize: 15 },
     }));
 
     render(<App />);
     await user.click(screen.getByText("Compare / Merge"));
 
     const shell = await screen.findByRole("main");
-    await waitFor(() => expect(shell.dataset.density).toBe("comfortable"));
-    expect(shell.dataset.radius).toBe("soft");
-    expect(shell.dataset.motion).toBe("reduced");
-    expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
+    await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
+    expect(shell.dataset.effectiveColorPattern).toBe("light");
+    expect(document.documentElement.dataset.effectiveColorPattern).toBe("light");
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("#edf2f7");
+    expect(shell.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
+  });
+
+  it("preserves a persisted installed font before fonts are loaded", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+      editor: { fontFamily: "Menlo", fontSize: 15 },
+    }));
+
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1));
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("lcdiff.uiPreferences.v1") ?? "{}").editor.fontFamily).toBe("Menlo"),
+    );
+
+    await user.click(screen.getByLabelText("Preferences"));
+    await user.click(screen.getByRole("button", { name: "Editor" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_system_fonts"));
+    await waitFor(() => expect(screen.getByLabelText("Editor font family")).toHaveTextContent("Menlo"));
+    await user.click(screen.getByLabelText("Close preferences"));
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1);
+  });
+
+  it("loads installed fonts when Editor preferences open", async () => {
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByLabelText("Preferences"));
+    await user.click(screen.getByRole("button", { name: "Editor" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_system_fonts"));
+    await user.click(screen.getByLabelText("Editor font family"));
+    expect(await screen.findByText(/Menlo/)).toBeInTheDocument();
+  });
+
+  it("rolls back the persisted decompiler engine when backend sync fails", async () => {
+    const user = userEvent.setup();
+    const engineError = new Error("CFR unavailable");
+    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "set_engine" && args?.engine === "cfr") throw engineError;
+      return undefined;
+    });
+
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_engine", { engine: "vineflower" }));
+
+    await user.click(screen.getByLabelText("Preferences"));
+    await user.click(screen.getByRole("button", { name: "Misc" }));
+    await user.click(screen.getByRole("button", { name: "Decompiler" }));
+    fireEvent.keyDown(screen.getByLabelText("Decompiler engine"), { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: "CFR" }));
+
+    await screen.findByText("CFR unavailable");
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("lcdiff.uiPreferences.v1") ?? "{}").misc.decompiler.engine).toBe(
+        "vineflower",
+      ),
+    );
+    expect(screen.getByLabelText("Decompiler engine")).toHaveTextContent("Vineflower");
   });
 
   it("runs Files index search with typed backend options on both compare sides", async () => {
@@ -397,6 +684,302 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByText("Current diff")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^find$/i })).toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+F toggles search open and closed", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    expect(await screen.findByPlaceholderText(/Search paths, text, constants/)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    await waitFor(() =>
+      expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument(),
+    );
+  });
+
+  it.each([
+    ["Cmd/Ctrl+O opens the left file picker", { key: "o", ...cmdOrCtrl() }, FILE_PICKER_OPTIONS, "left"],
+    ["Cmd/Ctrl+Alt+O opens the left directory picker", { key: "o", altKey: true, ...cmdOrCtrl() }, DIRECTORY_PICKER_OPTIONS, "left"],
+    ["Cmd/Ctrl+Shift+O opens the right file picker", { key: "o", shiftKey: true, ...cmdOrCtrl() }, FILE_PICKER_OPTIONS, "right"],
+    ["Cmd/Ctrl+Alt+Shift+O opens the right directory picker", { key: "o", altKey: true, shiftKey: true, ...cmdOrCtrl() }, DIRECTORY_PICKER_OPTIONS, "right"],
+  ] as const)("%s", async (_label, keyboardEvent, expectedOptions, expectedSide) => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    chooseFile.mockClear();
+    invoke.mockClear();
+
+    fireEvent.keyDown(window, keyboardEvent);
+
+    await waitFor(() => expect(chooseFile).toHaveBeenCalledTimes(1));
+    expect(chooseFile.mock.calls).toEqual([[expectedOptions]]);
+    await waitFor(() =>
+      expect(invoke.mock.calls.filter(([cmd]) => cmd === "open_archive")).toEqual([
+        ["open_archive", { path: "/tmp/config.json", side: expectedSide }],
+      ]),
+    );
+  });
+
+  it("blocks the right-directory shortcut in Decompile/View mode with the Compare-only message", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Decompile"));
+
+    chooseFile.mockClear();
+    fireEvent.keyDown(window, { key: "o", altKey: true, shiftKey: true, ...cmdOrCtrl() });
+
+    expect(await screen.findByText("Open right source is available only in Compare mode.")).toBeInTheDocument();
+    expect(chooseFile).not.toHaveBeenCalled();
+  });
+
+  it("does not open an archive when the picker is cancelled", async () => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    chooseFile.mockResolvedValueOnce(null);
+    invoke.mockClear();
+    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
+
+    await waitFor(() => expect(chooseFile).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("shows a stable message when the file picker rejects", async () => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    chooseFile.mockRejectedValueOnce(new Error("dialog unavailable"));
+    invoke.mockClear();
+    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
+
+    expect(await screen.findByText("Open file picker failed: Error: dialog unavailable")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("shows a stable message when the directory picker rejects", async () => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    chooseFile.mockRejectedValueOnce(new Error("dialog unavailable"));
+    invoke.mockClear();
+    fireEvent.keyDown(window, { key: "o", altKey: true, ...cmdOrCtrl() });
+
+    expect(await screen.findByText("Open directory picker failed: Error: dialog unavailable")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("Cmd/Ctrl+/ toggles the Keyboard Shortcuts dialog and Escape closes it", async () => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    fireEvent.keyDown(window, { key: "/", ...cmdOrCtrl() });
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Keyboard Shortcuts" })).not.toBeInTheDocument(),
+    );
+
+    fireEvent.keyDown(window, { key: "/", ...cmdOrCtrl() });
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "/", ...cmdOrCtrl() });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Keyboard Shortcuts" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("opens the Keyboard Shortcuts dialog from the native help action", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    await openCompareWorkspace(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "help.showShortcuts" } });
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+  });
+
+  it("blocks a same-tick native picker action after native help.showShortcuts opens the dialog", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    await openCompareWorkspace(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    chooseFile.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "help.showShortcuts" } });
+      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
+    });
+
+    expect(chooseFile).not.toHaveBeenCalled();
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+    expect(await screen.findByText("Close Keyboard Shortcuts before running another command.")).toBeInTheDocument();
+  });
+
+  it("prevents matching DOM shortcuts from opening pickers while the shortcut dialog is open", async () => {
+    const user = userEvent.setup();
+    await openCompareWorkspace(user);
+
+    fireEvent.keyDown(window, { key: "/", ...cmdOrCtrl() });
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+
+    chooseFile.mockClear();
+    const allowed = fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
+
+    expect(await screen.findByText("Close Keyboard Shortcuts before running another command.")).toBeInTheDocument();
+    expect(allowed).toBe(false);
+    expect(chooseFile).not.toHaveBeenCalled();
+  });
+
+  it("blocks native open-left-file actions while the shortcut dialog is open", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    await openCompareWorkspace(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    fireEvent.keyDown(window, { key: "/", ...cmdOrCtrl() });
+    expect(await screen.findByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+
+    chooseFile.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
+    });
+
+    expect(await screen.findByText("Close Keyboard Shortcuts before running another command.")).toBeInTheDocument();
+    expect(chooseFile).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" })).toBeInTheDocument();
+  });
+
+  it("ignores app shortcuts while the splash screen is active", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
+  });
+
+  it("Cmd/Ctrl+, toggles Preferences open", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
+    expect(await screen.findByLabelText("Preference categories")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: ",", ...cmdOrCtrl() });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("Cmd/Ctrl+S reports no staged changes when nothing is staged", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+
+    fireEvent.keyDown(window, { key: "s", ...cmdOrCtrl() });
+
+    expect(await screen.findByText("No staged changes to save.")).toBeInTheDocument();
+  });
+
+  it("blocks merge shortcuts while focus is inside Monaco", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    const allowed = fireEvent.keyDown(screen.getByTestId("diff-editor-cell"), {
+      key: "[",
+      altKey: true,
+      ...cmdOrCtrl(),
+    });
+
+    expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
+    expect(allowed).toBe(true);
+  });
+
+  it("navigates from Files to the open diff tab with keyboard shortcuts", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    expect(screen.getByText("Files index")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
+    expect(await screen.findByText("Current diff")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "1", ...cmdOrCtrl() });
+    expect(await screen.findByText("Files index")).toBeInTheDocument();
+  });
+
+  it("blocks hunk shortcuts while the Files tab is active", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    setModified.mockClear();
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    fireEvent.keyDown(window, { key: "}", altKey: true, shiftKey: true });
+
+    expect(await screen.findByText("Open an editable diff before taking all changes.")).toBeInTheDocument();
+    expect(setModified).not.toHaveBeenCalled();
+  });
+
+  it("blocks native merge actions using the last webview focus kind", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    fireEvent.focusIn(screen.getByTestId("diff-editor-cell"));
+    invoke.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "merge.copyToRight" } });
+    });
+
+    expect(await screen.findByText("Finish editing or leave the editor before running this shortcut.")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_copy")).toBe(false);
+  });
+
+  it("disposes native app-action listener when listen resolves after unmount", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    let resolveAppActionListen!: (stop: () => void) => void;
+    deferredAppActionListen = new Promise<() => void>((resolve) => { resolveAppActionListen = resolve; });
+    const stop = vi.fn();
+
+    const { unmount } = render(<App />);
+    await user.click(screen.getByText("Compare / Merge"));
+    await waitFor(() => expect(listen).toHaveBeenCalledWith("app-action", expect.any(Function)));
+
+    unmount();
+    resolveAppActionListen(stop);
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
   });
 
   it("Move hunk into left copies into left and removes from right (copy+delete)", async () => {

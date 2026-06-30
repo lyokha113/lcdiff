@@ -9,7 +9,7 @@ export interface HistoryEntry {
 
 export const HISTORY_LIMIT = 20;
 
-const STORAGE_KEY = "ldiff.history";
+const STORAGE_KEY = "lcdiff.history";
 
 export function entryKey(mode: Mode, paths: string[]): string {
   // JSON-encode so paths containing spaces can't collide across sessions.

@@ -7,11 +7,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INPUT_APP="${1:?usage: scripts/sign-macos-bundle.sh /path/to/LDiff.app [identity] [output.app]}"
+INPUT_APP="${1:?usage: scripts/sign-macos-bundle.sh /path/to/LCDiff.app [identity] [output.app]}"
 IDENTITY="${2:-${MACOS_SIGN_IDENTITY:--}}"
-OUTPUT_APP="${3:-${LDIFF_SIGNED_APP_OUT:-}}"
+OUTPUT_APP="${3:-${LCDIFF_SIGNED_APP_OUT:-}}"
 ENTITLEMENTS="${MACOS_ENTITLEMENTS:-$ROOT/src-tauri/Entitlements.plist}"
-STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ldiff-codesign.XXXXXX")"
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lcdiff-codesign.XXXXXX")"
 APP="$STAGING_DIR/$(basename "$INPUT_APP")"
 
 clean_bundle_xattrs() {

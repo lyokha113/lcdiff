@@ -1,11 +1,11 @@
 [workspace]
-members = ["crates/ldiff-core", "crates/ldiff-cli", "src-tauri"]
+members = ["crates/lcdiff-core", "crates/lcdiff-cli", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.2.0"
+version = "0.3.0"
 
 [workspace.dependencies]
 anyhow = "1.0"

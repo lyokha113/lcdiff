@@ -1,17 +1,17 @@
 # Architecture
 
-## LDiff Application Shape
+## LCDiff Application Shape
 
 ```text
 React + shadcn/ui + Tailwind v4 + Monaco desktop view
   -> Tauri IPC adapter
-    -> ldiff-core Rust domain/application crate
+    -> lcdiff-core Rust domain/application crate
       -> lazy ZIP/JAR reads and atomic rewrite
       -> length-prefixed JSON sidecar protocol
         -> bundled JVM service: Vineflower default, CFR alternate, ASM Textifier
 ```
 
-`ldiff-core` owns archive metadata, normalized entries, CRC diff, class
+`lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
 constant-pool search, staged changes, and save semantics. Frontend and CLI code
 are adapters. Decompiled Java is a view only and must never enter merge writes.
 
@@ -26,8 +26,10 @@ Dedicated deep-search and
 low-priority prefetch JVM workers share that cache without blocking interactive
 class navigation. The desktop view renders a hierarchical foldable file tree
 with per-node status, a multi-tab diff workspace (capped at 10 tabs with LRU
-eviction and per-tab view-mode/preview state), a Preferences drawer for appearance,
-typography, editor, search defaults, decompiler, and save options, contextual
+eviction and per-tab view-mode/preview state), a Preferences drawer organized
+into Appearance, Editor, and Misc sections, where Appearance controls
+Light/Dark/System color pattern, Editor controls Monaco-only font/display
+settings, and Misc groups Search, Decompiler, and Save defaults, contextual
 Files-index/current-diff search, and a startup splash while the sidecar warms. Nested archives
 (jar/zip/war/ear inside an archive) expand lazily through the
 `compute_nested_diff` command using the `parent!/inner` path separator, extract
@@ -52,6 +54,33 @@ the final `.app` into a verified UDZO DMG with an `Applications` symlink. Real
 Developer ID notarization, Windows Authenticode signing, Windows atomic replace,
 and Linux compositor drop behavior remain external gates in
 `docs/PLATFORM_VALIDATION.md`.
+
+## Frontend Interaction Zones
+
+The desktop shell is organized around the primary Compare workflow without
+moving archive or merge state into presentation components:
+
+```text
+command bar
+  -> source rail
+    -> Files/open-diff navigator
+      -> tree or Monaco workspace canvas
+        -> persistent status bar
+
+context overlays: search, preferences, pending changes, confirmations
+```
+
+`App.tsx` remains the orchestration owner for Tauri-facing state. `MenuBar`,
+`SourceChips`, `WorkspaceTabs`, `FileTree`, `DiffView`, `SearchBar`,
+`SearchResultsPanel`, `ConfigDrawer`, and `StatusBar` render state and emit typed
+intent callbacks. Search opens on demand and closes after result selection, so
+the contextual surface cannot block the Files navigator. View mode removes
+right-side and merge-only controls instead of disabling them.
+
+GSAP and `@gsap/react` are restricted to the startup composition. Normal
+workspace interactions use transform/opacity CSS transitions, and reduced
+motion suppresses nonessential animation. Geist and JetBrains Mono remain
+self-hosted so the desktop bundle renders offline.
 
 ## Generic Boundary Rules
 

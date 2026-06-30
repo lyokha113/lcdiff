@@ -1,406 +1,180 @@
-# LDiff
+# LCDiff
 
-**LDiff** is a Tauri desktop tool for inspecting, comparing, and staging merges
-between JAR/ZIP archives and folders. Decompiled Java is always read-only; a
-merge copies the original entry bytes, never the decompiled view.
+<p align="center">
+  <img src="src-tauri/icons/128x128@2x.png" width="96" alt="LCDiff app icon">
+</p>
 
-- **Inspect** — open a `.jar`, `.zip`, or folder and browse its entry tree with
-  lazy index/read, detected text languages, and binary size/CRC/SHA-256 detail.
-- **Compare** — CRC tree diff between two archives or folders with aligned diff
-  rows, Monaco source/bytecode diff, and text/hex preview.
-- **Merge** — stage original entry bytes from one side to the other, review
-  pending changes, then save atomically with an optional `.bak` backup.
-- **Decompile** — Vineflower source by default, CFR as an alternate engine, and
-  ASM bytecode through an isolated JVM sidecar that may degrade independently
-  when the JVM is absent.
+<p align="center">
+  <strong>Diff JARs without turning your brain into bytecode.</strong>
+</p>
 
-> This README has two parts. **[For Users](#for-users)** if you just want to
-> install and run LDiff. **[For Developers](#for-developers)** if you want to
-> build it from source or contribute.
+<p align="center">
+  Inspect, compare, search, decompile, and stage merges between
+  <strong>JAR/ZIP archives and folders</strong>. Decompiled Java is always a
+  read-only view; saved merges copy the original entry bytes.
+</p>
 
----
-
-# For Users
-
-> **Prebuilt downloads are available.** Grab the installer for your platform
-> from the [**Releases**](https://github.com/lyokha113/ldiff/releases/latest)
-> page — no toolchain or build step required. Prefer building from source? Skip
-> to [Build and run](#build-and-run).
-
-## Download and install (prebuilt)
-
-Each release ships an installer per platform plus a matching `install-*.sh`
-helper that places the app where your system expects it (so you don't copy
-files by hand).
-
-### macOS (Apple Silicon)
-
-1. Download `LDiff-<version>-aarch64.dmg` and `install-macos.sh` from the
-   [latest release](https://github.com/lyokha113/ldiff/releases/latest).
-2. Run the installer (both files in the same folder):
-
-   ```bash
-   bash install-macos.sh                 # copies LDiff.app to /Applications
-   LDIFF_LINK_CLI=1 bash install-macos.sh   # also adds an `ldiff` CLI launcher
-   ```
-
-   LDiff is **unsigned** (no Apple Developer ID), so the script clears the
-   Gatekeeper quarantine flag for you. Without it macOS reports the app as
-   "damaged". To do it by hand instead: drag `LDiff.app` to `/Applications`,
-   then `xattr -dr com.apple.quarantine /Applications/LDiff.app`.
-
-3. Launch from Spotlight/Launchpad, or `open -a LDiff`.
-
-### Linux (Ubuntu 22.04+ / glibc 2.35+)
-
-Two artifacts ship as GitHub release assets: a portable **AppImage** (runs on
-any recent distro) and a **`.deb`** (Debian/Ubuntu). Arch Linux users should
-install from AUR with `yay -S ldiff` (or `paru -S ldiff`). The
-`install-linux.sh` helper handles the GitHub release assets — pass it whichever
-you downloaded:
-
-```bash
-bash install-linux.sh LDiff_<version>_amd64.AppImage   # -> ~/.local/bin/ldiff + app menu entry
-bash install-linux.sh LDiff_<version>_amd64.deb        # -> system install via apt (sudo)
-```
-
-The AppImage path needs no root and adds an `ldiff` command plus a desktop
-entry. On Wayland, if drag-and-drop misbehaves, launch with
-`GDK_BACKEND=x11 ldiff`.
-
-> The GitHub Linux release is built for **x86_64**. Arch Linux uses the AUR
-> package instead. For ARM Linux, build from source (see [For
-> Developers](#building-and-packaging-linux)).
+<p align="center">
+  <a href="https://github.com/lyokha113/lcdiff/releases/latest">Download</a>
+  · <a href="#use-it">Use it</a>
+  · <a href="#install">Install</a>
+  · <a href="docs/DEVELOPMENT.md">Develop</a>
+  · <a href="docs/RELEASING.md">Release</a>
+</p>
 
 ---
 
-> The rest of this section is for running from source instead of a download.
+## What It Does
 
-## Prerequisites
+LCDiff is a desktop workbench for the annoying moment when two Java archives
+look almost the same, except one of them definitely contains the bad afternoon.
 
-Install these first (one-time setup):
+| Need | LCDiff gives you |
+| --- | --- |
+| "What's inside this thing?" | Lazy archive/folder tree, metadata, CRC/SHA-256, text preview, hex preview. |
+| "What changed?" | CRC tree diff, aligned rows, Monaco source/bytecode diff. |
+| "Where did that class/string go?" | Path search, text search, constant-pool search, and deep decompiled-source search. |
+| "Can I copy just this entry?" | Stage original bytes from left to right or right to left, review, then save atomically. |
+| "Is this decompiled code safe to merge?" | No. And LCDiff will not let you. Decompiled Java is a window, not a write path. |
 
-- **Rust** toolchain — <https://rustup.rs>
-- **Node.js 18+ / npm** — <https://nodejs.org>
-- **Java 17 JDK with `jlink`** (e.g. Temurin 17) — needed for the decompiler.
-- **Maven** — builds the decompiler sidecar.
-- **macOS only:** Xcode Command Line Tools (`xcode-select --install`).
+## Install
 
-Verify they are on your `PATH`:
+Grab the latest release from
+[GitHub Releases](https://github.com/lyokha113/lcdiff/releases/latest).
 
-```bash
-rustc --version
-node --version
-mvn --version
-jlink --version   # must report 17 or newer
-```
+### macOS
 
-## Get the source
+Download `LCDiff-<version>-aarch64.dmg`, open it, and install the app.
 
-```bash
-git clone https://github.com/lyokha113/ldiff.git
-cd ldiff
-```
-
-To update later, pull the latest and rebuild:
+LCDiff is currently unsigned. If macOS complains that the app is damaged, use
+the release helper:
 
 ```bash
-git pull
-npm install
-LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+bash install-macos.sh
 ```
 
-## Build and run
+### Ubuntu
+
+Use the artifact matching your Ubuntu LTS version. The builds are separated
+because GTK/WebKit desktop dependencies can drift between distro releases.
+
+| Ubuntu | Pick |
+| --- | --- |
+| 24.04 LTS | `ubuntu24.04-amd64` AppImage or `.deb` |
+| 26.04 LTS | `ubuntu26.04-amd64` AppImage or `.deb` |
 
 ```bash
-# 1. Install frontend dependencies
-npm install
-
-# 2. Build the JVM decompiler sidecar and its bundled runtime
-LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
-
-# 3. Launch the desktop app
-npm run tauri -- dev
+bash install-linux.sh LCDiff_<version>_amd64.AppImage
+bash install-linux.sh LCDiff_<version>_amd64.deb
 ```
 
-Step 2 is required for **Decompile** and **bytecode** views to work. If you skip
-it, LDiff still opens, inspects, diffs, and merges archives — only the JVM-backed
-decompiler degrades. Run it once; re-run only after pulling sidecar changes.
-
-`npm run tauri -- dev` opens LDiff in a native window with hot reload. The first
-run compiles the Rust host, so it takes a few minutes; later launches are fast.
-
-### Want a standalone app you can double-click?
-
-Build a bundle for your platform instead of running in dev mode:
+### Arch Linux
 
 ```bash
-npm run tauri -- build --bundles app    # macOS .app
+yay -S lcdiff
 ```
 
-The output lands under `target/<...>/bundle/`. Full per-platform packaging,
-signing, and notarization steps are in **[For Developers](#building-and-packaging-macos)**.
+`paru -S lcdiff` works too.
 
-On Wayland (Linux), Browse and path input are the most reliable ways to open
-files. If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
+## Use It
 
-## Using LDiff
+### 1. Open Something Suspicious
 
-1. **Open** — use **Browse**, paste a path, or drag a `.jar` / `.zip` / folder
-   onto a panel.
-2. **Inspect (Single mode)** — click an entry to preview decompiled source,
-   bytecode, or a text/hex view. Java sources are read-only.
-3. **Compare mode** — open a second archive/folder on the right; matching entries
-   align and changed rows are highlighted with a CRC tree diff.
-4. **Search** — fast path/text/constant-pool search across the open source in
-   Single mode or both sides in Compare mode, plus an opt-in deep decompiled
-   source search with clickable results.
-5. **Merge** — use the arrow buttons or row context menu to stage original bytes
-   from one side to the other. Pending changes show a badge until you save.
-6. **Save** — writes atomically. Enable the backup option to keep a `.bak`.
-   LDiff warns before saving over a signed JAR and before discarding staged
-   changes.
+Drop in a `.jar`, `.zip`, or folder. Use Browse if drag-and-drop is having a
+Wayland day.
 
----
+In **Single** mode, LCDiff is an archive inspector:
 
-# For Developers
+- browse entries without loading the whole archive into the UI;
+- preview Java source, bytecode, text, binary metadata, and hex;
+- switch decompiler engine between Vineflower and CFR;
+- inspect folders with the same mental model as archives.
 
-Everything below is for building LDiff from source and contributing.
+### 2. Compare Two Things That Claim To Be The Same
 
-## Architecture
+Switch to **Compare**, load a left and right source, then let the tree tell the
+truth.
 
-```text
-React + shadcn/ui + Tailwind + Monaco   (view + intent emitter)
-        |  Tauri IPC
-Rust src-tauri  (commands, async adapters)
-        |
-Rust ldiff-core  (archive state, staged bytes, CRC diff, search, save)
-        |  framed stdio
-JVM decompiler sidecar  (Vineflower default / CFR / ASM, jlink Java 17)
-```
+- Added, removed, and changed entries are grouped by status.
+- Matching files open as source or bytecode diffs.
+- Binary entries still show size, CRC, SHA-256, and hex previews.
+- Nested archives expand lazily when you ask for them.
 
-The frontend never owns bytes. Rust owns archive state, staged changes, and the
-atomic save path. Decompilation lives behind the sidecar boundary and may
-degrade independently when the JVM sidecar is absent. See
-`docs/ARCHITECTURE.md` for the boundary rules.
+### 3. Search Like You Mean It
 
-LDiff is built from four layers:
+Use search from the Files workspace or inside an open diff.
 
-- **Rust `ldiff-core`** — validated open for JAR/ZIP files and folders, lazy
-  index/read, CRC tree diff, normalized-path duplicate rejection, constant-pool
-  search, text search, staged copy, signed-JAR detection, atomic archive save,
-  folder target copy, and `.bak` backup.
-- **Rust `ldiff-cli`** — headless `list`, `diff`, `read`, `search`, and `copy`
-  smoke adapter over `ldiff-core`.
-- **Tauri + React shell** — shadcn/ui + Tailwind v4 + Monaco UI with native
-  picker, file drop, resizable tree/editor panels, context-menu merge actions,
-  staged copy, signed-save confirmation, and async adapters for
-  ZIP/folder/decompiler long operations.
-- **JVM decompiler sidecar** — Vineflower source by default, CFR source as an
-  alternate engine, and ASM bytecode over framed stdio with a versioned LRU
-  cache and a bundled Java 17 jlink JRE.
+- Fast path and text search for the loaded source.
+- Constant-pool search for class references and strings.
+- Optional deep decompiled-source search when the surface answer is not enough.
+- Clickable results jump straight to the matching entry or diff tab.
 
-## Repository Layout
+### 4. Stage A Merge Without Lying To Yourself
 
-```text
-ldiff/
-  crates/
-    ldiff-core/   Rust archive engine (open, diff, search, stage, save)
-    ldiff-cli/    headless smoke adapter over ldiff-core
-  src-tauri/      Tauri v2 host: IPC commands, bundle config, capabilities
-  src/            React + Monaco frontend (App.tsx, components, lib)
-  sidecar/        JVM decompiler (Maven, CFR/Vineflower/ASM)
-  scripts/        build, sign, package, and verification scripts
-  platform-validation/  per-platform distribution evidence reports
-  docs/           product documentation
-```
+Use row actions or context menus to copy entries between sides.
 
-## Prerequisites
+LCDiff stages changes first. You can inspect the pending list, clear mistakes,
+and only then save. The save path is atomic and can keep a `.bak` backup.
 
-Current build targets are **Linux** (Ubuntu / Arch) and **macOS**.
+Important contract: LCDiff merges original entry bytes. It never writes the
+decompiled Java view back into your archive.
 
-- **Rust** toolchain with the target you intend to build
-  (`aarch64-apple-darwin` is the primary macOS target).
-- **Node.js / npm** for the frontend and verifier scripts.
-- **Java 17 JDK** with `jlink` for the decompiler sidecar and bundled runtime.
-- **Maven** to build the sidecar jar.
-- **Linux:** GTK 3 + WebKit2GTK 4.1 system libraries. `scripts/build-linux.sh`
-  installs them for you (apt or pacman) — see
-  [Building and Packaging (Linux)](#building-and-packaging-linux).
-- **macOS only:** Xcode Command Line Tools (`codesign`, `hdiutil`, `xcrun`,
-  `ditto`) for signing, packaging, and verification.
+### 5. Save With Guard Rails
 
-## Getting Started
+Before writing, LCDiff warns when:
 
-Install dependencies and run the desktop app in development mode:
+- staged changes would be discarded;
+- the target is a signed JAR;
+- a backup option affects the output path.
 
-```bash
-npm install
-npm run tauri -- dev
-```
+The app is built for careful archive surgery, not speedrunning regret.
 
-The headless Rust CLI is useful for quick checks without the desktop shell:
+## Shortcuts
 
-```bash
-cargo run -p ldiff-cli -- list path/to/archive.jar
-cargo run -p ldiff-cli -- diff path/to/left.jar path/to/right.jar
-```
+`Cmd` on macOS and `Ctrl` on Linux are used for command-style shortcuts.
 
-## Developer Checks
+| Action | Shortcut |
+| --- | --- |
+| Open left/source file | `Cmd/Ctrl+O` |
+| Open left/source directory | `Cmd/Ctrl+Alt+O` |
+| Open right file | `Cmd/Ctrl+Shift+O` |
+| Open right directory | `Cmd/Ctrl+Alt+Shift+O` |
+| Search | `Cmd/Ctrl+F` |
+| Save staged target | `Cmd/Ctrl+S` |
+| Preferences | `Cmd/Ctrl+,` |
+| Keyboard shortcuts | `Cmd/Ctrl+/` |
+| Next tab | `Ctrl+Tab` |
+| Previous tab | `Ctrl+Shift+Tab` |
+| Close active tab | `Cmd/Ctrl+W` |
+| Copy entry to left | `Alt+[` |
+| Copy entry to right | `Alt+]` |
 
-Run these before sending changes. They mirror what CI enforces.
+The full shortcut reference lives inside the app.
 
-```bash
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-npm run verify:all
-npm run verify:frontend-render
-```
+## Notes For Humans
 
-- `npm run verify:all` runs the frontend build plus the release, packaging, CI,
-  frontend-invariant, frontend-render, and docs verifiers.
-- `npm run verify:frontend-render` boots the Vite shell under Playwright and
-  fails on any browser page error.
+- Java source views are read-only by design.
+- Bytecode/decompile views need the bundled JVM sidecar. Release builds include
+  it.
+- On Linux Wayland, Browse and path input are the most reliable open paths. If
+  drag-and-drop misbehaves, launch with `GDK_BACKEND=x11 lcdiff`.
+- AppImage install does not need root. `.deb` install does.
+- Arch uses the AUR package, not a GitHub Linux bundle.
 
-Build the JVM sidecar and assemble its bundled resources:
+## Developers
 
-```bash
-mvn -f sidecar/pom.xml clean package -DskipTests
-LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
-  scripts/assemble-sidecar-resources.sh
-scripts/test-sidecar-smoke.sh
-```
+Developer setup, architecture notes, checks, source builds, Docker Linux matrix,
+macOS signing/notarization order, and release packaging live in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-## Building and Packaging (Linux)
+Useful deep links:
 
-Build on the target Linux machine — Linux bundles cannot be cross-built from
-macOS. One script installs the GTK/WebKit deps, assembles the sidecar, and
-builds the GitHub release bundles on Ubuntu or Arch:
+- [Architecture](docs/ARCHITECTURE.md)
+- [Development](docs/DEVELOPMENT.md)
+- [macOS operations](docs/OPERATIONS_MACOS.md)
+- [Platform validation](docs/PLATFORM_VALIDATION.md)
+- [Releasing](docs/RELEASING.md)
 
-```bash
-scripts/build-linux.sh                 # apt or pacman deps, then AppImage + deb
-scripts/build-linux.sh --no-deps       # skip dep install if already present
-scripts/build-linux.sh --bundles appimage
-```
+## License
 
-System dependencies it installs:
-
-- **Ubuntu/Debian (apt):** `build-essential curl wget file libwebkit2gtk-4.1-dev
-  libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
-  patchelf`.
-- **Arch (pacman):** `base-devel curl wget file webkit2gtk-4.1 gtk3
-  libappindicator-gtk3 librsvg xdotool openssl patchelf`.
-
-Bundles land under `target/release/bundle/` (`appimage/*.AppImage`, `deb/*.deb`).
-The **AppImage** is the portable artifact for both distros; the `.deb` targets
-Debian/Ubuntu. Arch users get the AUR package instead of a GitHub release
-bundle.
-
-### Cross-building Linux bundles from macOS (Docker)
-
-Linux bundles cannot be cross-built natively from macOS, but you can build them
-in an Ubuntu container with every dependency baked in:
-
-```bash
-docker/build-linux-docker.sh                 # host arch (arm64 on Apple Silicon)
-docker/build-linux-docker.sh --arch amd64    # x86_64 bundle (the release target)
-docker/build-linux-docker.sh --arch amd64 --bundles appimage,deb
-```
-
-The wrapper runs `scripts/build-linux.sh --no-deps` inside the image, builds a
-Linux jlink JRE in-container (so the bundled runtime has the right arch), and
-keeps your host `node_modules/` and `target/` untouched via named volumes.
-`docker/run-linux-docker.sh` launches the built AppImage headlessly under Xvfb
-and screenshots it to prove the GUI renders. The full release flow is in
-[`docs/RELEASING.md`](docs/RELEASING.md).
-
-On Wayland, prefer Browse and path input to open files; if
-drag-and-drop misbehaves, relaunch under XWayland with
-`LDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LDiff`.
-
-Linux builds are unsigned; there is no Linux code-signing step.
-
-## Building and Packaging (macOS)
-
-The primary local target is `aarch64-apple-darwin`. Build a debug app bundle:
-
-```bash
-npm run tauri -- build --debug --bundles app
-```
-
-Intel macOS builds require `LDIFF_JLINK_X86_64_APPLE_DARWIN` to point at an
-x86_64 JDK/jlink.
-
-Sign, notarize, and package the bundle **in this order** (signing first,
-notarization second, DMG packaging last):
-
-```bash
-scripts/sign-macos-bundle.sh \
-  "$PWD/target/debug/bundle/macos/LDiff.app" \
-  - \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app"
-
-APPLE_ID=you@example.com \
-APPLE_TEAM_ID=TEAMID1234 \
-APPLE_APP_PASSWORD=app-specific-password \
-  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LDiff-signed.app"
-
-scripts/package-macos-dmg.sh \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app" \
-  "$PWD/target/debug/bundle/dmg/LDiff-signed.dmg"
-
-scripts/verify-macos-distribution.sh --skip-install
-```
-
-Developer ID notarization requires Apple certificate and notary credentials;
-without them, local validation uses ad-hoc signing and records notarization as
-skipped. The full macOS operator runbook is `docs/OPERATIONS_MACOS.md`.
-
-## Platform Validation (optional)
-
-Validation is **not required** for the current Linux + macOS build focus —
-`npm run verify:all` plus the build commands above are enough. The optional
-distribution runner writes evidence reports under `platform-validation/`; the
-latest local arm64 report is
-`platform-validation/macos-distribution-aarch64-apple-darwin-20260606T051217Z.md`.
-
-```bash
-scripts/verify-macos-distribution.sh --skip-install
-```
-
-The Windows and Linux display-matrix gates are documented in
-`docs/PLATFORM_VALIDATION.md` for when those targets come back into scope.
-
-## Release Signing Secrets
-
-Optional, only for signed/notarized **macOS** release builds (Linux bundles are
-unsigned):
-
-- `MACOS_CERTIFICATE_BASE64` — base64-encoded Developer ID Application `.p12`.
-- `MACOS_CERTIFICATE_PASSWORD` — password for that `.p12`.
-- `MACOS_KEYCHAIN_PASSWORD` — temporary CI keychain password.
-- `MACOS_SIGN_IDENTITY` — Developer ID Application identity name.
-- `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD` — `notarytool` credentials.
-
-## Documentation Map
-
-Product and build references:
-
-- `docs/ARCHITECTURE.md` — application shape and boundary rules.
-- `docs/LDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
-- `docs/LDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
-- `docs/PLATFORM_VALIDATION.md` — external platform validation gates.
-- `docs/OPERATIONS_MACOS.md` — macOS sign / notarize / package / verify runbook.
-- `docs/RELEASING.md` — end-to-end release runbook (macOS + Linux artifacts).
-- `docs/GLOSSARY.md` — shared terms.
-
-## Contributing
-
-1. Read `CLAUDE.md` and `docs/ARCHITECTURE.md` before changing code.
-2. Run the full developer checks above, including `npm run verify:all`.
-3. Keep `docs/LDIFF_COMPLETION_AUDIT.md` in sync with new behavior;
-   `npm run verify:docs` enforces documentation invariants.
-4. For Linux/macOS builds, confirm the bundle builds via `scripts/build-linux.sh`
-   or `npm run tauri -- build`. A `platform-validation/` evidence report is
-   optional and only expected when a platform gate is back in scope.
+MIT

@@ -15,6 +15,7 @@ interface SearchBarProps {
   onSearch: () => void;
   onCancel: () => void;
   onClear: () => void;
+  onClose: () => void;
   onIncludeSourceChange: (value: boolean) => void;
 }
 
@@ -28,6 +29,7 @@ export function SearchBar({
   onSearch,
   onCancel,
   onClear,
+  onClose,
   onIncludeSourceChange,
 }: SearchBarProps) {
   if (!open) return null;
@@ -35,19 +37,30 @@ export function SearchBar({
   const filesContext = context === "files";
   const placeholder = filesContext ? "Search paths, text, constants" : "Find in current diff";
   const clearLabel = filesContext ? "Clear results" : "Clear find";
+  const surfaceLabel = filesContext ? "Search files" : "Find in current diff";
 
   return (
-    <div className="search-bar" data-context={context}>
-      <span className="search-context-label">{labelForSearchContext(context)}</span>
-      <Input
-        className="search-input"
-        value={query}
-        placeholder={placeholder}
-        onChange={(e) => onQueryChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") onSearch(); }}
-      />
-      {filesContext ? (
-        <>
+    <section className="search-surface__bar" role="search" aria-label={surfaceLabel} data-context={context}>
+      <header className="search-surface__header">
+        <span className="search-surface__context">{labelForSearchContext(context)}</span>
+        <span className="search-surface__hint">
+          {filesContext ? "Across loaded sources" : "Inside the active document"}
+        </span>
+        <Button variant="ghost" size="icon" aria-label="Close search" onClick={onClose}><X /></Button>
+      </header>
+      <div className="search-surface__controls">
+        <label className="search-field">
+          <Search aria-hidden="true" />
+          <Input
+            className="search-input"
+            value={query}
+            placeholder={placeholder}
+            aria-label={surfaceLabel}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") onSearch(); }}
+          />
+        </label>
+        {filesContext && (
           <label className="check-label search-inline-check">
             <Checkbox
               aria-label="Include decompiled source search"
@@ -56,17 +69,13 @@ export function SearchBar({
             />
             Decompiled source
           </label>
-          <Button aria-label="Search files" disabled={searching} onClick={onSearch}>
-            <Search /> Search files
-          </Button>
-          {searching && (
-            <Button variant="outline" onClick={onCancel}>Cancel</Button>
-          )}
-        </>
-      ) : (
-        <Button aria-label="Find" onClick={onSearch}><Search /> Find</Button>
-      )}
-      <Button variant="ghost" aria-label={clearLabel} onClick={onClear}><X /> {clearLabel}</Button>
-    </div>
+        )}
+        <Button aria-label={filesContext ? "Search files" : "Find"} disabled={filesContext && searching} onClick={onSearch}>
+          <Search /> {filesContext ? "Search" : "Find"}
+        </Button>
+        {filesContext && searching && <Button variant="outline" onClick={onCancel}>Cancel</Button>}
+        <Button variant="ghost" aria-label={clearLabel} onClick={onClear}>{clearLabel}</Button>
+      </div>
+    </section>
   );
 }

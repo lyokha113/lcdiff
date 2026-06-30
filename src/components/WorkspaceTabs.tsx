@@ -1,8 +1,9 @@
-import { FileDiff, ListTree, X } from "lucide-react";
+import { Binary, ChevronsDown, ChevronsUp, Code, FileDiff, ListTree, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import type { Mode, PairStatus, TreeFilter } from "@/lib/types";
+import type { Mode, PairStatus, TreeFilter, ViewMode } from "@/lib/types";
 import { statusPresentation } from "@/lib/status";
 
 const noopFilterChange = () => undefined;
@@ -24,10 +25,17 @@ export interface WorkspaceTabsProps {
   mode: Mode;
   tabs: WorkspaceTabDescriptor[];
   treeFilter?: TreeFilter;
+  viewMode: ViewMode;
+  canShowSource: boolean;
+  canShowBytecode: boolean;
   onSelectFiles: () => void;
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onFilterChange?: (filter: TreeFilter) => void;
+  onExpandTree?: () => void;
+  onCollapseTree?: () => void;
+  onShowSource: () => void;
+  onShowBytecode: () => void;
 }
 
 export function WorkspaceTabs({
@@ -36,13 +44,20 @@ export function WorkspaceTabs({
   mode,
   tabs,
   treeFilter = "diff",
+  viewMode,
+  canShowSource,
+  canShowBytecode,
   onSelectFiles,
   onSelectTab,
   onCloseTab,
   onFilterChange = noopFilterChange,
+  onExpandTree = noopFilterChange,
+  onCollapseTree = noopFilterChange,
+  onShowSource,
+  onShowBytecode,
 }: WorkspaceTabsProps) {
   return (
-    <div className="workspace-tabs">
+    <nav className="workspace-tabs" aria-label="Open files">
       <div className="workspace-tabs-files" role="tablist" aria-label="Files workspace view">
         <button
           type="button"
@@ -56,18 +71,28 @@ export function WorkspaceTabs({
         </button>
       </div>
       {mode === "compare" && (
-        <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
-          <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="all">Show all</SelectItem>
-              <SelectItem value="diff">Differences</SelectItem>
-              <SelectItem value="same">Identical</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        <>
+          <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
+            <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">Show all</SelectItem>
+                <SelectItem value="diff">Differences</SelectItem>
+                <SelectItem value="same">Identical</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div className="workspace-tree-actions" role="group" aria-label="Tree expansion">
+            <Button variant="ghost" size="icon-sm" aria-label="Expand all folders" onClick={onExpandTree}>
+              <ChevronsDown />
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Collapse all folders" onClick={onCollapseTree}>
+              <ChevronsUp />
+            </Button>
+          </div>
+        </>
       )}
       <div className="workspace-tabs-scroll" role="tablist" aria-label="Open diff tabs">
         {tabs.map((tab) => {
@@ -99,6 +124,30 @@ export function WorkspaceTabs({
           );
         })}
       </div>
-    </div>
+      {activeId !== "files" && (
+        <div className="workspace-view-toggle" role="group" aria-label="Diff view mode">
+          <Button
+            variant={viewMode === "source" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show source"
+            aria-pressed={viewMode === "source"}
+            disabled={!canShowSource}
+            onClick={onShowSource}
+          >
+            <Code /> Source
+          </Button>
+          <Button
+            variant={viewMode === "bytecode" ? "secondary" : "ghost"}
+            size="sm"
+            aria-label="Show bytecode"
+            aria-pressed={viewMode === "bytecode"}
+            disabled={!canShowBytecode}
+            onClick={onShowBytecode}
+          >
+            <Binary /> Bytecode
+          </Button>
+        </div>
+      )}
+    </nav>
   );
 }
