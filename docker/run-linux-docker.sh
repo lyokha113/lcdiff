@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the built Linux LDiff bundle inside Docker, headlessly, on a virtual X
+# Run the built Linux LCDiff bundle inside Docker, headlessly, on a virtual X
 # display (Xvfb), and grab a screenshot to prove the GUI renders.
 #
 # macOS cannot run Linux GUI binaries natively, so we launch inside the same
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="ldiff-linux-build"
+IMAGE="lcdiff-linux-build"
 SECS=8
 
 while [[ $# -gt 0 ]]; do
@@ -37,7 +37,7 @@ RUN_ARGS=(
   -e LIBGL_ALWAYS_SOFTWARE=1
   -e WEBKIT_DISABLE_COMPOSITING_MODE=1
   -e WEBKIT_DISABLE_DMABUF_RENDERER=1
-  -v ldiff-linux-target:/work/target-linux:ro
+  -v lcdiff-linux-target:/work/target-linux:ro
   -v "$ROOT/docker:/out"
   -w /work
   "$IMAGE"

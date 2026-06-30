@@ -47,7 +47,7 @@ entry inside the archive named by the previous segment.
 
 ## Components
 
-### 1. Core — `ldiff-core`
+### 1. Core — `lcdiff-core`
 
 **`detect.rs`** — add `EntryKind::Archive`. `detect_entry_kind` maps
 `jar | zip | war | ear` to `Archive` instead of `Binary`. This lets the frontend

@@ -4,7 +4,7 @@ Date: 2026-06-16
 
 ## Goal
 
-Add keyboard shortcuts for LDiff's main desktop workflows while keeping command
+Add keyboard shortcuts for LCDiff's main desktop workflows while keeping command
 semantics centralized and testable.
 
 The first phase supports:
@@ -15,7 +15,7 @@ The first phase supports:
   in-window shortcuts
 
 This phase does not add user-configurable shortcut remapping or global hotkeys
-that fire while LDiff is not the active app.
+that fire while LCDiff is not the active app.
 
 ## Product Decisions
 
@@ -250,7 +250,7 @@ The first phase does not include:
 
 - user-configurable remapping UI
 - persistence for custom shortcuts
-- global system-wide hotkeys while LDiff is not focused
+- global system-wide hotkeys while LCDiff is not focused
 - full native menu enabled-state synchronization from frontend to Rust
 - backend archive/search/merge contract changes
 

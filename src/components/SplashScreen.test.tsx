@@ -37,7 +37,7 @@ function setup(overrides = {}) {
 describe("SplashScreen", () => {
   it("presents a task-first startup hierarchy", () => {
     setup();
-    expect(screen.getByRole("main", { name: "Start LDiff" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();

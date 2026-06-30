@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ldiff-core", "crates/ldiff-cli", "src-tauri"]
+members = ["crates/lcdiff-core", "crates/lcdiff-cli", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

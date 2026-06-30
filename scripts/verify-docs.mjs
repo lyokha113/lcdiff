@@ -5,14 +5,14 @@ const files = [
   "README.md",
   "docs/RELEASING.md",
   "docs/OPERATIONS_MACOS.md",
-  "docs/LDIFF_COMPLETION_AUDIT.md",
-  "docs/LDIFF_IMPLEMENTATION_PLAN.md",
+  "docs/LCDIFF_COMPLETION_AUDIT.md",
+  "docs/LCDIFF_IMPLEMENTATION_PLAN.md",
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
   "docs/release-notes/v0.2.0.md",
-  "aur/ldiff/PKGBUILD",
-  "aur/ldiff/.SRCINFO",
-  "aur/ldiff/ldiff.install",
+  "aur/lcdiff/PKGBUILD",
+  "aur/lcdiff/.SRCINFO",
+  "aur/lcdiff/lcdiff.install",
 ];
 
 const failures = [];
@@ -64,124 +64,124 @@ if (!readme.includes("JAR/ZIP archives and folders")) {
 if (!readme.includes("scripts/build-linux.sh")) {
   failures.push("README.md: missing Linux build script command");
 }
-if (!readme.includes("yay -S ldiff")) {
+if (!readme.includes("yay -S lcdiff")) {
   failures.push("README.md: missing Arch AUR install note");
 }
 
 const releasing = readFileSync("docs/RELEASING.md", "utf8");
-if (!releasing.includes("aur/ldiff/PKGBUILD")) {
+if (!releasing.includes("aur/lcdiff/PKGBUILD")) {
   failures.push("docs/RELEASING.md: missing AUR package reference");
 }
-if (!releasing.includes("yay -S ldiff")) {
+if (!releasing.includes("yay -S lcdiff")) {
   failures.push("docs/RELEASING.md: missing AUR install command");
 }
 
-const aurPkgbuild = readFileSync("aur/ldiff/PKGBUILD", "utf8");
+const aurPkgbuild = readFileSync("aur/lcdiff/PKGBUILD", "utf8");
 for (const marker of [
-  "pkgname=ldiff",
+  "pkgname=lcdiff",
   "pkgver=0.2.0",
-  "source=(\"git+https://github.com/lyokha113/ldiff.git#tag=v${pkgver}\")",
+  "source=(\"git+https://github.com/lyokha113/lcdiff.git#tag=v${pkgver}\")",
   "npm ci",
-  "LDIFF_JLINK=\"$(command -v jlink)\" scripts/assemble-sidecar-resources.sh",
+  "LCDIFF_JLINK=\"$(command -v jlink)\" scripts/assemble-sidecar-resources.sh",
   "npm run tauri -- build --bundles deb",
-  "bsdtar -xf \"src-tauri/target/release/bundle/deb/LDiff_${pkgver}_amd64.deb\" -C \"$pkgdir\"",
+  "bsdtar -xf \"src-tauri/target/release/bundle/deb/LCDiff_${pkgver}_amd64.deb\" -C \"$pkgdir\"",
 ]) {
   if (!aurPkgbuild.includes(marker)) {
-    failures.push(`aur/ldiff/PKGBUILD: missing ${marker}`);
+    failures.push(`aur/lcdiff/PKGBUILD: missing ${marker}`);
   }
 }
 
-const aurSrcinfo = readFileSync("aur/ldiff/.SRCINFO", "utf8");
+const aurSrcinfo = readFileSync("aur/lcdiff/.SRCINFO", "utf8");
 for (const marker of [
-  "pkgbase = ldiff",
+  "pkgbase = lcdiff",
   "pkgver = 0.2.0",
-  "source = git+https://github.com/lyokha113/ldiff.git#tag=v0.2.0",
+  "source = git+https://github.com/lyokha113/lcdiff.git#tag=v0.2.0",
   "sha256sums = SKIP",
 ]) {
   if (!aurSrcinfo.includes(marker)) {
-    failures.push(`aur/ldiff/.SRCINFO: missing ${marker}`);
+    failures.push(`aur/lcdiff/.SRCINFO: missing ${marker}`);
   }
 }
 
-const aurInstall = readFileSync("aur/ldiff/ldiff.install", "utf8");
+const aurInstall = readFileSync("aur/lcdiff/lcdiff.install", "utf8");
 if (!aurInstall.includes("gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor")) {
-  failures.push("aur/ldiff/ldiff.install: missing icon cache refresh");
+  failures.push("aur/lcdiff/lcdiff.install: missing icon cache refresh");
 }
 if (!aurInstall.includes("update-desktop-database -q")) {
-  failures.push("aur/ldiff/ldiff.install: missing desktop database refresh");
+  failures.push("aur/lcdiff/lcdiff.install: missing desktop database refresh");
 }
 
 const releaseNotes = readFileSync("docs/release-notes/v0.2.0.md", "utf8");
-if (!releaseNotes.includes("yay -S ldiff")) {
+if (!releaseNotes.includes("yay -S lcdiff")) {
   failures.push("docs/release-notes/v0.2.0.md: missing AUR install command");
 }
 if (!releaseNotes.includes("Arch Linux")) {
   failures.push("docs/release-notes/v0.2.0.md: missing Arch Linux note");
 }
 
-const audit = readFileSync("docs/LDIFF_COMPLETION_AUDIT.md", "utf8");
+const audit = readFileSync("docs/LCDIFF_COMPLETION_AUDIT.md", "utf8");
 if (!audit.includes("Open JAR/ZIP/folder")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing folder-open audit row");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing folder-open audit row");
 }
 if (!audit.includes("folder target temp-file replacement")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing folder target merge evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing folder target merge evidence");
 }
 if (!audit.includes("Playwright render verifier boots the Vite shell")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Playwright render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing Playwright render verifier evidence");
 }
 if (!audit.includes("exercise path-input validation error and clear-on-success")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing path-input render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing path-input render verifier evidence");
 }
 if (!audit.includes("pending target plus pending row badge")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing staged-copy render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing staged-copy render verifier evidence");
 }
 if (!audit.includes("unstage through the row context menu")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing context-menu unstage render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing context-menu unstage render verifier evidence");
 }
 if (!audit.includes("verify tree-filter row visibility")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing tree-filter render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing tree-filter render verifier evidence");
 }
 if (!audit.includes("click a scoped T2 search result")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing search-result render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing search-result render verifier evidence");
 }
 if (!audit.includes("verify on-demand metadata-only class status")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing metadata-only render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing metadata-only render verifier evidence");
 }
 if (!audit.includes("verify dirty mode-switch blocking")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing dirty mode-switch render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing dirty mode-switch render verifier evidence");
 }
 if (!audit.includes("clear staged changes and switch into Single mode without Monaco lifecycle errors")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing clear-staged Single-mode render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing clear-staged Single-mode render verifier evidence");
 }
 if (!audit.includes("verify signed-save session suppression")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing signed-save suppression render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing signed-save suppression render verifier evidence");
 }
 if (!audit.includes("prove backup checkbox IPC propagation")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing backup checkbox render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing backup checkbox render verifier evidence");
 }
 if (!audit.includes("render the Bytecode tab through `disassemble`")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing bytecode render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing bytecode render verifier evidence");
 }
 if (!audit.includes("render binary fallback SHA/CRC details plus hex preview")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing binary fallback render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing binary fallback render verifier evidence");
 }
 if (!audit.includes("signed-JAR warning Dialog before a confirmed Save anyway commits")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing signed-save render verifier evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing signed-save render verifier evidence");
 }
 if (!audit.includes("Windows platform validation runner")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Windows platform runner evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing Windows platform runner evidence");
 }
 if (!audit.includes("Linux display-matrix validation runner")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Linux display runner evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing Linux display runner evidence");
 }
 if (!audit.includes("macOS distribution validation runner")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution runner evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing macOS distribution runner evidence");
 }
 if (!audit.includes("Arch AUR package source")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing Arch AUR package evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing Arch AUR package evidence");
 }
 if (!audit.includes("platform-validation/macos-distribution-*.md")) {
-  failures.push("docs/LDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
+  failures.push("docs/LCDIFF_COMPLETION_AUDIT.md: missing macOS distribution report evidence");
 }
 
 const platformValidation = readFileSync("docs/PLATFORM_VALIDATION.md", "utf8");
@@ -201,19 +201,19 @@ if (!platformValidation.includes("platform-validation/macos-distribution-*.md"))
 if (!platformValidation.includes("docs/OPERATIONS_MACOS.md")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing macOS operations runbook link");
 }
-if (!platformValidation.includes("Arch Linux AUR package for `ldiff`")) {
+if (!platformValidation.includes("Arch Linux AUR package for `lcdiff`")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing Arch AUR package note");
 }
 
 for (const marker of [
   "scripts/verify-macos-distribution.sh",
-  "LDIFF_JLINK_X86_64_APPLE_DARWIN",
+  "LCDIFF_JLINK_X86_64_APPLE_DARWIN",
   "platform-validation/macos-distribution-*.md",
   "MACOS_SIGN_IDENTITY",
   "APPLE_ID",
   "codesign --verify --deep --strict",
   "hdiutil verify",
-  "LDiff-aarch64-apple-darwin.dmg",
+  "LCDiff-aarch64-apple-darwin.dmg",
 ]) {
   if (!macosOps.includes(marker)) {
     failures.push(`docs/OPERATIONS_MACOS.md: missing ${marker}`);

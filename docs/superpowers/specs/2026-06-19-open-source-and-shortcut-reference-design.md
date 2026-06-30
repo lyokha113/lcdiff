@@ -4,7 +4,7 @@ Date: 2026-06-19
 
 ## Goal
 
-Extend LDiff's existing app-level hotkey system so file and directory pickers
+Extend LCDiff's existing app-level hotkey system so file and directory pickers
 have distinct shortcuts for both compare sides, and make the complete shortcut
 map discoverable inside the app.
 
@@ -188,7 +188,7 @@ remappable in this release.
 ## Out of Scope
 
 - custom shortcut remapping and persistence
-- global hotkeys when LDiff is not focused
+- global hotkeys when LCDiff is not focused
 - command palette or action search
 - active-side or last-interacted-side tracking
 - dynamic native-menu enabled-state synchronization

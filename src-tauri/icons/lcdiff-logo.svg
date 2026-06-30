@@ -23,33 +23,38 @@
   <rect x="32.5" y="32.5" width="959" height="959" rx="219.5" fill="none"
         stroke="#d9b066" stroke-opacity="0.16" stroke-width="2"/>
 
-  <!-- LDIFF wordmark: blocky stencil letters, brass gradient.
-       content bbox x:68..968 y:366..736, recentred + scaled to fit. -->
-  <g fill="url(#brass)" transform="translate(512 512) scale(0.84) translate(-518 -551)">
+  <!-- LCDIFF wordmark: blocky stencil letters, brass gradient.
+       content bbox x:68..996 y:366..736, recentred + scaled to fit. -->
+  <g fill="url(#brass)" transform="translate(512 512) scale(0.82) translate(-532 -551)">
 
     <!-- L -->
     <rect x="68"  y="366" width="56"  height="292" rx="10"/>
     <rect x="68"  y="602" width="150" height="56"  rx="10"/>
 
+    <!-- C -->
+    <rect x="230" y="366" width="150" height="56" rx="10"/>
+    <rect x="230" y="602" width="150" height="56" rx="10"/>
+    <rect x="230" y="366" width="56" height="292" rx="10"/>
+
     <!-- D : solid left bar + brass annulus (reads as D, not O) -->
-    <rect x="266" y="366" width="56" height="292" rx="10"/>
-    <path d="M266 366 L322 366 A146 146 0 0 1 322 658 L266 658 Z
-             M322 422 A90 90 0 0 1 322 602 Z" fill-rule="evenodd"/>
+    <rect x="418" y="366" width="56" height="292" rx="10"/>
+    <path d="M418 366 L474 366 A146 146 0 0 1 474 658 L418 658 Z
+             M474 422 A90 90 0 0 1 474 602 Z" fill-rule="evenodd"/>
 
     <!-- I -->
-    <rect x="516" y="366" width="56" height="292" rx="10"/>
+    <rect x="594" y="366" width="56" height="292" rx="10"/>
 
     <!-- F -->
-    <rect x="620" y="366" width="56"  height="292" rx="10"/>
-    <rect x="620" y="366" width="150" height="56"  rx="10"/>
-    <rect x="620" y="484" width="120" height="56"  rx="10"/>
+    <rect x="704" y="366" width="56"  height="292" rx="10"/>
+    <rect x="704" y="366" width="150" height="56"  rx="10"/>
+    <rect x="704" y="484" width="120" height="56"  rx="10"/>
 
     <!-- F -->
-    <rect x="818" y="366" width="56"  height="292" rx="10"/>
-    <rect x="818" y="366" width="150" height="56"  rx="10"/>
-    <rect x="818" y="484" width="120" height="56"  rx="10"/>
+    <rect x="846" y="366" width="56"  height="292" rx="10"/>
+    <rect x="846" y="366" width="150" height="56"  rx="10"/>
+    <rect x="846" y="484" width="120" height="56"  rx="10"/>
 
     <!-- underline accent -->
-    <rect x="80" y="706" width="888" height="30" rx="15"/>
+    <rect x="80" y="706" width="916" height="30" rx="15"/>
   </g>
 </svg>

@@ -1,4 +1,4 @@
-package dev.ldiff.sidecar;
+package dev.lcdiff.sidecar;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -82,7 +82,7 @@ public final class SidecarMain {
   }
 
   private static String decompileCfr(Path archive, String entry, byte[] bytes) throws IOException {
-    Path root = Files.createTempDirectory("ldiff-cfr-");
+    Path root = Files.createTempDirectory("lcdiff-cfr-");
     try {
       Path classFile = writeClass(root, entry, bytes);
       final StringBuilder source = new StringBuilder();
@@ -118,7 +118,7 @@ public final class SidecarMain {
 
   private static String decompileVineflower(Path archive, String entry, byte[] bytes)
       throws Exception {
-    Path root = Files.createTempDirectory("ldiff-vineflower-");
+    Path root = Files.createTempDirectory("lcdiff-vineflower-");
     Path destination = Files.createDirectory(root.resolve("out"));
     try {
       Path classFile = writeClass(root, entry, bytes);

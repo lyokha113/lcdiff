@@ -1,4 +1,4 @@
-# LDiff Implementation Plan
+# LCDiff Implementation Plan
 
 Source: `/Users/lyo/Downloads/SPEC.md` Draft SPEC v0.1.
 

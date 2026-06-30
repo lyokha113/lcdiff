@@ -1,9 +1,9 @@
-pkgname=ldiff
+pkgname=lcdiff
 pkgver=0.2.0
 pkgrel=1
 pkgdesc="Inspect, compare, and merge JAR/ZIP archives and folders"
 arch=('x86_64')
-url="https://github.com/lyokha113/ldiff"
+url="https://github.com/lyokha113/lcdiff"
 license=('MIT')
 depends=(
   'cairo'
@@ -29,7 +29,7 @@ makedepends=(
   'npm'
   'rust'
 )
-source=("git+https://github.com/lyokha113/ldiff.git#tag=v${pkgver}")
+source=("git+https://github.com/lyokha113/lcdiff.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 options=('!strip')
 install="${pkgname}.install"
@@ -41,11 +41,11 @@ prepare() {
 
 build() {
   cd "$srcdir/$pkgname"
-  LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+  LCDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
   npm run tauri -- build --bundles deb
 }
 
 package() {
   cd "$srcdir/$pkgname"
-  bsdtar -xf "src-tauri/target/release/bundle/deb/LDiff_${pkgver}_amd64.deb" -C "$pkgdir"
+  bsdtar -xf "src-tauri/target/release/bundle/deb/LCDiff_${pkgver}_amd64.deb" -C "$pkgdir"
 }

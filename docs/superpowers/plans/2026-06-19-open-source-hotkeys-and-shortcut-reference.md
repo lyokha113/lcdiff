@@ -830,7 +830,7 @@ fn menu_contains_explicit_open_and_shortcut_reference_actions() {
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop menu_action
+rtk cargo test -p lcdiff-desktop menu_action
 ```
 
 Expected: FAIL because File still has four actions and Help has none.
@@ -873,8 +873,8 @@ menu.append(&help.build()?)?;
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop menu_action
-rtk cargo test -p ldiff-desktop full_app_menu_builds_with_standard_and_custom_groups
+rtk cargo test -p lcdiff-desktop menu_action
+rtk cargo test -p lcdiff-desktop full_app_menu_builds_with_standard_and_custom_groups
 ```
 
 Expected: PASS, including accelerator acceptance and frontend/native parity.

@@ -7,7 +7,7 @@ Risk lane: high-risk (new write path can overwrite/delete bytes in user files;
 
 ## Problem
 
-LDiff today only opens a `.jar`/`.zip` archive or a folder. Users cannot open a
+LCDiff today only opens a `.jar`/`.zip` archive or a folder. Users cannot open a
 standalone text-based file (json, xml, properties, toml, sql, txt, yaml…) to
 compare it against another standalone file. Comparing two loose config files
 requires wrapping them in archives or using a separate diff tool. Users want to
@@ -132,7 +132,7 @@ for archive/folder targets (unchanged invariant). This is gated on
 
 ## Testing (TDD)
 
-Core (`ldiff-core`):
+Core (`lcdiff-core`):
 1. `open_single_file`: opens a `.json`, one entry, kind = text, CRC/size correct.
 2. `.jar` path still opens as `Archive`, folder still as `Directory` (no
    regression in source-kind routing).
@@ -151,9 +151,9 @@ Frontend:
 
 ## Affected surfaces
 
-- `crates/ldiff-core/src/archive.rs` — `ArchiveSourceKind::File`,
+- `crates/lcdiff-core/src/archive.rs` — `ArchiveSourceKind::File`,
   `open_single_file`, routing in `open_validated`.
-- `crates/ldiff-core/src/merge.rs` — relax single-target lock when both sides are
+- `crates/lcdiff-core/src/merge.rs` — relax single-target lock when both sides are
   File sources (independent per-side staging/commit).
 - `src-tauri/src/main.rs` — allow `stage_write` on both sides for File↔File;
   per-side `commit_merge`.

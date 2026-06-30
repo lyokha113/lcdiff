@@ -555,7 +555,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    candidate.push(format!(".ldiff-{}-{nonce}.tmp", std::process::id()));
+    candidate.push(format!(".lcdiff-{}-{nonce}.tmp", std::process::id()));
     PathBuf::from(candidate)
 }
 

@@ -6,7 +6,7 @@
 
 **Architecture:** Model a single file as a one-entry `Archive` (`ArchiveSourceKind::File`) so the existing entry/diff/preview/save pipeline applies unchanged. Reuse `StagedOp::Write` + `EntryEncoding` for synthesized text. Relax the single-target staging lock only when both sides are File sources, so "move" (write target + delete-from-source) can stage both sides at once. Archive/folder merge stays whole-entry byte copy, lock intact.
 
-**Tech Stack:** Rust (`ldiff-core`, `zip`, `crc32fast`), Tauri commands (`src-tauri`), React + `@monaco-editor/react` DiffEditor, Vitest.
+**Tech Stack:** Rust (`lcdiff-core`, `zip`, `crc32fast`), Tauri commands (`src-tauri`), React + `@monaco-editor/react` DiffEditor, Vitest.
 
 **Spec:** `docs/superpowers/specs/2026-06-08-standalone-text-file-compare-merge-design.md`
 
@@ -14,8 +14,8 @@
 
 ## File map
 
-- `crates/ldiff-core/src/archive.rs` — `ArchiveSourceKind::File`, `open_single_file`, magic-byte routing in `open_validated`, `read_entry` File branch.
-- `crates/ldiff-core/src/merge.rs` — `commit` File branch (write backing file atomically).
+- `crates/lcdiff-core/src/archive.rs` — `ArchiveSourceKind::File`, `open_single_file`, magic-byte routing in `open_validated`, `read_entry` File branch.
+- `crates/lcdiff-core/src/merge.rs` — `commit` File branch (write backing file atomically).
 - `src-tauri/src/main.rs` — per-side merge plans in `AppState`, relaxed lock for File↔File, per-side commit/unstage/clear.
 - `src/lib/types.ts` — add `"file"` to `sourceKind`.
 - `src/lib/textMerge.ts` (new) — pure hunk/take-all/move buffer transforms.
@@ -29,11 +29,11 @@
 ### Task 1: `ArchiveSourceKind::File` variant
 
 **Files:**
-- Modify: `crates/ldiff-core/src/archive.rs:37-42`
+- Modify: `crates/lcdiff-core/src/archive.rs:37-42`
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the test module at the bottom of `crates/ldiff-core/src/archive.rs` (create a `#[cfg(test)] mod source_kind_tests { use super::*; ... }` block if none exists in this file; otherwise append):
+Add to the test module at the bottom of `crates/lcdiff-core/src/archive.rs` (create a `#[cfg(test)] mod source_kind_tests { use super::*; ... }` block if none exists in this file; otherwise append):
 
 ```rust
 #[test]
@@ -45,12 +45,12 @@ fn file_source_kind_serializes_camel_case() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p ldiff-core file_source_kind_serializes_camel_case`
+Run: `cargo test -p lcdiff-core file_source_kind_serializes_camel_case`
 Expected: FAIL — no variant `File`.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/ldiff-core/src/archive.rs`, extend the enum (currently `Archive, Directory`):
+In `crates/lcdiff-core/src/archive.rs`, extend the enum (currently `Archive, Directory`):
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -64,13 +64,13 @@ pub enum ArchiveSourceKind {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p ldiff-core file_source_kind_serializes_camel_case`
+Run: `cargo test -p lcdiff-core file_source_kind_serializes_camel_case`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ldiff-core/src/archive.rs
+git add crates/lcdiff-core/src/archive.rs
 git commit -m "feat(core): add ArchiveSourceKind::File variant"
 ```
 
@@ -81,11 +81,11 @@ git commit -m "feat(core): add ArchiveSourceKind::File variant"
 A single file is a one-entry archive. Route to it only when the path is not a directory and not a zip (detected by local/EOCD signature), so `.jar`/`.zip` keep opening as archives.
 
 **Files:**
-- Modify: `crates/ldiff-core/src/archive.rs:60-65` (`open_validated`), add `open_single_file` after `open_directory`.
+- Modify: `crates/lcdiff-core/src/archive.rs:60-65` (`open_validated`), add `open_single_file` after `open_directory`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to the test module in `crates/ldiff-core/src/archive.rs`:
+Append to the test module in `crates/lcdiff-core/src/archive.rs`:
 
 ```rust
 #[test]
@@ -120,16 +120,16 @@ fn zip_path_still_opens_as_archive() {
 }
 ```
 
-If `tempfile` is not already a dev-dependency of `ldiff-core`, add it: in `crates/ldiff-core/Cargo.toml` under `[dev-dependencies]` add `tempfile = "3"` and `serde_json = "1"` (only if missing — check first with `rg tempfile crates/ldiff-core/Cargo.toml`).
+If `tempfile` is not already a dev-dependency of `lcdiff-core`, add it: in `crates/lcdiff-core/Cargo.toml` under `[dev-dependencies]` add `tempfile = "3"` and `serde_json = "1"` (only if missing — check first with `rg tempfile crates/lcdiff-core/Cargo.toml`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p ldiff-core opens_single_text_file_as_one_entry zip_path_still_opens_as_archive`
+Run: `cargo test -p lcdiff-core opens_single_text_file_as_one_entry zip_path_still_opens_as_archive`
 Expected: FAIL — `opens_single_text_file...` errors (non-zip currently returns `Error::InvalidArchive`).
 
 - [ ] **Step 3: Implement routing + `open_single_file`**
 
-Replace `open_validated` body in `crates/ldiff-core/src/archive.rs`:
+Replace `open_validated` body in `crates/lcdiff-core/src/archive.rs`:
 
 ```rust
 pub fn open_validated(path: PathBuf) -> Result<Self> {
@@ -206,13 +206,13 @@ fn open_single_file(path: PathBuf) -> Result<Self> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p ldiff-core opens_single_text_file_as_one_entry zip_path_still_opens_as_archive`
+Run: `cargo test -p lcdiff-core opens_single_text_file_as_one_entry zip_path_still_opens_as_archive`
 Expected: both PASS. (`read_entry` for File works after Task 3; the read assertion in test 1 will still fail until Task 3 — temporarily comment the `read_entry` line, OR implement Task 3 before running Step 4. Recommended: implement Task 3 then run both. To keep this task self-contained, comment the last assertion now and uncomment in Task 3.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ldiff-core/src/archive.rs crates/ldiff-core/Cargo.toml
+git add crates/lcdiff-core/src/archive.rs crates/lcdiff-core/Cargo.toml
 git commit -m "feat(core): open standalone file as one-entry File-source archive"
 ```
 
@@ -221,7 +221,7 @@ git commit -m "feat(core): open standalone file as one-entry File-source archive
 ### Task 3: `read_entry` File branch
 
 **Files:**
-- Modify: `crates/ldiff-core/src/archive.rs:173-205` (`read_entry`)
+- Modify: `crates/lcdiff-core/src/archive.rs:173-205` (`read_entry`)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -229,7 +229,7 @@ Uncomment the `read_entry` assertion in `opens_single_text_file_as_one_entry` (T
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p ldiff-core opens_single_text_file_as_one_entry`
+Run: `cargo test -p lcdiff-core opens_single_text_file_as_one_entry`
 Expected: FAIL — zip parse error.
 
 - [ ] **Step 3: Add the File branch**
@@ -244,13 +244,13 @@ if self.metadata.source_kind == ArchiveSourceKind::File {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p ldiff-core opens_single_text_file_as_one_entry`
+Run: `cargo test -p lcdiff-core opens_single_text_file_as_one_entry`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ldiff-core/src/archive.rs
+git add crates/lcdiff-core/src/archive.rs
 git commit -m "feat(core): read_entry reads backing file for File source"
 ```
 
@@ -261,11 +261,11 @@ git commit -m "feat(core): read_entry reads backing file for File source"
 `commit` branches Directory vs archive. A File target must write the single replacement's bytes straight to `target.path()` (atomic temp → rename), with optional `.bak` via `fs::copy`.
 
 **Files:**
-- Modify: `crates/ldiff-core/src/merge.rs:146-192` (`commit`)
+- Modify: `crates/lcdiff-core/src/merge.rs:146-192` (`commit`)
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the `stage_write_tests` module in `crates/ldiff-core/src/merge.rs`:
+Add to the `stage_write_tests` module in `crates/lcdiff-core/src/merge.rs`:
 
 ```rust
 #[test]
@@ -289,7 +289,7 @@ fn commit_writes_file_source_in_place_with_backup() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p ldiff-core commit_writes_file_source_in_place_with_backup`
+Run: `cargo test -p lcdiff-core commit_writes_file_source_in_place_with_backup`
 Expected: FAIL — File target falls into the archive branch and `rewrite_archive` corrupts/errors on a non-zip file.
 
 - [ ] **Step 3: Add the File branch in `commit`**
@@ -360,18 +360,18 @@ let result = if target.metadata().source_kind == ArchiveSourceKind::Directory {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p ldiff-core commit_writes_file_source_in_place_with_backup`
+Run: `cargo test -p lcdiff-core commit_writes_file_source_in_place_with_backup`
 Expected: PASS.
 
 - [ ] **Step 5: Run full core suite (no regressions)**
 
-Run: `cargo test -p ldiff-core`
+Run: `cargo test -p lcdiff-core`
 Expected: PASS (all existing copy/write/directory tests still green).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/ldiff-core/src/merge.rs
+git add crates/lcdiff-core/src/merge.rs
 git commit -m "feat(core): commit File source by atomic in-place write"
 ```
 
@@ -413,7 +413,7 @@ Keep the existing `stage_write_locks_target_and_rejects_other_side` test unchang
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p ldiff-desktop file_sources_allow_staging_both_sides` (use the actual `src-tauri` package name — check `name =` in `src-tauri/Cargo.toml`; substitute below wherever `ldiff-desktop` appears).
+Run: `cargo test -p lcdiff-desktop file_sources_allow_staging_both_sides` (use the actual `src-tauri` package name — check `name =` in `src-tauri/Cargo.toml`; substitute below wherever `lcdiff-desktop` appears).
 Expected: FAIL — second `stage_write` returns the cross-side lock error.
 
 - [ ] **Step 3: Refactor `AppState` to per-side plans**
@@ -483,7 +483,7 @@ fn ensure_can_stage(&self, side: Side) -> Result<(), String> {
 }
 ```
 
-Add the imports `ArchiveSourceKind` to the `use ldiff_core::{...}` line if not present.
+Add the imports `ArchiveSourceKind` to the `use lcdiff_core::{...}` line if not present.
 
 - [ ] **Step 4: Update stage/commit/clear/unstage to per-side plans**
 
@@ -605,12 +605,12 @@ Fix `install_archive` if it referenced `staged_target` / `merge_plan` (`rg -n "s
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p ldiff-desktop file_sources_allow_staging_both_sides stage_write_locks_target_and_rejects_other_side`
+Run: `cargo test -p lcdiff-desktop file_sources_allow_staging_both_sides stage_write_locks_target_and_rejects_other_side`
 Expected: both PASS — File↔File stages both; archive still rejects the second side.
 
 - [ ] **Step 6: Run full Tauri suite**
 
-Run: `cargo test -p ldiff-desktop`
+Run: `cargo test -p lcdiff-desktop`
 Expected: PASS. Resolve any remaining `staged_target` references the compiler flags.
 
 - [ ] **Step 7: Commit**
@@ -633,7 +633,7 @@ Expected: all five commands still present with the same signatures.
 
 - [ ] **Step 2: Build check**
 
-Run: `cargo build -p ldiff-desktop`
+Run: `cargo build -p lcdiff-desktop`
 Expected: clean build.
 
 - [ ] **Step 3: Commit (if any fixups were needed)**
@@ -1047,4 +1047,4 @@ Then use superpowers:finishing-a-development-branch to decide merge/PR.
 - **High-risk write path:** "move" deletes lines from the source file. Atomic temp→rename + `.bak` bound the blast radius; `changed_on_disk` guards stale overwrites. Manual smoke step 4–6 is the data-integrity gate.
 - **Monaco original→modified copy:** native revert arrow (`renderMarginRevertIcon`) copies modified→original. The explicit toolbar buttons cover both directions and whole-file, so the feature does not depend on Monaco's built-in arrow direction.
 - **`stagedEntries` keying:** file-merge uses `side:path` keys so both sides coexist; strip the prefix before any `unstage` IPC call. Verify the MenuBar pending popover tolerates the prefixed key (display the bare path).
-- **Package names:** substitute the real `src-tauri` crate name for `ldiff-desktop` (check `src-tauri/Cargo.toml`).
+- **Package names:** substitute the real `src-tauri` crate name for `lcdiff-desktop` (check `src-tauri/Cargo.toml`).

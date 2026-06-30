@@ -10,7 +10,7 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-use ldiff_core::{
+use lcdiff_core::{
     DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest, SidecarResponse, read_frame,
     write_frame,
 };
@@ -250,11 +250,11 @@ impl Drop for SidecarClient {
 }
 
 fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
-    env::var_os("LDIFF_SIDECAR_JAR").map_or_else(
+    env::var_os("LCDIFF_SIDECAR_JAR").map_or_else(
         || {
-            resource_candidate(resource_dir, "sidecar/ldiff-sidecar.jar").unwrap_or_else(|| {
+            resource_candidate(resource_dir, "sidecar/lcdiff-sidecar.jar").unwrap_or_else(|| {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../sidecar/target/ldiff-sidecar-0.2.1.jar")
+                    .join("../sidecar/target/lcdiff-sidecar-0.2.1.jar")
             })
         },
         PathBuf::from,
@@ -262,7 +262,7 @@ fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
 }
 
 fn java_executable(resource_dir: Option<&std::path::Path>) -> PathBuf {
-    env::var_os("LDIFF_JAVA").map_or_else(
+    env::var_os("LCDIFF_JAVA").map_or_else(
         || {
             resource_candidate(resource_dir, java_relative_path())
                 .unwrap_or_else(|| PathBuf::from("java"))
@@ -388,7 +388,7 @@ mod tests {
         time::Duration,
     };
 
-    use ldiff_core::{DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest};
+    use lcdiff_core::{DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest};
     use tempfile::tempdir;
 
     use super::{ResponseCache, SidecarClient, SidecarProcess, cache_key};

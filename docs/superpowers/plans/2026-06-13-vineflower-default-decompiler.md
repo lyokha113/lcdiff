@@ -6,7 +6,7 @@
 
 **Architecture:** Keep decompiler selection explicit and side-effect free. Add one frontend default constant and one Rust default constant, then wire startup state to those constants. Treat the JVM sidecar as a separate process boundary with its own missing-engine default because it can receive protocol requests outside the desktop UI path.
 
-**Tech Stack:** React 19 + TypeScript + Vitest, Tauri v2 Rust desktop host, `ldiff-core` sidecar protocol types, Java sidecar using CFR/Vineflower/ASM, Node-based sidecar smoke script.
+**Tech Stack:** React 19 + TypeScript + Vitest, Tauri v2 Rust desktop host, `lcdiff-core` sidecar protocol types, Java sidecar using CFR/Vineflower/ASM, Node-based sidecar smoke script.
 
 ---
 
@@ -16,9 +16,9 @@
 - Modify `src/lib/types.test.ts`: assert the frontend default engine is `vineflower`.
 - Modify `src/App.tsx`: initialize React engine state from `DEFAULT_ENGINE`.
 - Modify `src/components/ConfigDrawer.test.tsx`: use the default engine constant in the drawer fixture and assert both engines remain selectable.
-- Modify `crates/ldiff-core/src/sidecar_protocol.rs`: add `DEFAULT_DECOMPILE_ENGINE` as the Rust protocol/application default.
+- Modify `crates/lcdiff-core/src/sidecar_protocol.rs`: add `DEFAULT_DECOMPILE_ENGINE` as the Rust protocol/application default.
 - Modify `src-tauri/src/main.rs`: initialize `AppState.engine` from `DEFAULT_DECOMPILE_ENGINE` and add an app-state default regression test.
-- Modify `sidecar/src/main/java/dev/ldiff/sidecar/SidecarMain.java`: make missing `engine` on `decompile` default to `vineflower`.
+- Modify `sidecar/src/main/java/dev/lcdiff/sidecar/SidecarMain.java`: make missing `engine` on `decompile` default to `vineflower`.
 - Modify `scripts/test-sidecar-smoke.mjs`: assert missing-engine decompile does not return CFR output and keep explicit CFR coverage.
 - Modify `README.md`: state Vineflower is the default decompiler and CFR remains available.
 - Modify `sidecar/README.md`: document missing-engine sidecar behavior.
@@ -153,7 +153,7 @@ rtk git commit -m "feat(ui): default decompiler to vineflower"
 ### Task 2: Rust App-State Default Contract
 
 **Files:**
-- Modify: `crates/ldiff-core/src/sidecar_protocol.rs`
+- Modify: `crates/lcdiff-core/src/sidecar_protocol.rs`
 - Modify: `src-tauri/src/main.rs`
 
 - [ ] **Step 1: Write the failing Rust app-state test**
@@ -174,14 +174,14 @@ In `src-tauri/src/main.rs`, inside `#[cfg(test)] mod tests`, add this test after
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop app_state_defaults_to_vineflower
+rtk cargo test -p lcdiff-desktop app_state_defaults_to_vineflower
 ```
 
 Expected: FAIL with an assertion showing `left: Cfr` and `right: Vineflower`.
 
 - [ ] **Step 3: Add the Rust default constant**
 
-In `crates/ldiff-core/src/sidecar_protocol.rs`, add the constant immediately after `DecompileEngine`:
+In `crates/lcdiff-core/src/sidecar_protocol.rs`, add the constant immediately after `DecompileEngine`:
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -200,7 +200,7 @@ pub enum SidecarAction {
 
 - [ ] **Step 4: Wire AppState startup to the Rust default**
 
-In `src-tauri/src/main.rs`, update the `ldiff_core` import to include `DEFAULT_DECOMPILE_ENGINE`:
+In `src-tauri/src/main.rs`, update the `lcdiff_core` import to include `DEFAULT_DECOMPILE_ENGINE`:
 
 ```rust
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions,
@@ -222,7 +222,7 @@ Then update `AppState::new`:
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop app_state_defaults_to_vineflower
+rtk cargo test -p lcdiff-desktop app_state_defaults_to_vineflower
 ```
 
 Expected: PASS.
@@ -232,17 +232,17 @@ Expected: PASS.
 Run:
 
 ```bash
-rtk cargo test -p ldiff-core sidecar_protocol
+rtk cargo test -p lcdiff-core sidecar_protocol
 ```
 
-Expected: PASS or `0 passed` with successful compile if no tests match the filter. The important check is that `ldiff-core` exports the new constant cleanly.
+Expected: PASS or `0 passed` with successful compile if no tests match the filter. The important check is that `lcdiff-core` exports the new constant cleanly.
 
 - [ ] **Step 7: Commit Rust default contract**
 
 Run:
 
 ```bash
-rtk git add crates/ldiff-core/src/sidecar_protocol.rs src-tauri/src/main.rs
+rtk git add crates/lcdiff-core/src/sidecar_protocol.rs src-tauri/src/main.rs
 rtk git commit -m "feat(desktop): default app state to vineflower"
 ```
 
@@ -251,7 +251,7 @@ rtk git commit -m "feat(desktop): default app state to vineflower"
 ### Task 3: JVM Sidecar Missing-Engine Default
 
 **Files:**
-- Modify: `sidecar/src/main/java/dev/ldiff/sidecar/SidecarMain.java`
+- Modify: `sidecar/src/main/java/dev/lcdiff/sidecar/SidecarMain.java`
 - Modify: `scripts/test-sidecar-smoke.mjs`
 
 - [ ] **Step 1: Write the failing sidecar smoke assertion**
@@ -267,7 +267,7 @@ In `scripts/test-sidecar-smoke.mjs`, replace the current explicit Vineflower blo
       classpath: [archive],
       entry: "demo/Hello.class",
     }),
-    "hello-ldiff",
+    "hello-lcdiff",
   );
 ```
 
@@ -280,7 +280,7 @@ with this missing-engine default block:
     classpath: [archive],
     entry: "demo/Hello.class",
   });
-  assertIncludes(defaultDecompiler, "hello-ldiff");
+  assertIncludes(defaultDecompiler, "hello-lcdiff");
   assertNotIncludes(defaultDecompiler, "Decompiled with CFR");
 ```
 
@@ -298,14 +298,14 @@ function assertNotIncludes(response, unexpected) {
 Run with system Java to avoid a wrong-platform bundled JRE blocking the contract test:
 
 ```bash
-rtk env LDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
+rtk env LCDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
 ```
 
 Expected: FAIL before the Java sidecar default is changed, because missing-engine decompile currently runs CFR and includes `Decompiled with CFR`.
 
 - [ ] **Step 3: Change the JVM sidecar missing-engine default**
 
-In `sidecar/src/main/java/dev/ldiff/sidecar/SidecarMain.java`, replace:
+In `sidecar/src/main/java/dev/lcdiff/sidecar/SidecarMain.java`, replace:
 
 ```java
         String engine = request.path("engine").asText("cfr");
@@ -322,7 +322,7 @@ with:
 Run:
 
 ```bash
-rtk env LDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
+rtk env LCDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
 ```
 
 Expected: PASS with:
@@ -336,7 +336,7 @@ sidecar smoke passed: ping, CFR, inner/anonymous classes, ASM, Vineflower, malfo
 Run:
 
 ```bash
-rtk git add sidecar/src/main/java/dev/ldiff/sidecar/SidecarMain.java scripts/test-sidecar-smoke.mjs
+rtk git add sidecar/src/main/java/dev/lcdiff/sidecar/SidecarMain.java scripts/test-sidecar-smoke.mjs
 rtk git commit -m "feat(sidecar): default missing engine to vineflower"
 ```
 
@@ -496,7 +496,7 @@ Expected: PASS.
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop app_state_defaults_to_vineflower
+rtk cargo test -p lcdiff-desktop app_state_defaults_to_vineflower
 ```
 
 Expected: PASS.
@@ -506,14 +506,14 @@ Expected: PASS.
 Run:
 
 ```bash
-rtk env LDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
+rtk env LCDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
 ```
 
 Expected: PASS. If this fails because Maven has not built the sidecar jar, run:
 
 ```bash
 rtk mvn -f sidecar/pom.xml package
-rtk env LDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
+rtk env LCDIFF_JAVA="$(command -v java)" scripts/test-sidecar-smoke.sh
 ```
 
 - [ ] **Step 4: Run full frontend unit tests**

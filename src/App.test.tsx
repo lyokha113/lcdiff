@@ -453,7 +453,7 @@ describe("App file-merge wiring", () => {
 
   it("applies persisted Appearance preferences to the app shell", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
       editor: { fontFamily: "Menlo", fontSize: 15 },
     }));
@@ -466,12 +466,12 @@ describe("App file-merge wiring", () => {
     expect(shell.dataset.effectiveColorPattern).toBe("light");
     expect(document.documentElement.dataset.effectiveColorPattern).toBe("light");
     expect(document.documentElement.style.getPropertyValue("--background")).toBe("#edf2f7");
-    expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("");
+    expect(shell.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
   });
 
   it("preserves a persisted installed font before fonts are loaded", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       editor: { fontFamily: "Menlo", fontSize: 15 },
     }));
 
@@ -480,7 +480,7 @@ describe("App file-merge wiring", () => {
 
     await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1));
     await waitFor(() =>
-      expect(JSON.parse(localStorage.getItem("ldiff.uiPreferences.v1") ?? "{}").editor.fontFamily).toBe("Menlo"),
+      expect(JSON.parse(localStorage.getItem("lcdiff.uiPreferences.v1") ?? "{}").editor.fontFamily).toBe("Menlo"),
     );
 
     await user.click(screen.getByLabelText("Preferences"));
@@ -524,7 +524,7 @@ describe("App file-merge wiring", () => {
 
     await screen.findByText("CFR unavailable");
     await waitFor(() =>
-      expect(JSON.parse(localStorage.getItem("ldiff.uiPreferences.v1") ?? "{}").misc.decompiler.engine).toBe(
+      expect(JSON.parse(localStorage.getItem("lcdiff.uiPreferences.v1") ?? "{}").misc.decompiler.engine).toBe(
         "vineflower",
       ),
     );

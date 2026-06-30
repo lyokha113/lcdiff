@@ -1,6 +1,6 @@
 # Scripts
 
-Build, sign, package, and verification scripts for LDiff.
+Build, sign, package, and verification scripts for LCDiff.
 
 ## Verification
 

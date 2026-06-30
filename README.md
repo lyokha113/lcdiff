@@ -1,6 +1,6 @@
-# LDiff
+# LCDiff
 
-**LDiff** is a Tauri desktop tool for inspecting, comparing, and staging merges
+**LCDiff** is a Tauri desktop tool for inspecting, comparing, and staging merges
 between JAR/ZIP archives and folders. Decompiled Java is always read-only; a
 merge copies the original entry bytes, never the decompiled view.
 
@@ -15,7 +15,7 @@ merge copies the original entry bytes, never the decompiled view.
   when the JVM is absent.
 
 > This README has two parts. **[For Users](#for-users)** if you just want to
-> install and run LDiff. **[For Developers](#for-developers)** if you want to
+> install and run LCDiff. **[For Developers](#for-developers)** if you want to
 > build it from source or contribute.
 
 ---
@@ -23,7 +23,7 @@ merge copies the original entry bytes, never the decompiled view.
 # For Users
 
 > **Prebuilt downloads are available.** Grab the installer for your platform
-> from the [**Releases**](https://github.com/lyokha113/ldiff/releases/latest)
+> from the [**Releases**](https://github.com/lyokha113/lcdiff/releases/latest)
 > page — no toolchain or build step required. Prefer building from source? Skip
 > to [Build and run](#build-and-run).
 
@@ -35,38 +35,38 @@ files by hand).
 
 ### macOS (Apple Silicon)
 
-1. Download `LDiff-<version>-aarch64.dmg` and `install-macos.sh` from the
-   [latest release](https://github.com/lyokha113/ldiff/releases/latest).
+1. Download `LCDiff-<version>-aarch64.dmg` and `install-macos.sh` from the
+   [latest release](https://github.com/lyokha113/lcdiff/releases/latest).
 2. Run the installer (both files in the same folder):
 
    ```bash
-   bash install-macos.sh                 # copies LDiff.app to /Applications
-   LDIFF_LINK_CLI=1 bash install-macos.sh   # also adds an `ldiff` CLI launcher
+   bash install-macos.sh                 # copies LCDiff.app to /Applications
+   LCDIFF_LINK_CLI=1 bash install-macos.sh   # also adds an `lcdiff` CLI launcher
    ```
 
-   LDiff is **unsigned** (no Apple Developer ID), so the script clears the
+   LCDiff is **unsigned** (no Apple Developer ID), so the script clears the
    Gatekeeper quarantine flag for you. Without it macOS reports the app as
-   "damaged". To do it by hand instead: drag `LDiff.app` to `/Applications`,
-   then `xattr -dr com.apple.quarantine /Applications/LDiff.app`.
+   "damaged". To do it by hand instead: drag `LCDiff.app` to `/Applications`,
+   then `xattr -dr com.apple.quarantine /Applications/LCDiff.app`.
 
-3. Launch from Spotlight/Launchpad, or `open -a LDiff`.
+3. Launch from Spotlight/Launchpad, or `open -a LCDiff`.
 
 ### Linux (Ubuntu 22.04+ / glibc 2.35+)
 
 Two artifacts ship as GitHub release assets: a portable **AppImage** (runs on
 any recent distro) and a **`.deb`** (Debian/Ubuntu). Arch Linux users should
-install from AUR with `yay -S ldiff` (or `paru -S ldiff`). The
+install from AUR with `yay -S lcdiff` (or `paru -S lcdiff`). The
 `install-linux.sh` helper handles the GitHub release assets — pass it whichever
 you downloaded:
 
 ```bash
-bash install-linux.sh LDiff_<version>_amd64.AppImage   # -> ~/.local/bin/ldiff + app menu entry
-bash install-linux.sh LDiff_<version>_amd64.deb        # -> system install via apt (sudo)
+bash install-linux.sh LCDiff_<version>_amd64.AppImage   # -> ~/.local/bin/lcdiff + app menu entry
+bash install-linux.sh LCDiff_<version>_amd64.deb        # -> system install via apt (sudo)
 ```
 
-The AppImage path needs no root and adds an `ldiff` command plus a desktop
+The AppImage path needs no root and adds an `lcdiff` command plus a desktop
 entry. On Wayland, if drag-and-drop misbehaves, launch with
-`GDK_BACKEND=x11 ldiff`.
+`GDK_BACKEND=x11 lcdiff`.
 
 > The GitHub Linux release is built for **x86_64**. Arch Linux uses the AUR
 > package instead. For ARM Linux, build from source (see [For
@@ -98,8 +98,8 @@ jlink --version   # must report 17 or newer
 ## Get the source
 
 ```bash
-git clone https://github.com/lyokha113/ldiff.git
-cd ldiff
+git clone https://github.com/lyokha113/lcdiff.git
+cd lcdiff
 ```
 
 To update later, pull the latest and rebuild:
@@ -107,7 +107,7 @@ To update later, pull the latest and rebuild:
 ```bash
 git pull
 npm install
-LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+LCDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
 ```
 
 ## Build and run
@@ -117,17 +117,17 @@ LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
 npm install
 
 # 2. Build the JVM decompiler sidecar and its bundled runtime
-LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+LCDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
 
 # 3. Launch the desktop app
 npm run tauri -- dev
 ```
 
 Step 2 is required for **Decompile** and **bytecode** views to work. If you skip
-it, LDiff still opens, inspects, diffs, and merges archives — only the JVM-backed
+it, LCDiff still opens, inspects, diffs, and merges archives — only the JVM-backed
 decompiler degrades. Run it once; re-run only after pulling sidecar changes.
 
-`npm run tauri -- dev` opens LDiff in a native window with hot reload. The first
+`npm run tauri -- dev` opens LCDiff in a native window with hot reload. The first
 run compiles the Rust host, so it takes a few minutes; later launches are fast.
 
 ### Want a standalone app you can double-click?
@@ -144,7 +144,7 @@ signing, and notarization steps are in **[For Developers](#building-and-packagin
 On Wayland (Linux), Browse and path input are the most reliable ways to open
 files. If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
 
-## Using LDiff
+## Using LCDiff
 
 1. **Open** — use **Browse**, paste a path, or drag a `.jar` / `.zip` / folder
    onto a panel.
@@ -158,7 +158,7 @@ files. If drag-and-drop misbehaves, launch under XWayland (`GDK_BACKEND=x11`).
 5. **Merge** — use the arrow buttons or row context menu to stage original bytes
    from one side to the other. Pending changes show a badge until you save.
 6. **Save** — writes atomically. Enable the backup option to keep a `.bak`.
-   LDiff warns before saving over a signed JAR and before discarding staged
+   LCDiff warns before saving over a signed JAR and before discarding staged
    changes.
 
 Preferences lets you switch between Light, Dark, and System appearance patterns,
@@ -167,7 +167,7 @@ Search, Decompiler, and Save defaults.
 
 ### Keyboard shortcuts
 
-App-level shortcuts work while the LDiff window is focused.
+App-level shortcuts work while the LCDiff window is focused.
 
 `Cmd` on macOS and `Ctrl` on Windows/Linux are used for `CmdOrCtrl` actions.
 Tab navigation is always `Ctrl+Tab` / `Ctrl+Shift+Tab` on every platform
@@ -206,7 +206,7 @@ Shortcut remapping and global system-wide hotkeys are not included.
 
 # For Developers
 
-Everything below is for building LDiff from source and contributing.
+Everything below is for building LCDiff from source and contributing.
 
 ## Architecture
 
@@ -215,7 +215,7 @@ React + shadcn/ui + Tailwind + Monaco   (view + intent emitter)
         |  Tauri IPC
 Rust src-tauri  (commands, async adapters)
         |
-Rust ldiff-core  (archive state, staged bytes, CRC diff, search, save)
+Rust lcdiff-core  (archive state, staged bytes, CRC diff, search, save)
         |  framed stdio
 JVM decompiler sidecar  (Vineflower default / CFR / ASM, jlink Java 17)
 ```
@@ -225,14 +225,14 @@ atomic save path. Decompilation lives behind the sidecar boundary and may
 degrade independently when the JVM sidecar is absent. See
 `docs/ARCHITECTURE.md` for the boundary rules.
 
-LDiff is built from four layers:
+LCDiff is built from four layers:
 
-- **Rust `ldiff-core`** — validated open for JAR/ZIP files and folders, lazy
+- **Rust `lcdiff-core`** — validated open for JAR/ZIP files and folders, lazy
   index/read, CRC tree diff, normalized-path duplicate rejection, constant-pool
   search, text search, staged copy, signed-JAR detection, atomic archive save,
   folder target copy, and `.bak` backup.
-- **Rust `ldiff-cli`** — headless `list`, `diff`, `read`, `search`, and `copy`
-  smoke adapter over `ldiff-core`.
+- **Rust `lcdiff-cli`** — headless `list`, `diff`, `read`, `search`, and `copy`
+  smoke adapter over `lcdiff-core`.
 - **Tauri + React shell** — shadcn/ui + Tailwind v4 + Monaco UI with native
   picker, file drop, resizable tree/editor panels, context-menu merge actions,
   staged copy, signed-save confirmation, and async adapters for
@@ -244,10 +244,10 @@ LDiff is built from four layers:
 ## Repository Layout
 
 ```text
-ldiff/
+lcdiff/
   crates/
-    ldiff-core/   Rust archive engine (open, diff, search, stage, save)
-    ldiff-cli/    headless smoke adapter over ldiff-core
+    lcdiff-core/   Rust archive engine (open, diff, search, stage, save)
+    lcdiff-cli/    headless smoke adapter over lcdiff-core
   src-tauri/      Tauri v2 host: IPC commands, bundle config, capabilities
   src/            React + Monaco frontend (App.tsx, components, lib)
   sidecar/        JVM decompiler (Maven, CFR/Vineflower/ASM)
@@ -283,8 +283,8 @@ npm run tauri -- dev
 The headless Rust CLI is useful for quick checks without the desktop shell:
 
 ```bash
-cargo run -p ldiff-cli -- list path/to/archive.jar
-cargo run -p ldiff-cli -- diff path/to/left.jar path/to/right.jar
+cargo run -p lcdiff-cli -- list path/to/archive.jar
+cargo run -p lcdiff-cli -- diff path/to/left.jar path/to/right.jar
 ```
 
 ## Developer Checks
@@ -308,7 +308,7 @@ Build the JVM sidecar and assemble its bundled resources:
 
 ```bash
 mvn -f sidecar/pom.xml clean package -DskipTests
-LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+LCDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
   scripts/assemble-sidecar-resources.sh
 scripts/test-sidecar-smoke.sh
 ```
@@ -358,7 +358,7 @@ and screenshots it to prove the GUI renders. The full release flow is in
 
 On Wayland, prefer Browse and path input to open files; if
 drag-and-drop misbehaves, relaunch under XWayland with
-`LDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LDiff`.
+`LCDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LCDiff`.
 
 Linux builds are unsigned; there is no Linux code-signing step.
 
@@ -370,7 +370,7 @@ The primary local target is `aarch64-apple-darwin`. Build a debug app bundle:
 npm run tauri -- build --debug --bundles app
 ```
 
-Intel macOS builds require `LDIFF_JLINK_X86_64_APPLE_DARWIN` to point at an
+Intel macOS builds require `LCDIFF_JLINK_X86_64_APPLE_DARWIN` to point at an
 x86_64 JDK/jlink.
 
 Sign, notarize, and package the bundle **in this order** (signing first,
@@ -378,18 +378,18 @@ notarization second, DMG packaging last):
 
 ```bash
 scripts/sign-macos-bundle.sh \
-  "$PWD/target/debug/bundle/macos/LDiff.app" \
+  "$PWD/target/debug/bundle/macos/LCDiff.app" \
   - \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+  "$PWD/target/debug/bundle/macos/LCDiff-signed.app"
 
 APPLE_ID=you@example.com \
 APPLE_TEAM_ID=TEAMID1234 \
 APPLE_APP_PASSWORD=app-specific-password \
-  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LCDiff-signed.app"
 
 scripts/package-macos-dmg.sh \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app" \
-  "$PWD/target/debug/bundle/dmg/LDiff-signed.dmg"
+  "$PWD/target/debug/bundle/macos/LCDiff-signed.app" \
+  "$PWD/target/debug/bundle/dmg/LCDiff-signed.dmg"
 
 scripts/verify-macos-distribution.sh --skip-install
 ```
@@ -429,8 +429,8 @@ unsigned):
 Product and build references:
 
 - `docs/ARCHITECTURE.md` — application shape and boundary rules.
-- `docs/LDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
-- `docs/LDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
+- `docs/LCDIFF_IMPLEMENTATION_PLAN.md` — implementation plan.
+- `docs/LCDIFF_COMPLETION_AUDIT.md` — completion audit with proof evidence.
 - `docs/PLATFORM_VALIDATION.md` — external platform validation gates.
 - `docs/OPERATIONS_MACOS.md` — macOS sign / notarize / package / verify runbook.
 - `docs/RELEASING.md` — end-to-end release runbook (macOS + Linux artifacts).
@@ -440,7 +440,7 @@ Product and build references:
 
 1. Read `CLAUDE.md` and `docs/ARCHITECTURE.md` before changing code.
 2. Run the full developer checks above, including `npm run verify:all`.
-3. Keep `docs/LDIFF_COMPLETION_AUDIT.md` in sync with new behavior;
+3. Keep `docs/LCDIFF_COMPLETION_AUDIT.md` in sync with new behavior;
    `npm run verify:docs` enforces documentation invariants.
 4. For Linux/macOS builds, confirm the bundle builds via `scripts/build-linux.sh`
    or `npm run tauri -- build`. A `platform-validation/` evidence report is

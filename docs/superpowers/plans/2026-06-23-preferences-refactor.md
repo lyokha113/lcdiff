@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor LDiff Preferences into working Appearance, Editor, and Misc sections with editor-only installed-font selection.
+**Goal:** Refactor LCDiff Preferences into working Appearance, Editor, and Misc sections with editor-only installed-font selection.
 
 **Architecture:** Keep preference persistence in the React adapter and keep archive/decompiler/save domain state out of presentational components. Add one narrow Tauri adapter command for installed font families, backed by a pure Rust helper that is unit tested. Monaco receives editor font and effective light/dark theme through `DiffView`; app chrome keeps its normal UI fonts.
 
@@ -221,7 +221,7 @@ describe("UI preferences persistence", () => {
     expect(root.dataset.effectiveColorPattern).toBe("light");
     expect(root.style.getPropertyValue("--background")).not.toBe("");
     expect(root.style.getPropertyValue("--font-mono")).toBe("");
-    expect(root.style.getPropertyValue("--ldiff-editor-font-size")).toBe("");
+    expect(root.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
   });
 });
 ```
@@ -241,7 +241,7 @@ Expected: FAIL with TypeScript/runtime errors for `colorPattern`, `misc`, `DEFAU
 Replace `src/lib/preferences.ts` with:
 
 ```ts
-export const UI_PREFERENCES_STORAGE_KEY = "ldiff.uiPreferences.v1";
+export const UI_PREFERENCES_STORAGE_KEY = "lcdiff.uiPreferences.v1";
 
 export type ColorPattern = "light" | "dark" | "system";
 export type EffectiveColorPattern = "light" | "dark";
@@ -556,9 +556,9 @@ export function applyPreferencesToRoot(
   root.style.removeProperty("--font-sans");
   root.style.removeProperty("--font-tree");
   root.style.removeProperty("--font-mono");
-  root.style.removeProperty("--ldiff-ui-font-size");
-  root.style.removeProperty("--ldiff-tree-font-size");
-  root.style.removeProperty("--ldiff-editor-font-size");
+  root.style.removeProperty("--lcdiff-ui-font-size");
+  root.style.removeProperty("--lcdiff-tree-font-size");
+  root.style.removeProperty("--lcdiff-editor-font-size");
 }
 ```
 
@@ -691,7 +691,7 @@ mod system_fonts;
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop system_fonts
+rtk cargo test -p lcdiff-desktop system_fonts
 ```
 
 Expected: PASS for the pure helper tests.
@@ -758,8 +758,8 @@ Run:
 
 ```bash
 rtk cargo fmt --all -- --check
-rtk cargo test -p ldiff-desktop system_fonts
-rtk cargo check -p ldiff-desktop
+rtk cargo test -p lcdiff-desktop system_fonts
+rtk cargo check -p lcdiff-desktop
 ```
 
 Expected: all PASS.
@@ -1637,7 +1637,7 @@ In `src/App.test.tsx`, update the existing "applies persisted UI preferences to 
 ```tsx
   it("applies persisted Appearance preferences to the app shell", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
       editor: { fontFamily: "Menlo", fontSize: 15 },
     }));
@@ -1648,7 +1648,7 @@ In `src/App.test.tsx`, update the existing "applies persisted UI preferences to 
     const shell = await screen.findByRole("main");
     await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
     expect(shell.dataset.effectiveColorPattern).toBe("light");
-    expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("");
+    expect(shell.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
   });
 ```
 
@@ -2041,8 +2041,8 @@ Run:
 
 ```bash
 rtk cargo fmt --all -- --check
-rtk cargo test -p ldiff-desktop system_fonts
-rtk cargo check -p ldiff-desktop
+rtk cargo test -p lcdiff-desktop system_fonts
+rtk cargo check -p lcdiff-desktop
 ```
 
 Expected: PASS.

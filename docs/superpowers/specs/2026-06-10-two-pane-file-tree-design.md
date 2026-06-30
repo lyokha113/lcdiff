@@ -37,7 +37,7 @@ independent synced trees; we render each existing row as two cells.
 
 - No second scroll container / scroll-sync logic (Approach B, rejected).
 - No change to `buildTree`, filtering, nested-archive expansion, staging,
-  context menu, or `ldiff-core`.
+  context menu, or `lcdiff-core`.
 - No change to the Monaco in-file diff (already done).
 
 ## Design (Approach A: split-row, single tree)

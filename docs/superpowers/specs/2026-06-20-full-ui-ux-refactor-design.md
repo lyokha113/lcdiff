@@ -1,4 +1,4 @@
-# LDiff full UI/UX refactor design
+# LCDiff full UI/UX refactor design
 
 ## Objective
 
@@ -8,7 +8,7 @@ The change is a frontend information-architecture and visual-system refactor, no
 
 ## Design direction
 
-LDiff becomes a focused “precision workspace” rather than a stack of unrelated controls. The visual language uses Geist for interface typography, JetBrains Mono for paths and data, deep graphite surfaces, warm brass as the only accent, cool neutral status colors, restrained grain, and clear optical hierarchy. Geist is the bundled fallback for the RNG-selected Satoshi because no maintained Fontsource package exists for an offline desktop bundle.
+LCDiff becomes a focused “precision workspace” rather than a stack of unrelated controls. The visual language uses Geist for interface typography, JetBrains Mono for paths and data, deep graphite surfaces, warm brass as the only accent, cool neutral status colors, restrained grain, and clear optical hierarchy. Geist is the bundled fallback for the RNG-selected Satoshi because no maintained Fontsource package exists for an offline desktop bundle.
 
 The selected composition is editorial asymmetry: strong identity and task framing on the left, operational content on the right. Motion is purposeful and reduced in the dense workspace. GSAP drives startup text reveals and image/surface scale-fade transitions; controls use short CSS transitions for immediate feedback. Reduced-motion preferences disable nonessential animation.
 
@@ -16,7 +16,7 @@ The selected composition is editorial asymmetry: strong identity and task framin
 
 The startup screen follows an app-appropriate AIDA sequence without becoming a marketing page:
 
-- Attention: an editorial split hero states what LDiff does in no more than three lines.
+- Attention: an editorial split hero states what LCDiff does in no more than three lines.
 - Interest: a dense 12-column mode grid prioritizes Compare while keeping View and recent work visible.
 - Desire: recent comparisons communicate continuity and make resuming work immediate.
 - Action: the primary CTA opens Compare; secondary actions open View or a recent session.

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import { chromium } from "playwright";
 
-const port = Number(process.env.LDIFF_FRONTEND_RENDER_PORT ?? 5174);
+const port = Number(process.env.LCDIFF_FRONTEND_RENDER_PORT ?? 5174);
 const url = `http://127.0.0.1:${port}`;
 
 async function disableAnimations(page) {
@@ -165,7 +165,7 @@ try {
         throw new Error(`unexpected startup render command: ${cmd}`);
       },
     };
-    localStorage.setItem("ldiff.history", JSON.stringify([
+    localStorage.setItem("lcdiff.history", JSON.stringify([
       { id: "render-1", mode: "compare", paths: ["/fixtures/left.jar", "/fixtures/right.jar"], openedAt },
       { id: "render-2", mode: "single", paths: ["/fixtures/view.jar"], openedAt: openedAt - 60_000 },
       { id: "render-3", mode: "single", paths: ["/fixtures/third.jar"], openedAt: openedAt - 120_000 },
@@ -173,13 +173,13 @@ try {
       { id: "render-5", mode: "single", paths: ["/fixtures/fifth.jar"], openedAt: openedAt - 240_000 },
       { id: "render-6", mode: "single", paths: ["/fixtures/sixth.jar"], openedAt: openedAt - 300_000 },
     ]));
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
     }));
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(page);
-  await page.getByRole("main", { name: "Start LDiff" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
   await page.locator(".launch-card--recent").waitFor({ timeout: 5_000 });
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 5) {
     throw new Error("startup did not render exactly five collapsed history rows");
@@ -403,7 +403,7 @@ try {
   await mockedPage.addInitScript(() => {
     const opened = {};
     const searchCalls = [];
-    window.__LDIFF_RENDER_SEARCH_CALLS__ = searchCalls;
+    window.__LCDIFF_RENDER_SEARCH_CALLS__ = searchCalls;
     const archives = {
       "/fixtures/left.jar": {
         path: "/fixtures/left.jar",
@@ -581,13 +581,13 @@ try {
   await mockedPage.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
   await mockedPage.evaluate(() => {
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
     }));
   });
   await mockedPage.reload({ waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
-  await mockedPage.getByRole("main", { name: "Start LDiff" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Compare two sources" }).click();
 
   // Helpers for the new chip-based source UI. The path Input only renders while
@@ -715,7 +715,7 @@ try {
   await mockedPage.getByRole("button", { name: "Search files" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Search files", exact: true }).click();
   await mockedPage.locator("text=Search matched 1 entries.").waitFor({ timeout: 5_000 });
-  const searchCalls = await mockedPage.evaluate(() => window.__LDIFF_RENDER_SEARCH_CALLS__);
+  const searchCalls = await mockedPage.evaluate(() => window.__LCDIFF_RENDER_SEARCH_CALLS__);
   const expectedSearchOptions = { includePath: true, includeText: true, includeConstants: true };
   for (const side of ["left", "right"]) {
     const call = searchCalls.find((candidate) => candidate.side === side);

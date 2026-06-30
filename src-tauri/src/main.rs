@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use ldiff_core::{
+use lcdiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions,
     CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan,
     NestedArchiveCache, compare, edit, search_constant_pool,
@@ -479,7 +479,7 @@ fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Op
 }
 
 fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
-    use ldiff_core::{ComparePair, PairStatus};
+    use lcdiff_core::{ComparePair, PairStatus};
     let pairs = archive
         .entries()
         .map(|entry| {
@@ -1319,7 +1319,7 @@ fn main() {
             prefetch_siblings
         ])
         .run(tauri::generate_context!())
-        .expect("error while running LDiff");
+        .expect("error while running LCDiff");
 }
 
 #[cfg(test)]
@@ -1337,7 +1337,7 @@ mod tests {
     };
     #[cfg(not(target_os = "macos"))]
     use super::{build_app_menu, install_app_menu};
-    use ldiff_core::{Archive, DecompileEngine};
+    use lcdiff_core::{Archive, DecompileEngine};
     #[cfg(not(target_os = "macos"))]
     use tauri::Manager;
 
@@ -1974,7 +1974,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(preview.kind, ldiff_core::EntryKind::Directory);
+        assert_eq!(preview.kind, lcdiff_core::EntryKind::Directory);
         assert_eq!(preview.language, "plaintext");
         assert_eq!(preview.details, None);
         assert_eq!(preview.content, "");

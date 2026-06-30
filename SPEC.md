@@ -1,7 +1,7 @@
 # SPEC — Java Decompiler + Archive Diff/Merge Tool
 
-**Codename (tentative):** `LDiff` — "JD-GUI + Beyond Compare for JAR/ZIP"
-**Status:** Draft SPEC v0.1 — MVP implemented (see `docs/LDIFF_COMPLETION_AUDIT.md`)
+**Codename (tentative):** `LCDiff` — "JD-GUI + Beyond Compare for JAR/ZIP"
+**Status:** Draft SPEC v0.1 — MVP implemented (see `docs/LCDIFF_COMPLETION_AUDIT.md`)
 **Audience:** engineering / AI context document
 
 > **Implementation status (2026-06-06):** M0–M4 are implemented locally. `cargo test --workspace`, `cargo clippy -D warnings`, `cargo fmt --check`, the JVM sidecar smoke test, and `npm run verify:all` (frontend build + packaging/frontend-invariant/frontend-render/docs verifiers) all pass. No GitHub CI/CD pipeline is configured yet; builds and validation run locally. Items in §16 and entries marked *deferred / phase 2 / nice-to-have* remain out of MVP, and the external platform gates (Windows/Linux display matrix, macOS Developer ID notarization) still require their target environments and credentials per `docs/PLATFORM_VALIDATION.md`.

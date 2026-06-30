@@ -37,7 +37,7 @@ block navigator to the editor surface.
 
 - No new theme marketplace, theme catalog, or arbitrary CSS editor.
 - No native preference config file or sync.
-- No changes to `ldiff-core`, archive diff semantics, merge semantics, save
+- No changes to `lcdiff-core`, archive diff semantics, merge semantics, save
   semantics, or sidecar behavior.
 - No keyboard shortcut remapping UI.
 - No full editor toolbar redesign beyond the compact diff navigator.

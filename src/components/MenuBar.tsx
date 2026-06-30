@@ -29,9 +29,9 @@ export function MenuBar({
 }: MenuBarProps) {
   return (
     <header className="command-bar" aria-label="Workspace commands">
-      <div className="command-brand" aria-label="LDiff workspace">
+      <div className="command-brand" aria-label="LCDiff workspace">
         <span className="command-brand__mark">LD</span>
-        <span className="command-brand__name">LDiff</span>
+        <span className="command-brand__name">LCDiff</span>
       </div>
 
       <div className="command-group command-group--mode" role="group" aria-label="Workspace mode">

@@ -2,7 +2,7 @@
 
 ## Problem
 
-LDiff already has a center-focused workspace, a right-side Config drawer, a
+LCDiff already has a center-focused workspace, a right-side Config drawer, a
 collapsible Search bar, file tree tabs, and per-file diff tabs. The current UI
 still has three product issues:
 
@@ -39,7 +39,7 @@ still has three product issues:
 
 - No cloud sync, import/export, or config-file persistence in this phase.
 - No custom CSS editor or external theme marketplace.
-- No rewrite of `ldiff-core` archive, diff, merge, save, or decompiler cache
+- No rewrite of `lcdiff-core` archive, diff, merge, save, or decompiler cache
   semantics.
 - No change to merge writes: decompiled Java remains read-only and never enters
   the write path.
@@ -167,7 +167,7 @@ Use a curated hybrid catalog. The UI must present two sections:
 
 ### Dark Themes
 
-- LDiff Graphite
+- LCDiff Graphite
 - GitHub Dark inspired
 - One Dark inspired
 - Dracula inspired
@@ -425,8 +425,8 @@ Expected frontend component changes:
 Run scoped checks first:
 
 ```bash
-rtk cargo test -p ldiff-core
-rtk cargo test -p ldiff-cli
+rtk cargo test -p lcdiff-core
+rtk cargo test -p lcdiff-cli
 rtk npm test -- src/components/ConfigDrawer.test.tsx src/components/SearchBar.test.tsx
 rtk npm test -- src/App.test.tsx
 rtk npm run build

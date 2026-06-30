@@ -1,17 +1,17 @@
 # Architecture
 
-## LDiff Application Shape
+## LCDiff Application Shape
 
 ```text
 React + shadcn/ui + Tailwind v4 + Monaco desktop view
   -> Tauri IPC adapter
-    -> ldiff-core Rust domain/application crate
+    -> lcdiff-core Rust domain/application crate
       -> lazy ZIP/JAR reads and atomic rewrite
       -> length-prefixed JSON sidecar protocol
         -> bundled JVM service: Vineflower default, CFR alternate, ASM Textifier
 ```
 
-`ldiff-core` owns archive metadata, normalized entries, CRC diff, class
+`lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
 constant-pool search, staged changes, and save semantics. Frontend and CLI code
 are adapters. Decompiled Java is a view only and must never enter merge writes.
 

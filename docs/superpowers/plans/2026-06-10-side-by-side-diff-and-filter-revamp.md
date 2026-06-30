@@ -4,7 +4,7 @@
 
 **Goal:** Make the diff editor always render two panes side-by-side, and replace the four-mode tree filter (`all`/`differences`/`onlyLeft`/`onlyRight`) with three modes (`all`/`diff`/`same`).
 
-**Architecture:** Pure frontend change in the Tauri React adapter. The Monaco `DiffEditor` loses its inline-collapse options. `TreeFilter` is renamed/reduced in `types.ts`, its predicate in `tree.ts` is rewritten, and the `SearchBar` dropdown plus two tests and two verify-scripts are updated to the new values. No `ldiff-core` / Rust / IPC change.
+**Architecture:** Pure frontend change in the Tauri React adapter. The Monaco `DiffEditor` loses its inline-collapse options. `TreeFilter` is renamed/reduced in `types.ts`, its predicate in `tree.ts` is rewritten, and the `SearchBar` dropdown plus two tests and two verify-scripts are updated to the new values. No `lcdiff-core` / Rust / IPC change.
 
 **Tech Stack:** TypeScript, React, Monaco (`@monaco-editor/react`), Vitest, Playwright-style render harness (`scripts/verify-frontend-render.mjs`).
 

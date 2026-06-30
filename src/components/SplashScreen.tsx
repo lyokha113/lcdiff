@@ -60,9 +60,9 @@ export function SplashScreen({
   }, { scope: rootRef, dependencies: [motion] });
 
   return (
-    <main className="launch" aria-label="Start LDiff" ref={rootRef}>
+    <main className="launch" aria-label="Start LCDiff" ref={rootRef}>
       <header className="launch__identity">
-        <span className="launch__wordmark">LDiff</span>
+        <span className="launch__wordmark">LCDiff</span>
         <span className="launch__descriptor">Archive diff and merge</span>
         <span className="launch__edition">Desktop workspace</span>
       </header>

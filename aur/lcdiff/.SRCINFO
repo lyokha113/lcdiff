@@ -1,8 +1,8 @@
-pkgbase = ldiff
+pkgbase = lcdiff
 	pkgdesc = Inspect, compare, and merge JAR/ZIP archives and folders
 	pkgver = 0.2.0
 	pkgrel = 1
-	url = https://github.com/lyokha113/ldiff
+	url = https://github.com/lyokha113/lcdiff
 	arch = x86_64
 	license = MIT
 	makedepends = cargo
@@ -26,6 +26,6 @@ pkgbase = ldiff
 	depends = webkit2gtk-4.1
 	depends = xdotool
 	options = !strip
-	install = ldiff.install
-	source = git+https://github.com/lyokha113/ldiff.git#tag=v0.2.0
+	install = lcdiff.install
+	source = git+https://github.com/lyokha113/lcdiff.git#tag=v0.2.0
 	sha256sums = SKIP

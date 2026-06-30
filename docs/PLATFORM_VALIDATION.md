@@ -59,7 +59,7 @@ Run the same Tauri bundle on:
 On each environment, record evidence with:
 
 ```bash
-scripts/verify-linux-display-matrix.sh --app /path/to/LDiff --sample /path/to/sample.jar
+scripts/verify-linux-display-matrix.sh --app /path/to/LCDiff --sample /path/to/sample.jar
 ```
 
 The script writes a timestamped Markdown report under `platform-validation/`.
@@ -67,7 +67,7 @@ The script writes a timestamped Markdown report under `platform-validation/`.
 For Wayland fallback runs:
 
 ```bash
-LDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LDiff
+LCDIFF_FORCE_XWAYLAND=1 scripts/launch-linux-xwayland.sh /path/to/LCDiff
 ```
 
 Pass evidence:
@@ -77,7 +77,7 @@ Pass evidence:
 - Browse and path input open a valid `.jar` or `.zip` on every environment.
 - If OS file drop fails on native Wayland, record the compositor/session and
   verify that Browse/path input still work.
-- If `LDIFF_FORCE_XWAYLAND=1` is supported by the environment, record whether
+- If `LCDIFF_FORCE_XWAYLAND=1` is supported by the environment, record whether
   OS file drop recovers under XWayland.
 
 ## macOS Developer ID Notarization
@@ -104,17 +104,17 @@ scripts/verify-macos-distribution.sh --target x86_64-apple-darwin
 ```
 
 When cross-building on macOS, provide a target-specific JDK/jlink path if the
-default `LDIFF_JLINK` does not match the requested target:
+default `LCDIFF_JLINK` does not match the requested target:
 
 ```bash
-LDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
+LCDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
   scripts/verify-macos-distribution.sh --target x86_64-apple-darwin
 ```
 
 The runner signs inside-out, strips extended attributes before strict signature
 verification, notarizes when Developer ID and Apple notary credentials are
-present, promotes the final `LDiff.app`, packages the DMG, verifies the
-post-DMG app, mounts the DMG, verifies the mounted `LDiff.app`, and writes
+present, promotes the final `LCDiff.app`, packages the DMG, verifies the
+post-DMG app, mounts the DMG, verifies the mounted `LCDiff.app`, and writes
 `platform-validation/macos-distribution-*.md`.
 
 Pass evidence:
@@ -125,20 +125,20 @@ Pass evidence:
 - The selected JDK `java`, app executable, and bundled `jre/bin/java` are Mach-O
   binaries matching the requested target architecture (`arm64` for
   `aarch64-apple-darwin`, `x86_64` for `x86_64-apple-darwin`).
-- `scripts/sign-macos-bundle.sh` produces `LDiff-signed.app`.
+- `scripts/sign-macos-bundle.sh` produces `LCDiff-signed.app`.
 - `codesign --verify --deep --strict` passes.
-- `codesign -d --entitlements - LDiff-signed.app` includes:
+- `codesign -d --entitlements - LCDiff-signed.app` includes:
   `com.apple.security.cs.allow-jit`,
   `com.apple.security.cs.allow-unsigned-executable-memory`, and
   `com.apple.security.cs.disable-library-validation`.
 - The final app still passes `codesign --verify --deep --strict` after DMG
   packaging.
-- The mounted DMG contains `LDiff.app`, an `Applications` symlink, and the
+- The mounted DMG contains `LCDiff.app`, an `Applications` symlink, and the
   mounted app passes `codesign --verify --deep --strict`.
-- `scripts/notarize-macos-app.sh LDiff-signed.app` completes, staples the
+- `scripts/notarize-macos-app.sh LCDiff-signed.app` completes, staples the
   ticket, and `spctl --assess --type execute --verbose=4` passes.
-- `scripts/package-macos-dmg.sh` creates the `.dmg` from `LDiff.app`; when
-  signing is enabled, package from the promoted `LDiff-signed.app`. Unsigned
+- `scripts/package-macos-dmg.sh` creates the `.dmg` from `LCDiff.app`; when
+  signing is enabled, package from the promoted `LCDiff-signed.app`. Unsigned
   builds keep the unsigned `.app`.
 - Mounted `.dmg` contains the `.app` bundle and an `Applications` symlink at the
   volume root.
@@ -149,7 +149,7 @@ Local builds produce these per platform:
 
 - macOS arm64 and x64 `.app` plus `.dmg` bundles.
 - Linux AppImage/deb/rpm bundles.
-- Arch Linux AUR package for `ldiff`.
+- Arch Linux AUR package for `lcdiff`.
 - Windows NSIS/MSI installers.
 - Optional signing/notarization runs only when its secrets are present; unsigned
   builds are still produced when secrets are absent.

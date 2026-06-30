@@ -32,7 +32,7 @@
 }
 
 /*
-  LDiff — "precision developer instrument" aesthetic.
+  LCDiff — "precision developer instrument" aesthetic.
   Deep graphite canvas, warm brass accent, cool slate structure.
   Mono-forward technical surfaces; Bricolage Grotesque for identity.
   Functionality and configuration live in visually distinct zones.
@@ -170,7 +170,7 @@ main.app-shell {
 .search-result-row,
 .search-result-path {
   font-family: var(--font-tree, var(--font-mono));
-  font-size: var(--ldiff-tree-font-size, 0.74rem);
+  font-size: var(--lcdiff-tree-font-size, 0.74rem);
 }
 
 /* ---------- center-focused page layout ---------- */
@@ -815,7 +815,7 @@ h1 {
   min-width: 0;
   gap: 6px;
   font-family: var(--font-tree, var(--font-mono));
-  font-size: var(--ldiff-tree-font-size, 0.74rem);
+  font-size: var(--lcdiff-tree-font-size, 0.74rem);
 }
 .search-result-path,
 .search-result-preview {

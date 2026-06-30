@@ -90,9 +90,9 @@ public final class PaymentRouter {
   const p1 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   await p1.addInitScript(mock);
   await p1.goto(url, { waitUntil: "domcontentloaded" });
-  await p1.locator("h1", { hasText: "LDiff" }).waitFor({ timeout: 8000 });
+  await p1.locator("h1", { hasText: "LCDiff" }).waitFor({ timeout: 8000 });
   await p1.waitForTimeout(500);
-  await p1.screenshot({ path: "/tmp/ldiff-empty.png" });
+  await p1.screenshot({ path: "/tmp/lcdiff-empty.png" });
 
   // loaded compare state
   await p1.getByPlaceholder("~/path/to/archive.jar or folder").nth(0).fill("/demo/service-1.4.0.jar");
@@ -103,7 +103,7 @@ public final class PaymentRouter {
   await p1.locator(".tree-row", { hasText: "PaymentRouter.class" }).click();
   await p1.locator("text=class PaymentRouter").first().waitFor({ timeout: 12000 });
   await p1.waitForTimeout(900);
-  await p1.screenshot({ path: "/tmp/ldiff-loaded.png" });
+  await p1.screenshot({ path: "/tmp/lcdiff-loaded.png" });
 
   await browser.close();
   console.log("screenshots written");

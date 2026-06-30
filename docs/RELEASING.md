@@ -1,4 +1,4 @@
-# Releasing LDiff
+# Releasing LCDiff
 
 End-to-end runbook for cutting a tagged GitHub release with macOS and Linux
 artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
@@ -8,15 +8,15 @@ artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
 
 | Platform | File | Built where |
 | --- | --- | --- |
-| macOS arm64 | `LDiff-<version>-aarch64.dmg` | locally on macOS |
-| Linux x86_64 | `LDiff_<version>_amd64.AppImage` | Docker (`ubuntu:22.04`) |
-| Linux x86_64 | `LDiff_<version>_amd64.deb` | Docker (`ubuntu:22.04`) |
-| Arch Linux | `aur/ldiff/PKGBUILD` | AUR (`yay` / `paru`) |
+| macOS arm64 | `LCDiff-<version>-aarch64.dmg` | locally on macOS |
+| Linux x86_64 | `LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:22.04`) |
+| Linux x86_64 | `LCDiff_<version>_amd64.deb` | Docker (`ubuntu:22.04`) |
+| Arch Linux | `aur/lcdiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
 
 The install scripts ship as release assets so users get them next to the
 binaries without cloning the repo. Arch Linux uses the AUR package in
-`aur/ldiff/` instead of a GitHub release asset.
+`aur/lcdiff/` instead of a GitHub release asset.
 
 ## 1. Pick the version
 
@@ -32,7 +32,7 @@ Bump all three for a new version, commit, then tag `v<version>`.
 
 ```bash
 npm install
-LDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
+LCDIFF_JLINK="$(command -v jlink)" scripts/assemble-sidecar-resources.sh
 npm run tauri -- build --bundles app
 ```
 
@@ -42,13 +42,13 @@ with ad-hoc signing the notarize step is skipped:
 
 ```bash
 scripts/sign-macos-bundle.sh \
-  "$PWD/target/release/bundle/macos/LDiff.app" \
+  "$PWD/target/release/bundle/macos/LCDiff.app" \
   - \
-  "$PWD/target/release/bundle/macos/LDiff-signed.app"
+  "$PWD/target/release/bundle/macos/LCDiff-signed.app"
 
 scripts/package-macos-dmg.sh \
-  "$PWD/target/release/bundle/macos/LDiff-signed.app" \
-  "$PWD/target/release/bundle/dmg/LDiff-<version>-aarch64.dmg"
+  "$PWD/target/release/bundle/macos/LCDiff-signed.app" \
+  "$PWD/target/release/bundle/dmg/LCDiff-<version>-aarch64.dmg"
 ```
 
 For a Gatekeeper-clean signed/notarized build instead, supply Developer ID
@@ -65,8 +65,8 @@ This builds inside `ubuntu:22.04` so the glibc floor is 2.35 and the bundled
 jlink JRE is Linux x86_64. Copy the artifacts out of the build volume:
 
 ```bash
-cid=$(docker create --platform linux/amd64 -v ldiff-linux-amd64-u2204-target:/t \
-  ldiff-linux-build-amd64-u2204)
+cid=$(docker create --platform linux/amd64 -v lcdiff-linux-amd64-u2204-target:/t \
+  lcdiff-linux-build-amd64-u2204)
 docker cp "$cid":/t/release/bundle ./artifacts/linux-bundle
 docker rm "$cid"
 ```
@@ -75,9 +75,9 @@ docker rm "$cid"
 
 ## 3.5 Publish the AUR package
 
-Update `aur/ldiff/PKGBUILD` and `aur/ldiff/.SRCINFO` when the version changes,
+Update `aur/lcdiff/PKGBUILD` and `aur/lcdiff/.SRCINFO` when the version changes,
 then push the AUR repo separately from the GitHub release. Arch users install
-it with `yay -S ldiff` or `paru -S ldiff`.
+it with `yay -S lcdiff` or `paru -S lcdiff`.
 
 ## 4. Publish the release
 
@@ -85,22 +85,22 @@ Stage every artifact under one folder, then create the tagged release:
 
 ```bash
 gh release create v<version> \
-  artifacts/macos/LDiff-<version>-aarch64.dmg \
-  artifacts/linux/LDiff_<version>_amd64.AppImage \
-  artifacts/linux/LDiff_<version>_amd64.deb \
+  artifacts/macos/LCDiff-<version>-aarch64.dmg \
+  artifacts/linux/LCDiff_<version>_amd64.AppImage \
+  artifacts/linux/LCDiff_<version>_amd64.deb \
   scripts/install-macos.sh \
   scripts/install-linux.sh \
-  --title "LDiff v<version>" \
+  --title "LCDiff v<version>" \
   --notes-file docs/release-notes/v<version>.md
 ```
 
 ## 5. Verify the published release
 
 - macOS: download the DMG + `install-macos.sh`, run `bash install-macos.sh`,
-  confirm `open -a LDiff` launches.
+  confirm `open -a LCDiff` launches.
 - Linux: download the AppImage + `install-linux.sh`, run
-  `bash install-linux.sh LDiff_<version>_amd64.AppImage`, confirm `ldiff` runs.
-- Arch Linux: install from AUR with `yay -S ldiff`, confirm `ldiff` runs.
+  `bash install-linux.sh LCDiff_<version>_amd64.AppImage`, confirm `lcdiff` runs.
+- Arch Linux: install from AUR with `yay -S lcdiff`, confirm `lcdiff` runs.
 
 ## Notes
 

@@ -39,7 +39,7 @@ properly:
 - No per-theme Monaco palette registration beyond mapping Light/System-light to
   Monaco `light` and Dark/System-dark to `vs-dark`.
 - No native preference config file or cross-device sync in this phase.
-- No changes to archive, merge, save, decompiler cache, or `ldiff-core`
+- No changes to archive, merge, save, decompiler cache, or `lcdiff-core`
   semantics.
 - No search workflow redesign beyond moving default controls into Misc.
 
@@ -169,7 +169,7 @@ If font enumeration fails, the Editor section still works with fallback choices:
 The failure should be visible as a lightweight fallback state in the Editor
 section, not as a blocking error dialog.
 
-The command is an adapter concern. It must not touch `ldiff-core`.
+The command is an adapter concern. It must not touch `lcdiff-core`.
 
 ## Misc Behavior
 

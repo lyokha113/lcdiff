@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Reorganize the LDiff frontend so File Tree + Diff fill the center with no page scroll, move all configuration into a right-side push drawer, collapse file pickers to a compact chip bar, and replace text controls with lucide icons.
+**Goal:** Reorganize the LCDiff frontend so File Tree + Diff fill the center with no page scroll, move all configuration into a right-side push drawer, collapse file pickers to a compact chip bar, and replace text controls with lucide icons.
 
 **Architecture:** Extract presentational components from the 957-line `src/App.tsx`. All state, Tauri `invoke` logic, the search-highlight effect, the signed-save `Dialog`, the editor `onMount` ref-assignment handlers, and the `ResizablePanelGroup`/`TooltipProvider` composition **stay in `App.tsx`** (single source of truth). New child components receive state + callbacks via props. Pure UI reorganization — no backend/Tauri command changes, no behavior changes.
 
@@ -1243,7 +1243,7 @@ export function MenuBar({
   return (
     <header className="menu-bar">
       <div className="brand">
-        <h1>LDiff</h1>
+        <h1>LCDiff</h1>
         <span className="tagline">archive diff · merge</span>
       </div>
       <div className="topbar-controls">

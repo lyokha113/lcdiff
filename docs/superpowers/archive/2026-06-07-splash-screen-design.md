@@ -2,7 +2,7 @@
 
 Date: 2026-06-07
 Status: Approved (pending implementation)
-Component: LDiff (Tauri + React + shadcn/ui)
+Component: LCDiff (Tauri + React + shadcn/ui)
 
 ## Summary
 
@@ -67,7 +67,7 @@ interface HistoryEntry {
 }
 ```
 
-- `localStorage` key: `ldiff.history`.
+- `localStorage` key: `lcdiff.history`.
 - Stored as a JSON array, newest first.
 - Capped at `HISTORY_LIMIT = 20`; oldest entries evicted on overflow.
 
@@ -114,7 +114,7 @@ place. (YAGNI: no auto-prune or "file missing" badge in this iteration.)
 ## Layout — Stacked (Layout 1)
 
 ```
-        LDiff
+        LCDiff
   Inspect, compare & merge JAR / ZIP / folders
 
   [ 🔍 Decompile            ] [ ⇄ Compare / Merge      ]

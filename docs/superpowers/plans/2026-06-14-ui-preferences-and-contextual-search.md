@@ -12,7 +12,7 @@
 
 ## Scope Check
 
-The approved spec covers one coherent product slice: UI preferences and search UX. It touches frontend and the Tauri search adapter, but the backend change is limited to the search command contract. Do not change merge/save semantics, decompiler cache architecture, or `ldiff-core` archive ownership.
+The approved spec covers one coherent product slice: UI preferences and search UX. It touches frontend and the Tauri search adapter, but the backend change is limited to the search command contract. Do not change merge/save semantics, decompiler cache architecture, or `lcdiff-core` archive ownership.
 
 ## File Structure
 
@@ -91,7 +91,7 @@ describe("theme registry", () => {
       "nord-light",
     ]);
     expect(listThemesByMode("dark").map((theme) => theme.id)).toEqual([
-      "ldiff-graphite",
+      "lcdiff-graphite",
       "github-dark",
       "one-dark",
       "dracula",
@@ -102,9 +102,9 @@ describe("theme registry", () => {
     ]);
   });
 
-  it("uses LDiff Graphite as the default dark theme", () => {
-    expect(DEFAULT_THEME_ID).toBe("ldiff-graphite");
-    expect(getTheme(DEFAULT_THEME_ID).label).toBe("LDiff Graphite");
+  it("uses LCDiff Graphite as the default dark theme", () => {
+    expect(DEFAULT_THEME_ID).toBe("lcdiff-graphite");
+    expect(getTheme(DEFAULT_THEME_ID).label).toBe("LCDiff Graphite");
   });
 
   it("falls back to default theme for unknown ids", () => {
@@ -153,7 +153,7 @@ export interface ThemeDefinition {
   variables: Record<string, string>;
 }
 
-export const DEFAULT_THEME_ID = "ldiff-graphite";
+export const DEFAULT_THEME_ID = "lcdiff-graphite";
 
 const sharedStatus = {
   "--st-diff": "#d9a441",
@@ -235,7 +235,7 @@ export const THEMES: ThemeDefinition[] = [
   { id: "catppuccin-latte", label: "Catppuccin Latte inspired", mode: "light", official: false, variables: { ...lightBase, "--ink-0": "#eff1f5", "--ink-1": "#e6e9ef", "--text-0": "#4c4f69", "--text-1": "#6c6f85" } },
   { id: "gruvbox-light", label: "Gruvbox Light inspired", mode: "light", official: false, variables: { ...lightBase, "--ink-0": "#fbf1c7", "--ink-1": "#f2e5bc", "--text-0": "#3c3836", "--text-1": "#665c54" } },
   { id: "nord-light", label: "Nord Light inspired", mode: "light", official: false, variables: { ...lightBase, "--ink-0": "#eceff4", "--ink-1": "#e5e9f0", "--text-0": "#2e3440", "--text-1": "#4c566a" } },
-  { id: "ldiff-graphite", label: "LDiff Graphite", mode: "dark", official: true, variables: darkBase },
+  { id: "lcdiff-graphite", label: "LCDiff Graphite", mode: "dark", official: true, variables: darkBase },
   { id: "github-dark", label: "GitHub Dark inspired", mode: "dark", official: false, variables: { ...darkBase, "--ink-0": "#0d1117", "--ink-1": "#161b22", "--line": "#30363d", "--text-0": "#e6edf3" } },
   { id: "one-dark", label: "One Dark inspired", mode: "dark", official: false, variables: { ...darkBase, "--ink-0": "#1e222a", "--ink-1": "#282c34", "--text-0": "#abb2bf" } },
   { id: "dracula", label: "Dracula inspired", mode: "dark", official: false, variables: { ...darkBase, "--ink-0": "#282a36", "--ink-1": "#343746", "--text-0": "#f8f8f2", "--text-1": "#bd93f9" } },
@@ -353,7 +353,7 @@ describe("ui preferences", () => {
     expect(root.dataset.density).toBe("comfortable");
     expect(root.dataset.radius).toBe("soft");
     expect(root.dataset.motion).toBe("reduced");
-    expect(root.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
+    expect(root.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("15px");
     expect(root.style.getPropertyValue("--background")).toBeTruthy();
   });
 });
@@ -382,7 +382,7 @@ import {
   themeToCssVariables,
 } from "@/lib/themes";
 
-export const UI_PREFERENCES_STORAGE_KEY = "ldiff.uiPreferences.v1";
+export const UI_PREFERENCES_STORAGE_KEY = "lcdiff.uiPreferences.v1";
 
 export type Density = "compact" | "comfortable";
 export type Radius = "sharp" | "default" | "soft";
@@ -547,9 +547,9 @@ export function applyPreferencesToRoot(root: HTMLElement, preferences: UiPrefere
   root.style.setProperty("--font-sans", fontFamily[preferences.typography.uiFont]);
   root.style.setProperty("--font-tree", fontFamily[preferences.typography.treeFont]);
   root.style.setProperty("--font-mono", fontFamily[preferences.typography.editorFont]);
-  root.style.setProperty("--ldiff-ui-font-size", `${preferences.typography.uiScale}px`);
-  root.style.setProperty("--ldiff-tree-font-size", `${preferences.typography.treeScale}px`);
-  root.style.setProperty("--ldiff-editor-font-size", `${preferences.typography.editorScale}px`);
+  root.style.setProperty("--lcdiff-ui-font-size", `${preferences.typography.uiScale}px`);
+  root.style.setProperty("--lcdiff-tree-font-size", `${preferences.typography.treeScale}px`);
+  root.style.setProperty("--lcdiff-editor-font-size", `${preferences.typography.editorScale}px`);
 }
 ```
 
@@ -855,7 +855,7 @@ Replace `hits[0].path` assertions with `hits[0].entry_path`, and replace string 
 Run:
 
 ```bash
-rtk cargo test -p ldiff-desktop t2_search_can_return_path_and_text_for_same_entry
+rtk cargo test -p lcdiff-desktop t2_search_can_return_path_and_text_for_same_entry
 ```
 
 Expected: FAIL for the same missing symbols.
@@ -1212,7 +1212,7 @@ In `src/styles.css`, replace the current horizontal `.search-results` block with
   min-width: 0;
   gap: 6px;
   font-family: var(--font-tree, var(--font-mono));
-  font-size: var(--ldiff-tree-font-size, 0.74rem);
+  font-size: var(--lcdiff-tree-font-size, 0.74rem);
 }
 .search-result-path,
 .search-result-preview {
@@ -1515,7 +1515,7 @@ describe("ConfigDrawer", () => {
     expect(screen.getByRole("button", { name: "Appearance" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Light themes")).toBeInTheDocument();
     expect(screen.getByText("Dark themes")).toBeInTheDocument();
-    expect(screen.getByText("LDiff Graphite")).toBeInTheDocument();
+    expect(screen.getByText("LCDiff Graphite")).toBeInTheDocument();
   });
 
   it("switches to Typography and changes editor font size", async () => {
@@ -1818,7 +1818,7 @@ In `src/App.test.tsx`, add this test inside `describe("App file-merge wiring", (
 
 ```tsx
   it("applies persisted UI preferences to the app shell", async () => {
-    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { density: "comfortable", radius: "soft", motion: "reduced" },
       typography: { editorScale: 15 },
     }));
@@ -1829,7 +1829,7 @@ In `src/App.test.tsx`, add this test inside `describe("App file-merge wiring", (
     expect(shell.dataset.density).toBe("comfortable");
     expect(shell.dataset.radius).toBe("soft");
     expect(shell.dataset.motion).toBe("reduced");
-    expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("15px");
+    expect(shell.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("15px");
   });
 ```
 
@@ -1970,7 +1970,7 @@ In `src/styles.css`, add:
 .search-result-row,
 .search-result-path {
   font-family: var(--font-tree, var(--font-mono));
-  font-size: var(--ldiff-tree-font-size, 0.74rem);
+  font-size: var(--lcdiff-tree-font-size, 0.74rem);
 }
 ```
 
@@ -2483,7 +2483,7 @@ rtk git commit -m "polish: label preferences and responsive controls"
 
 **Files:**
 - Modify: `docs/ARCHITECTURE.md`
-- Modify: `docs/LDIFF_COMPLETION_AUDIT.md`
+- Modify: `docs/LCDIFF_COMPLETION_AUDIT.md`
 
 - [ ] **Step 1: Update architecture documentation**
 
@@ -2504,7 +2504,7 @@ Files-index/current-diff search, and a startup splash while the sidecar warms.
 
 - [ ] **Step 2: Update completion audit UI/search rows**
 
-In `docs/LDIFF_COMPLETION_AUDIT.md`, update the `Search` row to mention typed grouped results and contextual current-diff find. Update the `UI design` row to mention the Preferences drawer and curated themes/fonts. Use concise wording:
+In `docs/LCDIFF_COMPLETION_AUDIT.md`, update the `Search` row to mention typed grouped results and contextual current-diff find. Update the `UI design` row to mention the Preferences drawer and curated themes/fonts. Use concise wording:
 
 ```md
 | Search | Monaco current-diff find plus contextual Files-index search with typed grouped path/text/constant-pool/source results; backend search can return multiple hit kinds per entry and deep source search still streams/cancels. |
@@ -2549,7 +2549,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit docs and verification alignment**
 
 ```bash
-rtk git add docs/ARCHITECTURE.md docs/LDIFF_COMPLETION_AUDIT.md
+rtk git add docs/ARCHITECTURE.md docs/LCDIFF_COMPLETION_AUDIT.md
 rtk git commit -m "docs: document preferences and contextual search"
 ```
 

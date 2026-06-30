@@ -21,7 +21,7 @@ two-pane comparison:
 
 ## Non-goals
 
-- No change to `ldiff-core` or any Rust/IPC code.
+- No change to `lcdiff-core` or any Rust/IPC code.
 - No custom diff renderer; keep Monaco `DiffEditor`.
 - No change to per-entry `PairStatus` values (`onlyLeft`, `onlyRight`,
   `identical`, `different`, `differentMetadataOnly` remain).

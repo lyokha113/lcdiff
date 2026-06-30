@@ -5,7 +5,7 @@ use std::{
     process::Command,
 };
 
-use ldiff_core::Archive;
+use lcdiff_core::Archive;
 use tempfile::tempdir;
 use zip::{ZipWriter, write::SimpleFileOptions};
 
@@ -109,7 +109,7 @@ fn cli_search_finds_text_content_and_class_constant_pool() {
 }
 
 fn assert_stdout_contains(args: &[String], expected: &str) {
-    let output = Command::new(env!("CARGO_BIN_EXE_ldiff-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lcdiff-cli"))
         .args(args)
         .output()
         .unwrap();
@@ -126,7 +126,7 @@ fn assert_stdout_contains(args: &[String], expected: &str) {
 }
 
 fn assert_stdout_excludes(args: &[String], unexpected: &str) {
-    let output = Command::new(env!("CARGO_BIN_EXE_ldiff-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lcdiff-cli"))
         .args(args)
         .output()
         .unwrap();
@@ -143,7 +143,7 @@ fn assert_stdout_excludes(args: &[String], unexpected: &str) {
 }
 
 fn assert_stderr_contains(args: &[String], expected: &str) {
-    let output = Command::new(env!("CARGO_BIN_EXE_ldiff-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lcdiff-cli"))
         .args(args)
         .output()
         .unwrap();

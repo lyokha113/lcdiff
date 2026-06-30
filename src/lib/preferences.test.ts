@@ -276,7 +276,7 @@ describe("UI preferences persistence", () => {
     expect(root.dataset.searchResultsDensity).toBeUndefined();
     expect(root.style.getPropertyValue("--background")).not.toBe("");
     expect(root.style.getPropertyValue("--font-mono")).toBe("");
-    expect(root.style.getPropertyValue("--ldiff-editor-font-size")).toBe("");
+    expect(root.style.getPropertyValue("--lcdiff-editor-font-size")).toBe("");
   });
 
   it("applies light appearance tokens with distinct drawer-safe surfaces", () => {

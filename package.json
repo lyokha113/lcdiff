@@ -1,5 +1,5 @@
 {
-  "name": "ldiff-ui",
+  "name": "lcdiff-ui",
   "private": true,
   "version": "0.2.1",
   "type": "module",
@@ -11,8 +11,9 @@
     "verify:packaging-scripts": "node scripts/verify-packaging-scripts.mjs",
     "verify:frontend-invariants": "node scripts/verify-frontend-invariants.mjs",
     "verify:frontend-render": "node scripts/verify-frontend-render.mjs",
+    "verify:branding": "node scripts/verify-branding.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",
-    "verify:all": "npm run build && npm run verify:packaging-scripts && npm run verify:frontend-invariants && npm run verify:frontend-render && npm run verify:docs"
+    "verify:all": "npm run build && npm run verify:packaging-scripts && npm run verify:frontend-invariants && npm run verify:frontend-render && npm run verify:branding && npm run verify:docs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",

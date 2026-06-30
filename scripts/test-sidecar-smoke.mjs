@@ -5,9 +5,9 @@ import { spawn, spawnSync } from "node:child_process";
 
 const root = new URL("..", import.meta.url).pathname;
 const bundledJava = join(root, "src-tauri", "resources", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
-const java = process.env.LDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
-const jar = process.env.LDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "ldiff-sidecar-0.2.1.jar");
-const tmp = mkdtempSync(join(tmpdir(), "ldiff-sidecar-smoke-"));
+const java = process.env.LCDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
+const jar = process.env.LCDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "lcdiff-sidecar-0.2.1.jar");
+const tmp = mkdtempSync(join(tmpdir(), "lcdiff-sidecar-smoke-"));
 
 try {
   mkdirSync(join(tmp, "demo"));
@@ -17,7 +17,7 @@ try {
     [
       "package demo;",
       "public class Hello {",
-      '  public String greet() { return "hello-ldiff"; }',
+      '  public String greet() { return "hello-lcdiff"; }',
       '  public Runnable anonymous() { return new Runnable() { public void run() { System.out.println("anon"); } }; }',
       '  public static class Inner { public String value() { return "inner"; } }',
       "}",
@@ -55,7 +55,7 @@ try {
     classpath: [archive],
     entry: "demo/Hello.class",
   });
-  assertIncludes(cfrDecompiler, "hello-ldiff");
+  assertIncludes(cfrDecompiler, "hello-lcdiff");
   assertIncludes(cfrDecompiler, "Decompiled with CFR");
   assertIncludes(
     await request(child, pending, {
@@ -92,7 +92,7 @@ try {
     classpath: [archive],
     entry: "demo/Hello.class",
   });
-  assertIncludes(defaultDecompiler, "hello-ldiff");
+  assertIncludes(defaultDecompiler, "hello-lcdiff");
   assertNotIncludes(defaultDecompiler, "Decompiled with CFR");
   const vineflowerDecompiler = await request(child, pending, {
     id: "explicit-vineflower",
@@ -101,7 +101,7 @@ try {
     classpath: [archive],
     entry: "demo/Hello.class",
   });
-  assertIncludes(vineflowerDecompiler, "hello-ldiff");
+  assertIncludes(vineflowerDecompiler, "hello-lcdiff");
   assertSameSource(defaultDecompiler, vineflowerDecompiler);
   const malformed = await request(child, pending, {
     id: "malformed",

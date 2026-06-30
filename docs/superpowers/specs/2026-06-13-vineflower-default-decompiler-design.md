@@ -2,7 +2,7 @@
 
 ## Context
 
-LDiff already supports two Java source decompiler engines through the JVM
+LCDiff already supports two Java source decompiler engines through the JVM
 sidecar: CFR and Vineflower. The current product documentation describes both
 engines, the sidecar smoke test exercises both engines, and the Config drawer
 lets users switch between them.
@@ -75,7 +75,7 @@ remain partitioned even when users switch engines during one session.
 
 ### Error Handling
 
-The selected engine remains explicit. If Vineflower fails, LDiff should surface
+The selected engine remains explicit. If Vineflower fails, LCDiff should surface
 the existing decompiler-unavailable behavior or bytecode fallback path rather
 than silently switching to CFR.
 
@@ -108,7 +108,7 @@ decompiler contract change.
 ## Documentation
 
 Update user/developer docs where they imply CFR is the default or primary
-engine. Docs should state that LDiff uses Vineflower by default and CFR remains
+engine. Docs should state that LCDiff uses Vineflower by default and CFR remains
 available from the Config drawer.
 
 ## Acceptance Criteria

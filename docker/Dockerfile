@@ -1,4 +1,4 @@
-# Linux build environment for LDiff (Tauri v2 + JVM sidecar).
+# Linux build environment for LCDiff (Tauri v2 + JVM sidecar).
 # Bakes every toolchain the build needs so scripts/build-linux.sh runs --no-deps.
 #   Rust (edition 2024 -> stable >= 1.85), Node 20, Maven, JDK 17 (jlink),
 #   GTK3 + WebKit2GTK 4.1 stack.

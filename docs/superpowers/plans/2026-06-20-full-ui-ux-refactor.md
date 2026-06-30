@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rebuild the LDiff frontend hierarchy and visual system around the Compare → inspect → stage → save workflow without changing backend contracts.
+**Goal:** Rebuild the LCDiff frontend hierarchy and visual system around the Compare → inspect → stage → save workflow without changing backend contracts.
 
 **Architecture:** Keep orchestration and backend-facing state in `App.tsx`, while focused presentation components emit existing intents through typed props. Replace the stacked toolbar layout with stable command, source, canvas, context, and status zones. Use Tailwind v4 plus the existing CSS token layer for layout, and GSAP only for startup/workspace entry motion.
 
@@ -26,7 +26,7 @@
 - Modify `src/App.tsx` and `src/App.test.tsx`: integrate stable landmarks and contextual overlays without changing domain state.
 - Replace the application-specific portion of `src/styles.css`: new tokens, spacing, responsive behavior, state styling, and motion.
 - Modify `scripts/verify-frontend-render.mjs`: assert desktop and compact-height rendering.
-- Modify `docs/ARCHITECTURE.md` and `docs/LDIFF_COMPLETION_AUDIT.md`: record the new frontend boundaries and evidence.
+- Modify `docs/ARCHITECTURE.md` and `docs/LCDIFF_COMPLETION_AUDIT.md`: record the new frontend boundaries and evidence.
 
 ### Task 1: Typography and motion foundation
 
@@ -109,7 +109,7 @@ rtk git commit -m "feat: add UI motion and typography foundation"
 Add assertions that the page has a `main` landmark, a two-source Compare primary action, a View secondary action, and recent sessions under a named navigation region:
 
 ```tsx
-expect(screen.getByRole("main", { name: "Start LDiff" })).toBeInTheDocument();
+expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
 expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
 expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
 expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();
@@ -126,8 +126,8 @@ Expected: FAIL on the new landmark and accessible-name assertions.
 Refactor `SplashScreen` to use this stable skeleton while retaining the existing history callbacks and time formatting:
 
 ```tsx
-<main className="launch" aria-label="Start LDiff" ref={rootRef}>
-  <header className="launch__identity"><span>LDiff</span><span>Archive diff and merge</span></header>
+<main className="launch" aria-label="Start LCDiff" ref={rootRef}>
+  <header className="launch__identity"><span>LCDiff</span><span>Archive diff and merge</span></header>
   <section className="launch__hero">
     <div className="launch__copy">
       <h1>See every change. Move only what belongs.</h1>
@@ -158,7 +158,7 @@ Expected: PASS with no page errors.
 
 ```bash
 rtk git add src/components/SplashScreen.tsx src/components/SplashScreen.test.tsx src/styles.css
-rtk git commit -m "feat: redesign LDiff startup experience"
+rtk git commit -m "feat: redesign LCDiff startup experience"
 ```
 
 ### Task 3: Command bar, source rail, and status bar
@@ -346,7 +346,7 @@ Expected: all Vitest tests pass.
 
 ```bash
 rtk git add src/App.tsx src/App.test.tsx src/components/WorkspaceTabs.tsx src/components/WorkspaceTabs.test.tsx src/components/FileTree.tsx src/components/DiffView.tsx src/styles.css
-rtk git commit -m "feat: integrate redesigned LDiff workspace"
+rtk git commit -m "feat: integrate redesigned LCDiff workspace"
 ```
 
 ### Task 6: Verification contracts, documentation, and visual QA
@@ -354,7 +354,7 @@ rtk git commit -m "feat: integrate redesigned LDiff workspace"
 **Files:**
 - Modify: `scripts/verify-frontend-render.mjs`
 - Modify: `docs/ARCHITECTURE.md`
-- Modify: `docs/LDIFF_COMPLETION_AUDIT.md`
+- Modify: `docs/LCDIFF_COMPLETION_AUDIT.md`
 
 - [ ] **Step 1: Extend render verification before implementation**
 
@@ -387,7 +387,7 @@ Inspect startup, Compare, View, Files tree, open diff, search, preferences, pend
 - [ ] **Step 7: Commit verification and docs**
 
 ```bash
-rtk git add scripts/verify-frontend-render.mjs docs/ARCHITECTURE.md docs/LDIFF_COMPLETION_AUDIT.md src/styles.css
+rtk git add scripts/verify-frontend-render.mjs docs/ARCHITECTURE.md docs/LCDIFF_COMPLETION_AUDIT.md src/styles.css
 rtk git commit -m "test: verify redesigned frontend across viewports"
 ```
 

@@ -92,7 +92,7 @@ const MAX_DIFF_TABS = 10;
 const SIDE_PREFIX_RE = /^(left|right):/;
 const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
 
-// Keep in sync with EDITABLE_EXTENSIONS in crates/ldiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
+// Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
 
 type DiffLineChange = NonNullable<ReturnType<DiffCodeEditor["getLineChanges"]>>[number];
@@ -510,7 +510,7 @@ export function App() {
     window
       .onCloseRequested((event) => {
         event.preventDefault();
-        if (!globalThis.confirm("Discard unsaved changes and close LDiff?")) return;
+        if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
         void invoke("clear_staged").then(() => window.destroy());
       })
       .then((stop) => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build LDiff Linux bundles inside Docker from a macOS (or any) host.
+# Build LCDiff Linux bundles inside Docker from a macOS (or any) host.
 #
 # Linux bundles cannot be cross-built from macOS, so we run the real
 # scripts/build-linux.sh inside an Ubuntu container that already has every
@@ -27,7 +27,7 @@ REBUILD=0
 ARCH=""
 # glibc floor of the produced binaries. Lower = runs on more (older) systems.
 # 22.04 -> glibc 2.35 (default, safe). 24.04 -> 2.39. 20.04 -> 2.31 (no webkit-4.1).
-UBUNTU="${LDIFF_UBUNTU:-22.04}"
+UBUNTU="${LCDIFF_UBUNTU:-22.04}"
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --rebuild) REBUILD=1; shift ;;
@@ -48,13 +48,13 @@ fi
 case "$ARCH" in amd64|arm64) ;; *) printf 'bad --arch %s (amd64|arm64)\n' "$ARCH" >&2; exit 1 ;; esac
 
 PLATFORM="linux/$ARCH"
-IMAGE="ldiff-linux-build-$ARCH-u${UBUNTU//./}"
+IMAGE="lcdiff-linux-build-$ARCH-u${UBUNTU//./}"
 # Target dir holds compiled binaries -> must be per glibc floor (ubuntu ver)
 # too, else stale artifacts from another base leak in with the wrong GLIBC req.
-TARGET_VOL="ldiff-linux-$ARCH-u${UBUNTU//./}-target"
-NODE_VOL="ldiff-linux-$ARCH-node-modules"
-CARGO_VOL="ldiff-linux-$ARCH-cargo-registry"
-M2_VOL="ldiff-linux-$ARCH-m2"
+TARGET_VOL="lcdiff-linux-$ARCH-u${UBUNTU//./}-target"
+NODE_VOL="lcdiff-linux-$ARCH-node-modules"
+CARGO_VOL="lcdiff-linux-$ARCH-cargo-registry"
+M2_VOL="lcdiff-linux-$ARCH-m2"
 TARGET_DIR="/work/target-$ARCH"
 
 # --- build the image if missing or forced ------------------------------------

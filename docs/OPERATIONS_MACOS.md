@@ -1,7 +1,7 @@
 # macOS Operations Runbook
 
 This runbook is the macOS-first build, verification, signing, notarization, and
-packaging path for `LDiff`.
+packaging path for `LCDiff`.
 
 ## Current Scope
 
@@ -9,7 +9,7 @@ packaging path for `LDiff`.
 - The latest local arm64 distribution evidence is
   `platform-validation/macos-distribution-aarch64-apple-darwin-20260606T051217Z.md`.
 - macOS `x86_64-apple-darwin` requires an Intel JDK/jlink path through
-  `LDIFF_JLINK_X86_64_APPLE_DARWIN`.
+  `LCDIFF_JLINK_X86_64_APPLE_DARWIN`.
 - Developer ID notarization requires Apple certificate and notary credentials.
   Without those credentials, local validation uses ad-hoc signing and records
   notarization as skipped.
@@ -38,7 +38,7 @@ For Apple Developer ID release signing, provide:
 ```bash
 npm ci
 npm run verify:all
-LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+LCDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
   scripts/assemble-sidecar-resources.sh
 scripts/test-sidecar-smoke.sh
 npm run tauri -- dev
@@ -47,7 +47,7 @@ npm run tauri -- dev
 ## Build A Debug App Bundle
 
 ```bash
-LDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
+LCDIFF_JLINK="$(mise where java@temurin-17.0.18+8)/bin/jlink" \
   scripts/assemble-sidecar-resources.sh
 npm run tauri -- build --debug --bundles app
 ```
@@ -55,7 +55,7 @@ npm run tauri -- build --debug --bundles app
 Expected debug bundle:
 
 ```text
-target/debug/bundle/macos/LDiff.app
+target/debug/bundle/macos/LCDiff.app
 ```
 
 ## Full macOS Distribution Validation
@@ -81,7 +81,7 @@ scripts/verify-macos-distribution.sh \
 Run the Intel target only with an Intel JDK/jlink:
 
 ```bash
-LDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
+LCDIFF_JLINK_X86_64_APPLE_DARWIN=/path/to/x64-jdk/bin/jlink \
   scripts/verify-macos-distribution.sh \
     --target x86_64-apple-darwin \
     --skip-install
@@ -96,10 +96,10 @@ platform-validation/macos-distribution-*.md
 Expected release outputs:
 
 ```text
-target/aarch64-apple-darwin/release/bundle/macos/LDiff.app
-target/aarch64-apple-darwin/release/bundle/dmg/LDiff-aarch64-apple-darwin.dmg
-target/x86_64-apple-darwin/release/bundle/macos/LDiff.app
-target/x86_64-apple-darwin/release/bundle/dmg/LDiff-x86_64-apple-darwin.dmg
+target/aarch64-apple-darwin/release/bundle/macos/LCDiff.app
+target/aarch64-apple-darwin/release/bundle/dmg/LCDiff-aarch64-apple-darwin.dmg
+target/x86_64-apple-darwin/release/bundle/macos/LCDiff.app
+target/x86_64-apple-darwin/release/bundle/dmg/LCDiff-x86_64-apple-darwin.dmg
 ```
 
 When the repo is under a File Provider managed path such as `Documents`, macOS
@@ -134,16 +134,16 @@ Manual script order, when debugging the distribution path:
 
 ```bash
 scripts/sign-macos-bundle.sh \
-  "$PWD/target/debug/bundle/macos/LDiff.app" \
+  "$PWD/target/debug/bundle/macos/LCDiff.app" \
   - \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+  "$PWD/target/debug/bundle/macos/LCDiff-signed.app"
 APPLE_ID=you@example.com \
 APPLE_TEAM_ID=TEAMID1234 \
 APPLE_APP_PASSWORD=app-specific-password \
-  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LDiff-signed.app"
+  scripts/notarize-macos-app.sh "$PWD/target/debug/bundle/macos/LCDiff-signed.app"
 scripts/package-macos-dmg.sh \
-  "$PWD/target/debug/bundle/macos/LDiff-signed.app" \
-  "$PWD/target/debug/bundle/dmg/LDiff-signed.dmg"
+  "$PWD/target/debug/bundle/macos/LCDiff-signed.app" \
+  "$PWD/target/debug/bundle/dmg/LCDiff-signed.dmg"
 ```
 
 ## Verification Checklist
@@ -159,14 +159,14 @@ scripts/package-macos-dmg.sh \
   - `com.apple.security.cs.allow-unsigned-executable-memory`
   - `com.apple.security.cs.disable-library-validation`
 - `hdiutil verify` passes for the DMG.
-- Mounted DMG contains `LDiff.app` and an `Applications` symlink.
+- Mounted DMG contains `LCDiff.app` and an `Applications` symlink.
 - Developer ID releases also pass notarization, stapling, and Gatekeeper
   assessment through `scripts/notarize-macos-app.sh`.
 
 ## Troubleshooting
 
-- `expected LDIFF_JLINK java to be a Mach-O x86_64 binary`: the Intel build is
-  using an arm64 JDK. Set `LDIFF_JLINK_X86_64_APPLE_DARWIN` to an Intel JDK's
+- `expected LCDIFF_JLINK java to be a Mach-O x86_64 binary`: the Intel build is
+  using an arm64 JDK. Set `LCDIFF_JLINK_X86_64_APPLE_DARWIN` to an Intel JDK's
   `bin/jlink`.
 - Notarization is skipped: confirm `APPLE_ID`, `APPLE_TEAM_ID`,
   `APPLE_APP_PASSWORD`, and a non-`-` `MACOS_SIGN_IDENTITY`.

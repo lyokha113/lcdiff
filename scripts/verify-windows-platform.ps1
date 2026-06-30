@@ -50,7 +50,7 @@ if (-not (Test-Path -LiteralPath $jlink -PathType Leaf)) {
   throw "jlink.exe not found at JAVA_HOME: $jlink"
 }
 
-$env:LDIFF_JLINK = $jlink
+$env:LCDIFF_JLINK = $jlink
 
 if (-not $SkipInstall) {
   Invoke-Step "npm ci" { npm ci }
@@ -72,7 +72,7 @@ if (-not $SkipBundle) {
 
 if ($SignIfSecretsPresent) {
   if ($env:WINDOWS_CERTIFICATE_BASE64 -and $env:WINDOWS_CERTIFICATE_PASSWORD) {
-    $certPath = Join-Path ([System.IO.Path]::GetTempPath()) "ldiff-windows-code-signing.pfx"
+    $certPath = Join-Path ([System.IO.Path]::GetTempPath()) "lcdiff-windows-code-signing.pfx"
     [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64) |
       Set-Content -AsByteStream -LiteralPath $certPath
     $timestampUrl = if ($env:WINDOWS_TIMESTAMP_URL) {

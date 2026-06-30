@@ -42,7 +42,7 @@ Archive entries / diff pairs
        uses a chevron spacer for file rows so icons align with folder rows
 ```
 
-`ldiff-core`, Tauri IPC, and the JVM sidecar continue to see the complete set of
+`lcdiff-core`, Tauri IPC, and the JVM sidecar continue to see the complete set of
 archive entries. Decompiled Java remains a read-only preview, and merge writes
 continue to copy original entry bytes.
 

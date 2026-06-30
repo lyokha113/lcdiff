@@ -1,4 +1,4 @@
-export const UI_PREFERENCES_STORAGE_KEY = "ldiff.uiPreferences.v1";
+export const UI_PREFERENCES_STORAGE_KEY = "lcdiff.uiPreferences.v1";
 
 export type ColorPattern = "light" | "dark" | "system";
 export type EffectiveColorPattern = "light" | "dark";
@@ -372,7 +372,7 @@ export function applyPreferencesToRoot(
   root.style.removeProperty("--font-sans");
   root.style.removeProperty("--font-tree");
   root.style.removeProperty("--font-mono");
-  root.style.removeProperty("--ldiff-ui-font-size");
-  root.style.removeProperty("--ldiff-tree-font-size");
-  root.style.removeProperty("--ldiff-editor-font-size");
+  root.style.removeProperty("--lcdiff-ui-font-size");
+  root.style.removeProperty("--lcdiff-tree-font-size");
+  root.style.removeProperty("--lcdiff-editor-font-size");
 }

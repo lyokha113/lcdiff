@@ -1862,19 +1862,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
-name = "ldiff-cli"
+name = "lcdiff-cli"
 version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
- "ldiff-core",
+ "lcdiff-core",
  "serde_json",
  "tempfile",
  "zip",
 ]
 
 [[package]]
-name = "ldiff-core"
+name = "lcdiff-core"
 version = "0.2.1"
 dependencies = [
  "crc32fast",
@@ -1887,11 +1887,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ldiff-desktop"
+name = "lcdiff-desktop"
 version = "0.2.1"
 dependencies = [
  "font-kit",
- "ldiff-core",
+ "lcdiff-core",
  "serde",
  "serde_json",
  "sha2",
