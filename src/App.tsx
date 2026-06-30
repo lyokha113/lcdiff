@@ -201,6 +201,8 @@ export function App() {
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
+  const [treeExpandAllVersion, setTreeExpandAllVersion] = useState(0);
+  const [treeCollapseAllVersion, setTreeCollapseAllVersion] = useState(0);
   const [preferences, setPreferences] = useState(loadUiPreferences);
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
@@ -1463,6 +1465,8 @@ export function App() {
             onSelectTab={(path) => focusTab(path)}
             onCloseTab={(path) => closeTab(path)}
             onFilterChange={setTreeFilter}
+            onExpandTree={() => setTreeExpandAllVersion((version) => version + 1)}
+            onCollapseTree={() => setTreeCollapseAllVersion((version) => version + 1)}
             onShowSource={() => selected && void inspect(selected, true)}
             onShowBytecode={showBytecode}
           />
@@ -1482,6 +1486,8 @@ export function App() {
                 nestedPairs={nestedPairs}
                 leftLabel={leftLabel}
                 rightLabel={rightLabel}
+                expandAllVersion={treeExpandAllVersion}
+                collapseAllVersion={treeCollapseAllVersion}
                 onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                 onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
                 onCopy={(from, to, pair) => void copy(from, to, pair)}

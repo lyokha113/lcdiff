@@ -1,4 +1,4 @@
-import { Binary, Code, FileDiff, ListTree, X } from "lucide-react";
+import { Binary, ChevronsDown, ChevronsUp, Code, FileDiff, ListTree, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
@@ -32,6 +32,8 @@ export interface WorkspaceTabsProps {
   onSelectTab: (path: string) => void;
   onCloseTab: (path: string) => void;
   onFilterChange?: (filter: TreeFilter) => void;
+  onExpandTree?: () => void;
+  onCollapseTree?: () => void;
   onShowSource: () => void;
   onShowBytecode: () => void;
 }
@@ -49,6 +51,8 @@ export function WorkspaceTabs({
   onSelectTab,
   onCloseTab,
   onFilterChange = noopFilterChange,
+  onExpandTree = noopFilterChange,
+  onCollapseTree = noopFilterChange,
   onShowSource,
   onShowBytecode,
 }: WorkspaceTabsProps) {
@@ -67,18 +71,28 @@ export function WorkspaceTabs({
         </button>
       </div>
       {mode === "compare" && (
-        <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
-          <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem value="all">Show all</SelectItem>
-              <SelectItem value="diff">Differences</SelectItem>
-              <SelectItem value="same">Identical</SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        <>
+          <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
+            <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">Show all</SelectItem>
+                <SelectItem value="diff">Differences</SelectItem>
+                <SelectItem value="same">Identical</SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <div className="workspace-tree-actions" role="group" aria-label="Tree expansion">
+            <Button variant="ghost" size="icon-sm" aria-label="Expand all folders" onClick={onExpandTree}>
+              <ChevronsDown />
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label="Collapse all folders" onClick={onCollapseTree}>
+              <ChevronsUp />
+            </Button>
+          </div>
+        </>
       )}
       <div className="workspace-tabs-scroll" role="tablist" aria-label="Open diff tabs">
         {tabs.map((tab) => {

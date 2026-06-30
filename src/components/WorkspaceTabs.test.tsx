@@ -53,6 +53,8 @@ function setup(overrides = {}) {
     onSelectTab: vi.fn(),
     onCloseTab: vi.fn(),
     onFilterChange: vi.fn(),
+    onExpandTree: vi.fn(),
+    onCollapseTree: vi.fn(),
     onShowSource: vi.fn(),
     onShowBytecode: vi.fn(),
     ...overrides,
@@ -67,14 +69,18 @@ describe("WorkspaceTabs", () => {
     expect(screen.getByRole("tab", { name: /Files/ })).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
   });
-  it("renders the tree filter next to the Files tab", async () => {
+  it("renders the tree filter and expand controls next to the Files tab", async () => {
     const props = setup();
     const workspaceTabs = document.querySelector(".workspace-tabs");
     const filesTab = screen.getByRole("tab", { name: /Files/ });
     const treeFilter = screen.getByRole("combobox", { name: "Tree filter" });
+    const expandAll = screen.getByRole("button", { name: "Expand all folders" });
+    const collapseAll = screen.getByRole("button", { name: "Collapse all folders" });
 
     expect(filesTab).toBeInTheDocument();
     expect(treeFilter).toBeInTheDocument();
+    expect(expandAll).toBeInTheDocument();
+    expect(collapseAll).toBeInTheDocument();
     for (const tab of screen.getAllByRole("tab")) {
       expect(tab.closest('[role="tablist"]')).toBeInTheDocument();
     }
@@ -83,16 +89,23 @@ describe("WorkspaceTabs", () => {
     expect(workspaceTabs?.children[0]).toBe(document.querySelector(".workspace-tabs-files"));
     expect(within(workspaceTabs?.children[0] as HTMLElement).getByRole("tab", { name: /Files/ })).toBe(filesTab);
     expect(workspaceTabs?.children[1]).toBe(treeFilter);
-    expect(workspaceTabs?.children[2]).toBe(document.querySelector(".workspace-tabs-scroll"));
+    expect(workspaceTabs?.children[2]).toBe(document.querySelector(".workspace-tree-actions"));
+    expect(workspaceTabs?.children[3]).toBe(document.querySelector(".workspace-tabs-scroll"));
 
     await userEvent.click(treeFilter);
     await userEvent.click(screen.getByRole("option", { name: "Identical" }));
+    await userEvent.click(expandAll);
+    await userEvent.click(collapseAll);
 
     expect(props.onFilterChange).toHaveBeenCalledWith("same");
+    expect(props.onExpandTree).toHaveBeenCalledTimes(1);
+    expect(props.onCollapseTree).toHaveBeenCalledTimes(1);
   });
-  it("hides the tree filter in View mode", () => {
+  it("hides the tree filter and expand controls in View mode", () => {
     setup({ mode: "single" });
     expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand all folders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Collapse all folders" })).not.toBeInTheDocument();
   });
   it("renders one tab per diff with the basename label", () => {
     setup();

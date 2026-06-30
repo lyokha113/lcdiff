@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, File, FileArchive, Folder, FolderOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -17,6 +17,8 @@ interface FileTreeProps {
   nestedPairs: Record<string, ComparePair[]>;
   leftLabel?: string;
   rightLabel?: string;
+  expandAllVersion?: number;
+  collapseAllVersion?: number;
   onInspect: (pair: ComparePair) => void;
   onSelect: (pair: ComparePair) => void;
   onCopy: (from: Side, to: Side, pair: ComparePair) => void;
@@ -24,25 +26,70 @@ interface FileTreeProps {
   onExpandArchive: (fullPath: string) => void;
 }
 
-function defaultExpanded(nodes: TreeNode[], acc: Set<string> = new Set()): Set<string> {
+function collectExpandablePaths(
+  nodes: TreeNode[],
+  nestedPairs: Record<string, ComparePair[]>,
+  treeFilter: TreeFilter,
+  basePath = "",
+  acc: Set<string> = new Set(),
+): Set<string> {
   for (const node of nodes) {
     if (node.kind === "folder") {
-      if (node.diffCount > 0) acc.add(node.path);
-      defaultExpanded(node.children, acc);
+      acc.add(fullPathOf(basePath, node.path));
+      collectExpandablePaths(node.children, nestedPairs, treeFilter, basePath, acc);
+      continue;
+    }
+
+    if (isArchiveKind(node.pair)) {
+      const fullPath = fullPathOf(basePath, node.path);
+      const children = nestedPairs[fullPath];
+      if (children !== undefined) {
+        acc.add(fullPath);
+        collectExpandablePaths(
+          buildTree(children.filter((child) => pairPassesTreeFilter(child, treeFilter))),
+          nestedPairs,
+          treeFilter,
+          fullPath,
+          acc,
+        );
+      }
     }
   }
   return acc;
 }
 
 export function FileTree(props: FileTreeProps) {
-  const { visiblePairs, mode, leftLabel, rightLabel } = props;
+  const {
+    visiblePairs,
+    mode,
+    leftLabel,
+    rightLabel,
+    nestedPairs,
+    treeFilter,
+    expandAllVersion = 0,
+    collapseAllVersion = 0,
+  } = props;
   const tree = useMemo(() => buildTree(visiblePairs), [visiblePairs]);
   const pathsKey = useMemo(() => visiblePairs.map((p) => p.path).join("|"), [visiblePairs]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpanded(tree));
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const lastExpandAllVersion = useRef(expandAllVersion);
+  const lastCollapseAllVersion = useRef(collapseAllVersion);
   useEffect(() => {
-    setExpanded(defaultExpanded(tree));
+    setExpanded(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathsKey]);
+  useEffect(() => {
+    if (expandAllVersion !== lastExpandAllVersion.current) {
+      lastExpandAllVersion.current = expandAllVersion;
+      setExpanded(collectExpandablePaths(tree, nestedPairs, treeFilter));
+    }
+  }, [expandAllVersion, nestedPairs, tree, treeFilter]);
+  useEffect(() => {
+    if (collapseAllVersion !== lastCollapseAllVersion.current) {
+      lastCollapseAllVersion.current = collapseAllVersion;
+      setExpanded(new Set());
+    }
+  }, [collapseAllVersion]);
 
   const toggle = (path: string) =>
     setExpanded((prev) => {

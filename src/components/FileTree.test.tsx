@@ -27,11 +27,11 @@ describe("FileTree", () => {
     expect(screen.getByText(/Choose a JAR, ZIP, folder, or text file above/)).toBeInTheDocument();
   });
 
-  it("renders folders and files; diff folders auto-expand to show files", () => {
+  it("renders folders collapsed by default after a diff loads", () => {
     setup();
     // Paired entries (folders, two-sided files) render once per side in two-pane mode.
     expect(screen.getAllByText("com").length).toBe(2);
-    expect(screen.getAllByText("App.class").length).toBe(2);
+    expect(screen.queryByText("App.class")).not.toBeInTheDocument();
     // A left-only file renders only on the left, with a gap on the right.
     expect(screen.getAllByText("top.txt").length).toBe(1);
   });
@@ -48,9 +48,26 @@ describe("FileTree", () => {
       }
     }
   });
-  it("collapsing a folder hides its files", async () => {
+  it("clicking a collapsed folder expands it and clicking again hides its files", async () => {
     setup();
+    expect(screen.queryByText("App.class")).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByText("com")[0].closest("button")!);
+    expect(screen.getAllByText("example").length).toBe(2);
+    expect(screen.queryByText("App.class")).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByText("example")[0].closest("button")!);
+    expect(screen.getAllByText("App.class").length).toBe(2);
+    await userEvent.click(screen.getAllByText("com")[0].closest("button")!);
+    expect(screen.queryByText("App.class")).not.toBeInTheDocument();
+  });
+  it("expands and collapses all visible folders from command props", () => {
+    const { rerender, props } = setup({ expandAllVersion: 0, collapseAllVersion: 0 });
+
+    expect(screen.queryByText("App.class")).not.toBeInTheDocument();
+
+    rerender(<FileTree {...props} expandAllVersion={1} collapseAllVersion={0} />);
+    expect(screen.getAllByText("App.class").length).toBe(2);
+
+    rerender(<FileTree {...props} expandAllVersion={1} collapseAllVersion={1} />);
     expect(screen.queryByText("App.class")).not.toBeInTheDocument();
   });
   it("clicking a file calls onInspect with its pair", async () => {
@@ -61,6 +78,8 @@ describe("FileTree", () => {
   it("shows the status glyph for a file", () => {
     setup();
     expect(screen.getByLabelText("left only")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByText("com")[0].closest("button")!);
+    fireEvent.click(screen.getAllByText("example")[0].closest("button")!);
     expect(screen.getByLabelText("modified")).toBeInTheDocument();
   });
   it("renders a gap on the missing side for one-sided entries", () => {
@@ -76,6 +95,8 @@ describe("FileTree", () => {
   it("shows a single column with no header in single mode", () => {
     const { container } = setup({ mode: "single" });
     expect(container.querySelector(".tree-header")).toBeNull();
+    fireEvent.click(screen.getByText("com").closest("button")!);
+    fireEvent.click(screen.getByText("example").closest("button")!);
     expect(screen.getAllByText("App.class").length).toBe(1);
   });
   it("renders a nested archive entry as an expandable row that fetches on click", () => {
@@ -97,6 +118,7 @@ describe("FileTree", () => {
         onExpandArchive={onExpandArchive}
       />,
     );
+    fireEvent.click(screen.getAllByText("lib")[0].closest("button")!);
     const row = screen.getAllByText("inner.jar")[0].closest("button")!;
     fireEvent.click(row);
     expect(onExpandArchive).toHaveBeenCalledWith("lib/inner.jar");
@@ -126,6 +148,7 @@ describe("FileTree", () => {
         onExpandArchive={() => {}}
       />,
     );
+    fireEvent.click(screen.getAllByText("lib")[0].closest("button")!);
     fireEvent.click(screen.getAllByText("inner.jar")[0].closest("button")!);
     expect(screen.getAllByText("Changed.class").length).toBe(2);
     expect(screen.queryByText("Same.class")).not.toBeInTheDocument();
