@@ -25,9 +25,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # --- parse leading flags (--rebuild / --arch); rest passes to build-linux.sh --
 REBUILD=0
 ARCH=""
-# glibc floor of the produced binaries. Lower = runs on more (older) systems.
-# 22.04 -> glibc 2.35 (default, safe). 24.04 -> 2.39. 20.04 -> 2.31 (no webkit-4.1).
-UBUNTU="${LCDIFF_UBUNTU:-22.04}"
+# glibc floor of the produced binaries. Release builds use the matrix wrapper
+# for 24.04 and 26.04; direct single-target builds default to the older
+# supported LTS floor.
+UBUNTU="${LCDIFF_UBUNTU:-24.04}"
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --rebuild) REBUILD=1; shift ;;

@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+const version = packageJson.version;
+const releaseNotesFile = `docs/release-notes/v${version}.md`;
+
 const files = [
   "README.md",
+  "docs/DEVELOPMENT.md",
   "docs/RELEASING.md",
   "docs/OPERATIONS_MACOS.md",
   "docs/LCDIFF_COMPLETION_AUDIT.md",
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
-  "docs/release-notes/v0.2.0.md",
+  releaseNotesFile,
   "aur/lcdiff/PKGBUILD",
   "aur/lcdiff/.SRCINFO",
   "aur/lcdiff/lcdiff.install",
@@ -25,6 +30,7 @@ for (const file of files) {
 }
 
 const readme = readFileSync("README.md", "utf8");
+const development = readFileSync("docs/DEVELOPMENT.md", "utf8");
 const macOrder = [
   "scripts/sign-macos-bundle.sh",
   "scripts/notarize-macos-app.sh",
@@ -33,23 +39,23 @@ const macOrder = [
 ];
 let cursor = -1;
 for (const marker of macOrder) {
-  const index = readme.indexOf(marker);
+  const index = development.indexOf(marker);
   if (index === -1) {
-    failures.push(`README.md: missing ${marker}`);
+    failures.push(`docs/DEVELOPMENT.md: missing ${marker}`);
     continue;
   }
   if (index <= cursor) {
-    failures.push(`README.md: macOS command order must be sign, notarize, package DMG`);
+    failures.push(`docs/DEVELOPMENT.md: macOS command order must be sign, notarize, package DMG`);
   }
   cursor = index;
 }
 
-if (!readme.includes("npm run verify:all")) {
-  failures.push("README.md: missing aggregate verifier command in Developer checks");
+if (!development.includes("npm run verify:all")) {
+  failures.push("docs/DEVELOPMENT.md: missing aggregate verifier command in Developer checks");
 }
 
-if (!readme.includes("npm run verify:frontend-render")) {
-  failures.push("README.md: missing frontend render verifier command in Developer checks");
+if (!development.includes("npm run verify:frontend-render")) {
+  failures.push("docs/DEVELOPMENT.md: missing frontend render verifier command in Developer checks");
 }
 if (!readme.includes("docs/OPERATIONS_MACOS.md")) {
   failures.push("README.md: missing macOS operations runbook link");
@@ -60,8 +66,8 @@ if (!readme.includes("JAR/ZIP archives and folders")) {
 // Current build focus is Linux + macOS. The Windows / Linux display-matrix
 // validation runners stay documented in docs/PLATFORM_VALIDATION.md (still
 // enforced below) but are no longer required inline in the README.
-if (!readme.includes("scripts/build-linux.sh")) {
-  failures.push("README.md: missing Linux build script command");
+if (!development.includes("scripts/build-linux.sh")) {
+  failures.push("docs/DEVELOPMENT.md: missing Linux build script command");
 }
 if (!readme.includes("yay -S lcdiff")) {
   failures.push("README.md: missing Arch AUR install note");
@@ -78,7 +84,7 @@ if (!releasing.includes("yay -S lcdiff")) {
 const aurPkgbuild = readFileSync("aur/lcdiff/PKGBUILD", "utf8");
 for (const marker of [
   "pkgname=lcdiff",
-  "pkgver=0.2.0",
+  `pkgver=${version}`,
   "source=(\"git+https://github.com/lyokha113/lcdiff.git#tag=v${pkgver}\")",
   "npm ci",
   "LCDIFF_JLINK=\"$(command -v jlink)\" scripts/assemble-sidecar-resources.sh",
@@ -93,8 +99,8 @@ for (const marker of [
 const aurSrcinfo = readFileSync("aur/lcdiff/.SRCINFO", "utf8");
 for (const marker of [
   "pkgbase = lcdiff",
-  "pkgver = 0.2.0",
-  "source = git+https://github.com/lyokha113/lcdiff.git#tag=v0.2.0",
+  `pkgver = ${version}`,
+  `source = git+https://github.com/lyokha113/lcdiff.git#tag=v${version}`,
   "sha256sums = SKIP",
 ]) {
   if (!aurSrcinfo.includes(marker)) {
@@ -110,12 +116,12 @@ if (!aurInstall.includes("update-desktop-database -q")) {
   failures.push("aur/lcdiff/lcdiff.install: missing desktop database refresh");
 }
 
-const releaseNotes = readFileSync("docs/release-notes/v0.2.0.md", "utf8");
+const releaseNotes = readFileSync(releaseNotesFile, "utf8");
 if (!releaseNotes.includes("yay -S lcdiff")) {
-  failures.push("docs/release-notes/v0.2.0.md: missing AUR install command");
+  failures.push(`${releaseNotesFile}: missing AUR install command`);
 }
 if (!releaseNotes.includes("Arch Linux")) {
-  failures.push("docs/release-notes/v0.2.0.md: missing Arch Linux note");
+  failures.push(`${releaseNotesFile}: missing Arch Linux note`);
 }
 
 const audit = readFileSync("docs/LCDIFF_COMPLETION_AUDIT.md", "utf8");

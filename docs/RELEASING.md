@@ -2,15 +2,17 @@
 
 End-to-end runbook for cutting a tagged GitHub release with macOS and Linux
 artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
-**Linux (x86_64, Ubuntu 22.04 / glibc 2.35+)**.
+**Linux (x86_64, Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**.
 
 ## Artifacts per release
 
 | Platform | File | Built where |
 | --- | --- | --- |
 | macOS arm64 | `LCDiff-<version>-aarch64.dmg` | locally on macOS |
-| Linux x86_64 | `LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:22.04`) |
-| Linux x86_64 | `LCDiff_<version>_amd64.deb` | Docker (`ubuntu:22.04`) |
+| Linux x86_64 / Ubuntu 24.04 LTS | `artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:24.04`) |
+| Linux x86_64 / Ubuntu 24.04 LTS | `artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:24.04`) |
+| Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:26.04`) |
+| Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:26.04`) |
 | Arch Linux | `aur/lcdiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
 
@@ -58,20 +60,29 @@ see `docs/OPERATIONS_MACOS.md`.
 ## 3. Build the Linux bundles (Docker, from any host)
 
 ```bash
-docker/build-linux-docker.sh --arch amd64 --bundles appimage,deb
+docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
 ```
 
-This builds inside `ubuntu:22.04` so the glibc floor is 2.35 and the bundled
-jlink JRE is Linux x86_64. Copy the artifacts out of the build volume:
+This builds separately inside `ubuntu:24.04` and `ubuntu:26.04`, giving the GTK,
+WebKit, OpenSSL, and glibc-linked desktop stack its own dependency floor per
+supported Ubuntu LTS version. The bundled jlink JRE is built inside each Linux
+container, so it matches Linux x86_64 instead of the host. The matrix script
+copies artifacts to:
 
 ```bash
-cid=$(docker create --platform linux/amd64 -v lcdiff-linux-amd64-u2204-target:/t \
-  lcdiff-linux-build-amd64-u2204)
-docker cp "$cid":/t/release/bundle ./artifacts/linux-bundle
-docker rm "$cid"
+artifacts/linux/ubuntu24.04-amd64/
+artifacts/linux/ubuntu26.04-amd64/
 ```
 
-(Optional) prove the GUI renders headlessly: `docker/run-linux-docker.sh`.
+For a single target while debugging:
+
+```bash
+docker/build-linux-docker.sh --arch amd64 --ubuntu 24.04 --bundles appimage,deb
+docker/build-linux-docker.sh --arch amd64 --ubuntu 26.04 --bundles appimage,deb
+```
+
+(Optional) prove the GUI renders headlessly after a single-target build:
+`docker/run-linux-docker.sh`.
 
 ## 3.5 Publish the AUR package
 
@@ -86,8 +97,10 @@ Stage every artifact under one folder, then create the tagged release:
 ```bash
 gh release create v<version> \
   artifacts/macos/LCDiff-<version>-aarch64.dmg \
-  artifacts/linux/LCDiff_<version>_amd64.AppImage \
-  artifacts/linux/LCDiff_<version>_amd64.deb \
+  artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_<version>_amd64.AppImage \
+  artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_<version>_amd64.deb \
+  artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_<version>_amd64.AppImage \
+  artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_<version>_amd64.deb \
   scripts/install-macos.sh \
   scripts/install-linux.sh \
   --title "LCDiff v<version>" \
@@ -98,15 +111,19 @@ gh release create v<version> \
 
 - macOS: download the DMG + `install-macos.sh`, run `bash install-macos.sh`,
   confirm `open -a LCDiff` launches.
-- Linux: download the AppImage + `install-linux.sh`, run
-  `bash install-linux.sh LCDiff_<version>_amd64.AppImage`, confirm `lcdiff` runs.
+- Linux: download the AppImage or `.deb` matching the Ubuntu LTS floor plus
+  `install-linux.sh`, run `bash install-linux.sh LCDiff_<version>_amd64.AppImage`
+  or `bash install-linux.sh LCDiff_<version>_amd64.deb`, confirm `lcdiff` runs.
 - Arch Linux: install from AUR with `yay -S lcdiff`, confirm `lcdiff` runs.
 
 ## Notes
 
 - Linux bundles are unsigned; there is no Linux code-signing step.
 - Arch Linux uses the AUR package, not a GitHub release asset.
+- Ubuntu release assets are intentionally split by LTS floor. Do not collapse
+  24.04 and 26.04 artifacts into one Linux directory because linked GTK/WebKit
+  dependencies can drift across distro releases.
 - ARM Linux is not a release target — build from source with
-  `docker/build-linux-docker.sh --arch arm64` if needed.
+  `docker/build-linux-docker.sh --arch arm64 --ubuntu 26.04` if needed.
 - Run the developer checks (`npm run verify:all`,
   `npm run verify:frontend-render`) before tagging.

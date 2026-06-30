@@ -3,15 +3,21 @@
 #   Rust (edition 2024 -> stable >= 1.85), Node 20, Maven, JDK 17 (jlink),
 #   GTK3 + WebKit2GTK 4.1 stack.
 #
-# UBUNTU_VERSION picks the glibc floor of the produced binaries (glibc is only
-# backward-compatible): 24.04 -> glibc 2.39, 22.04 -> 2.35, 20.04 -> 2.31.
-# Build on the OLDEST distro your target runs, or it fails with
-# "GLIBC_2.xx not found". 22.04 is the safe default (webkit2gtk-4.1 present;
-# 20.04 only has webkit2gtk-4.0).
-ARG UBUNTU_VERSION=22.04
+# UBUNTU_VERSION picks the glibc floor of the produced binaries. Release builds
+# run this Dockerfile separately for each supported Ubuntu LTS floor because
+# desktop libraries such as GTK/WebKit can drift between distro releases.
+ARG UBUNTU_VERSION=24.04
 FROM ubuntu:${UBUNTU_VERSION}
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+RUN printf '%s\n' \
+      'Acquire::Retries "5";' \
+      'Acquire::http::Timeout "60";' \
+      'Acquire::https::Timeout "60";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::http::No-Cache "true";' \
+      > /etc/apt/apt.conf.d/80-lcdiff-retries
 
 # --- Tauri v2 Linux system deps (mirror scripts/build-linux.sh apt list) ------
 # Plus: git, ca-certs, gnupg for tooling; openjdk-17 for jlink; maven.

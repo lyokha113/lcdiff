@@ -46,6 +46,10 @@ Pass evidence:
 
 ## Linux Display Matrix
 
+Release artifacts are built separately for Ubuntu 24.04 LTS and Ubuntu 26.04
+LTS. Run display validation against each Ubuntu artifact set because the
+GTK/WebKit dependency stack is linked against the build floor.
+
 Run the same Tauri bundle on:
 
 | Desktop | Session | Required checks |

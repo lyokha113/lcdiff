@@ -84,8 +84,13 @@ command -v "$JLINK" >/dev/null 2>&1 || {
 }
 
 # --- 2. Frontend deps + sidecar resources ------------------------------------
-printf '==> npm install\n'
-npm --prefix "$ROOT" install
+printf '==> npm ci\n'
+npm --prefix "$ROOT" ci \
+  --fetch-retries=5 \
+  --fetch-retry-factor=2 \
+  --fetch-retry-mintimeout=20000 \
+  --fetch-retry-maxtimeout=180000 \
+  --fetch-timeout=600000
 
 printf '==> Assembling JVM sidecar + jlink runtime\n'
 LCDIFF_JLINK="$JLINK" "$ROOT/scripts/assemble-sidecar-resources.sh"
