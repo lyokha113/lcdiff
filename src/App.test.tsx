@@ -464,6 +464,8 @@ describe("App file-merge wiring", () => {
     const shell = await screen.findByRole("main");
     await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
     expect(shell.dataset.effectiveColorPattern).toBe("light");
+    expect(document.documentElement.dataset.effectiveColorPattern).toBe("light");
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("#edf2f7");
     expect(shell.style.getPropertyValue("--ldiff-editor-font-size")).toBe("");
   });
 

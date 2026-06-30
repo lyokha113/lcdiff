@@ -76,6 +76,18 @@
   --st-only: #84a9e0;
   --st-same: #7fc69a;
   --danger: #ef9a9a;
+  --status-diff-text: #e0a030;
+  --status-diff-bg: #3a2f1a;
+  --status-meta-text: #8aabd0;
+  --status-meta-bg: #23304a;
+  --status-left-text: #6cc99a;
+  --status-left-bg: #1f3320;
+  --status-right-text: #d9997a;
+  --status-right-bg: #33231f;
+  --tree-hover-bg: rgba(255, 255, 255, 0.04);
+  --tree-selected-bg: rgba(217, 176, 102, 0.16);
+  --tree-gap-stripe-a: rgba(255, 255, 255, 0.02);
+  --tree-gap-stripe-b: rgba(255, 255, 255, 0.05);
   --drawer-surface: color-mix(in oklab, var(--ink-1) 97%, transparent);
   --drawer-border: color-mix(in oklab, var(--brass) 24%, var(--line));
   --drawer-shadow: -2rem 0 5rem color-mix(in oklab, black 54%, transparent), inset 0 1px color-mix(in oklab, white 5%, transparent);
@@ -495,7 +507,7 @@ main.app-shell {
 .appearance-pattern-grid__button {
   min-width: 0;
   min-height: 2.2rem;
-  justify-content: flex-start;
+  justify-content: center;
 }
 .segmented-control {
   display: grid;
@@ -830,8 +842,8 @@ h1 {
   cursor: pointer;
   border-radius: 4px;
 }
-.tree-row:hover { background: rgba(255, 255, 255, 0.04); }
-.tree-row.selected { background: rgba(217, 176, 102, 0.16); }
+.tree-row:hover { background: var(--tree-hover-bg); }
+.tree-row.selected { background: var(--tree-selected-bg); }
 .tree-chevron { width: 14px; height: 14px; flex: 0 0 auto; opacity: 0.7; }
 .tree-icon { width: 15px; height: 15px; flex: 0 0 auto; opacity: 0.85; }
 .tree-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -847,14 +859,14 @@ h1 {
   min-width: 1.4em;
   text-align: center;
 }
-.tree-file.different    .tree-name { color: #e0a030; }
-.tree-file.different    .status-chip { background: #3a2f1a; color: #e0a030; }
-.tree-file.differentMetadataOnly .tree-name { color: #8aabd0; }
-.tree-file.differentMetadataOnly .status-chip { background: #23304a; color: #8aabd0; }
-.tree-file.onlyLeft     .tree-name { color: #6cc99a; }
-.tree-file.onlyLeft     .status-chip { background: #1f3320; color: #6cc99a; }
-.tree-file.onlyRight    .tree-name { color: #d9997a; }
-.tree-file.onlyRight    .status-chip { background: #33231f; color: #d9997a; }
+.tree-file.different    .tree-name { color: var(--status-diff-text); }
+.tree-file.different    .status-chip { background: var(--status-diff-bg); color: var(--status-diff-text); }
+.tree-file.differentMetadataOnly .tree-name { color: var(--status-meta-text); }
+.tree-file.differentMetadataOnly .status-chip { background: var(--status-meta-bg); color: var(--status-meta-text); }
+.tree-file.onlyLeft     .tree-name { color: var(--status-left-text); }
+.tree-file.onlyLeft     .status-chip { background: var(--status-left-bg); color: var(--status-left-text); }
+.tree-file.onlyRight    .tree-name { color: var(--status-right-text); }
+.tree-file.onlyRight    .status-chip { background: var(--status-right-bg); color: var(--status-right-text); }
 .tree-file.identical    .tree-name { color: var(--text-2, #889); }
 .tree-file.identical    .status-chip { background: transparent; color: var(--st-same, #567); }
 .search-line-highlight { background: rgba(217, 176, 102, 0.24); }
@@ -928,10 +940,10 @@ h1 {
   border-radius: 3px;
   background: repeating-linear-gradient(
     45deg,
-    rgba(255, 255, 255, 0.02),
-    rgba(255, 255, 255, 0.02) 6px,
-    rgba(255, 255, 255, 0.05) 6px,
-    rgba(255, 255, 255, 0.05) 12px
+    var(--tree-gap-stripe-a),
+    var(--tree-gap-stripe-a) 6px,
+    var(--tree-gap-stripe-b) 6px,
+    var(--tree-gap-stripe-b) 12px
   );
 }
 .tree-chevron-spacer {

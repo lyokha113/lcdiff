@@ -223,6 +223,7 @@ try {
   const appearanceGroup = preferencesDrawer.getByRole("region", { name: "Appearance preferences" });
   await appearanceGroup.waitFor({ timeout: 5_000 });
   const lightPreferencesState = await page.evaluate(() => {
+    const rootStyle = getComputedStyle(document.documentElement);
     const shell = document.querySelector(".app-shell");
     const drawer = document.querySelector(".config-drawer.open");
     const outlineButtons = [...document.querySelectorAll(".preference-choice[data-variant='outline']")];
@@ -230,6 +231,9 @@ try {
     const shellStyle = shell ? getComputedStyle(shell) : null;
     return {
       effectiveColorPattern: shell?.getAttribute("data-effective-color-pattern"),
+      rootEffectiveColorPattern: document.documentElement.getAttribute("data-effective-color-pattern"),
+      rootBackgroundToken: rootStyle.getPropertyValue("--background").trim(),
+      bodyBackground: getComputedStyle(document.body).backgroundImage,
       shellColor: shellStyle?.color,
       shellTextToken: shellStyle?.getPropertyValue("--text-0").trim(),
       drawerBackground: drawer ? getComputedStyle(drawer).backgroundColor : "",
@@ -256,6 +260,15 @@ try {
   });
   if (lightPreferencesState.effectiveColorPattern !== "light") {
     throw new Error(`Preferences render did not enter light mode: ${lightPreferencesState.effectiveColorPattern}`);
+  }
+  if (lightPreferencesState.rootEffectiveColorPattern !== "light") {
+    throw new Error(`document root did not receive light mode: ${lightPreferencesState.rootEffectiveColorPattern}`);
+  }
+  if (lightPreferencesState.rootBackgroundToken !== "#edf2f7") {
+    throw new Error(`document root did not receive light variables: ${lightPreferencesState.rootBackgroundToken}`);
+  }
+  if (lightPreferencesState.bodyBackground.includes("#10131a")) {
+    throw new Error(`body background is still dark-themed: ${lightPreferencesState.bodyBackground}`);
   }
   if (lightPreferencesState.shellColor === "oklch(0.93 0.008 250)") {
     throw new Error("light app shell is still inheriting the dark foreground color");
@@ -560,6 +573,13 @@ try {
   });
   await mockedPage.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
+  await mockedPage.evaluate(() => {
+    localStorage.setItem("ldiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "light" },
+    }));
+  });
+  await mockedPage.reload({ waitUntil: "domcontentloaded" });
+  await disableAnimations(mockedPage);
   await mockedPage.getByRole("main", { name: "Start LDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Compare two sources" }).click();
 
@@ -623,6 +643,43 @@ try {
   // Restore the differences view for the subsequent search assertions.
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
   await mockedPage.getByRole("option", { name: "Differences" }).click();
+  const populatedLightState = await mockedPage.evaluate(() => {
+    const shell = document.querySelector(".app-shell");
+    const different = document.querySelector(".tree-file.different .status-chip");
+    const leftOnly = document.querySelector(".tree-file.onlyLeft .status-chip");
+    const rightOnly = document.querySelector(".tree-file.onlyRight .status-chip");
+    const differentStyle = different ? getComputedStyle(different) : null;
+    const leftStyle = leftOnly ? getComputedStyle(leftOnly) : null;
+    const rightStyle = rightOnly ? getComputedStyle(rightOnly) : null;
+    const patternButton = document.querySelector(".appearance-pattern-grid__button");
+    const patternStyle = patternButton ? getComputedStyle(patternButton) : null;
+    return {
+      effectiveColorPattern: shell?.getAttribute("data-effective-color-pattern"),
+      rootEffectiveColorPattern: document.documentElement.getAttribute("data-effective-color-pattern"),
+      differentChip: differentStyle ? { color: differentStyle.color, background: differentStyle.backgroundColor } : null,
+      leftChip: leftStyle ? { color: leftStyle.color, background: leftStyle.backgroundColor } : null,
+      rightChip: rightStyle ? { color: rightStyle.color, background: rightStyle.backgroundColor } : null,
+      patternJustify: patternStyle?.justifyContent,
+    };
+  });
+  if (
+    populatedLightState.effectiveColorPattern !== "light" ||
+    populatedLightState.rootEffectiveColorPattern !== "light"
+  ) {
+    throw new Error(`populated compare did not stay in light mode: ${JSON.stringify(populatedLightState)}`);
+  }
+  for (const [label, chip] of Object.entries({
+    different: populatedLightState.differentChip,
+    left: populatedLightState.leftChip,
+    right: populatedLightState.rightChip,
+  })) {
+    if (!chip) {
+      throw new Error(`missing populated light ${label} status chip`);
+    }
+    if (chip.background === "rgb(58, 47, 26)" || chip.background === "rgb(31, 51, 32)" || chip.background === "rgb(51, 35, 31)") {
+      throw new Error(`populated light ${label} chip still uses dark status background: ${JSON.stringify(chip)}`);
+    }
+  }
 
   // Submit via the SearchBar Search button (MenuBar toggle is now "Toggle search").
   await mockedPage.getByRole("button", { name: "Toggle search" }).click();

@@ -309,6 +309,7 @@ export function App() {
       return;
     }
     saveUiPreferences(normalized);
+    applyPreferencesToRoot(document.documentElement, normalized, systemPrefersDark);
     if (appShellRef.current) applyPreferencesToRoot(appShellRef.current, normalized, systemPrefersDark);
   }, [preferences, availableFontFamilies, systemPrefersDark, view]);
   useEffect(() => {
