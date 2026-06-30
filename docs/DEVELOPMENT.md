@@ -145,6 +145,32 @@ Without Developer ID credentials, local validation uses ad-hoc signing and
 records notarization as skipped. The operator runbook is
 [OPERATIONS_MACOS.md](OPERATIONS_MACOS.md).
 
+## Build Windows
+
+Windows release installers are built on Windows, not cross-built from macOS or
+Linux. For phase 1, GitHub Actions builds an unsigned NSIS installer on
+`windows-latest` whenever a `v*` tag is pushed.
+
+Run the same build script inside a Windows VM or machine:
+
+```powershell
+scripts\build-windows.ps1
+scripts\build-windows.ps1 -Bundles nsis
+scripts\build-windows.ps1 -Bundles "nsis,msi"
+```
+
+The script requires Node.js, Rust, Git Bash, Maven, and Java 17 with `jlink`.
+Artifacts are copied to:
+
+```text
+artifacts/windows/
+```
+
+Unsigned installers are expected until `WINDOWS_CERTIFICATE_BASE64` and
+`WINDOWS_CERTIFICATE_PASSWORD` secrets are configured. When those secrets are
+present, `scripts\build-windows.ps1 -SignIfSecretsPresent` signs `.exe` and
+`.msi` bundles through [sign-windows-bundles.ps1](../scripts/sign-windows-bundles.ps1).
+
 ## Release
 
 Use [RELEASING.md](RELEASING.md) for the full tagged release process.
@@ -154,6 +180,7 @@ Current release focus:
 - macOS Apple Silicon DMG.
 - Linux x86_64 Ubuntu 24.04 LTS AppImage/deb.
 - Linux x86_64 Ubuntu 26.04 LTS AppImage/deb.
+- Windows 10/11 x64 NSIS installer from GitHub Actions.
 - Arch Linux AUR package via `aur/lcdiff`.
 
 Arch users install with:

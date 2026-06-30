@@ -1,8 +1,9 @@
 # Releasing LCDiff
 
-End-to-end runbook for cutting a tagged GitHub release with macOS and Linux
-artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
-**Linux (x86_64, Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**.
+End-to-end runbook for cutting a tagged GitHub release with macOS, Linux, and
+Windows artifacts. Targets the current build focus: **macOS (Apple Silicon)**,
+**Linux (x86_64, Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**, and **Windows 10/11
+x64**.
 
 ## Artifacts per release
 
@@ -13,6 +14,7 @@ artifacts. Targets the current build focus: **macOS (Apple Silicon)** and
 | Linux x86_64 / Ubuntu 24.04 LTS | `artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:24.04`) |
 | Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:26.04`) |
 | Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:26.04`) |
+| Windows 10/11 x64 | `LCDiff-<version>-windows-x64-setup.exe` | GitHub Actions (`windows-latest`) |
 | Arch Linux | `aur/lcdiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
 
@@ -84,7 +86,28 @@ docker/build-linux-docker.sh --arch amd64 --ubuntu 26.04 --bundles appimage,deb
 (Optional) prove the GUI renders headlessly after a single-target build:
 `docker/run-linux-docker.sh`.
 
-## 3.5 Publish the AUR package
+## 3.5 Build the Windows installer (GitHub Actions)
+
+Windows is phase-1 CI-built. Push a `v<version>` tag and the
+`Windows Release` workflow builds an unsigned NSIS installer on
+`windows-latest`, uploads it as a workflow artifact, and attaches it to the
+matching GitHub Release:
+
+```text
+LCDiff-<version>-windows-x64-setup.exe
+```
+
+To run the same build on a Windows machine:
+
+```powershell
+scripts\build-windows.ps1
+```
+
+Signing is optional. Configure `WINDOWS_CERTIFICATE_BASE64` and
+`WINDOWS_CERTIFICATE_PASSWORD` repository secrets to enable Authenticode
+signing in the workflow.
+
+## 3.6 Publish the AUR package
 
 Update `aur/lcdiff/PKGBUILD` and `aur/lcdiff/.SRCINFO` when the version changes,
 then push the AUR repo separately from the GitHub release. Arch users install
@@ -114,11 +137,15 @@ gh release create v<version> \
 - Linux: download the AppImage or `.deb` matching the Ubuntu LTS floor plus
   `install-linux.sh`, run `bash install-linux.sh LCDiff_<version>_amd64.AppImage`
   or `bash install-linux.sh LCDiff_<version>_amd64.deb`, confirm `lcdiff` runs.
+- Windows: download `LCDiff-<version>-windows-x64-setup.exe`, install it on
+  Windows 10 or 11, confirm LCDiff launches and decompile/bytecode views work.
 - Arch Linux: install from AUR with `yay -S lcdiff`, confirm `lcdiff` runs.
 
 ## Notes
 
 - Linux bundles are unsigned; there is no Linux code-signing step.
+- Windows NSIS installers are unsigned until Authenticode secrets are configured
+  for the GitHub Actions workflow; unsigned builds may trigger SmartScreen.
 - Arch Linux uses the AUR package, not a GitHub release asset.
 - Ubuntu release assets are intentionally split by LTS floor. Do not collapse
   24.04 and 26.04 artifacts into one Linux directory because linked GTK/WebKit

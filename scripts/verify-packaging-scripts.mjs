@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 
 const files = new Map([
+  ["scripts/build-windows.ps1", readFileSync("scripts/build-windows.ps1", "utf8")],
   ["scripts/sign-windows-bundles.ps1", readFileSync("scripts/sign-windows-bundles.ps1", "utf8")],
   ["scripts/verify-windows-platform.ps1", readFileSync("scripts/verify-windows-platform.ps1", "utf8")],
   ["scripts/verify-linux-display-matrix.sh", readFileSync("scripts/verify-linux-display-matrix.sh", "utf8")],
@@ -28,6 +29,20 @@ function requireRegex(file, pattern, label) {
 }
 
 requireText("scripts/sign-windows-bundles.ps1", "Set-StrictMode -Version Latest", "strict mode");
+
+requireText("scripts/build-windows.ps1", "Set-StrictMode -Version Latest", "strict mode");
+requireText("scripts/build-windows.ps1", '$ErrorActionPreference = "Stop"', "stop-on-error");
+requireText("scripts/build-windows.ps1", 'if (-not $IsWindows)', "Windows host guard");
+requireText("scripts/build-windows.ps1", 'Require-Command "bash"', "Git Bash requirement");
+requireText("scripts/build-windows.ps1", 'throw "JAVA_HOME must point to a Java 17 installation."', "JAVA_HOME requirement");
+requireText("scripts/build-windows.ps1", "cygpath -u", "Git Bash jlink path conversion");
+requireText("scripts/build-windows.ps1", "npm run verify:all", "aggregate verifier gate");
+requireText("scripts/build-windows.ps1", "bash scripts/assemble-sidecar-resources.sh", "sidecar assembly");
+requireText("scripts/build-windows.ps1", "bash scripts/test-sidecar-smoke.sh", "sidecar smoke");
+requireText("scripts/build-windows.ps1", "npm run tauri -- build --bundles $Bundles", "Windows release bundle build");
+requireText("scripts/build-windows.ps1", "scripts/sign-windows-bundles.ps1", "optional Windows signing");
+requireText("scripts/build-windows.ps1", 'Where-Object { $_.Extension -in ".exe", ".msi" }', "exe/msi artifact filter");
+requireText("scripts/build-windows.ps1", "LCDiff-$version-windows-x64-$suffix", "stable release artifact name");
 requireText("scripts/sign-windows-bundles.ps1", '$ErrorActionPreference = "Stop"', "stop-on-error");
 requireText("scripts/sign-windows-bundles.ps1", "Get-Command signtool.exe", "signtool lookup on PATH");
 requireText("scripts/sign-windows-bundles.ps1", "Windows Kits\\10\\bin", "Windows SDK signtool fallback");

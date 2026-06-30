@@ -76,6 +76,12 @@ yay -S lcdiff
 
 `paru -S lcdiff` works too.
 
+### Windows
+
+Windows 10/11 support is built by GitHub Actions from release tags. Download
+`LCDiff-<version>-windows-x64-setup.exe` when a release includes it. Unsigned
+builds may show a SmartScreen warning until code signing is configured.
+
 ## Use It
 
 ### 1. Open Something Suspicious
@@ -163,6 +169,8 @@ The full shortcut reference lives inside the app.
   drag-and-drop misbehaves, launch with `GDK_BACKEND=x11 lcdiff`.
 - AppImage install does not need root. `.deb` install does.
 - Arch uses the AUR package, not a GitHub Linux bundle.
+- Windows installers are built on GitHub-hosted Windows runners for release
+  tags; local macOS/Linux builds do not produce Windows artifacts.
 
 ## Developers
 

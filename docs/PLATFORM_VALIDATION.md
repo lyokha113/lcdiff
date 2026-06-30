@@ -23,6 +23,13 @@ Pass evidence:
 - Built NSIS/MSI artifacts exist under `target/<target>/debug/bundle/` or
   `target/<target>/release/bundle/`.
 
+## Windows Release Builder
+
+Release installers are built by `.github/workflows/windows-release.yml` on
+GitHub-hosted `windows-latest` runners for future `v*` tags. The workflow calls
+`scripts\build-windows.ps1`, uploads `artifacts/windows/*` as a workflow
+artifact, and attaches the installer to the matching GitHub Release.
+
 ## Windows Signing
 
 Configure repository secrets:
