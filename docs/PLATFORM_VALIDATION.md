@@ -30,6 +30,23 @@ GitHub-hosted `windows-latest` runners for future `v*` tags. The workflow calls
 `scripts\build-windows.ps1`, uploads `artifacts/windows/*` as a workflow
 artifact, and attaches the installer to the matching GitHub Release.
 
+## Linux Release Builder
+
+Linux release assets are built by `.github/workflows/linux-release.yml` on
+GitHub-hosted `ubuntu-latest` runners for future `v*` tags. The workflow calls
+`docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb`, uploads the
+staged Ubuntu 24.04 and Ubuntu 26.04 AppImage/deb assets as a workflow artifact,
+and attaches uniquely named assets to the matching GitHub Release.
+
+## macOS Release Builder
+
+Apple Silicon macOS release assets are built by
+`.github/workflows/macos-release.yml` on GitHub-hosted `macos-15` runners for
+future `v*` tags. The workflow calls
+`scripts/verify-macos-distribution.sh --target aarch64-apple-darwin`, uploads
+the staged DMG as a workflow artifact, and attaches the DMG plus
+`install-macos.sh` to the matching GitHub Release.
+
 ## Windows Signing
 
 Configure repository secrets:

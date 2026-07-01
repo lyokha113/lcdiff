@@ -1,19 +1,22 @@
 # Releasing LCDiff
 
 End-to-end runbook for cutting a tagged GitHub release with macOS, Linux, and
-Windows artifacts. Targets the current build focus: **macOS (Apple Silicon)**,
-**Linux (x86_64, Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**, and **Windows 10/11
-x64**.
+Windows artifacts. Future `v*` tags run GitHub Actions release workflows that
+build and upload platform assets automatically. The local commands below are
+the same build paths, kept for debugging and manual fallback releases.
+
+Targets the current build focus: **macOS (Apple Silicon)**, **Linux (x86_64,
+Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**, and **Windows 10/11 x64**.
 
 ## Artifacts per release
 
 | Platform | File | Built where |
 | --- | --- | --- |
-| macOS arm64 | `LCDiff-<version>-aarch64.dmg` | locally on macOS |
-| Linux x86_64 / Ubuntu 24.04 LTS | `artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:24.04`) |
-| Linux x86_64 / Ubuntu 24.04 LTS | `artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:24.04`) |
-| Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_<version>_amd64.AppImage` | Docker (`ubuntu:26.04`) |
-| Linux x86_64 / Ubuntu 26.04 LTS | `artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_<version>_amd64.deb` | Docker (`ubuntu:26.04`) |
+| macOS arm64 | `LCDiff-<version>-aarch64.dmg` | GitHub Actions (`macos-15`) or local macOS |
+| Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
+| Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
+| Linux x86_64 / Ubuntu 26.04 LTS | `LCDiff_<version>_ubuntu26.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:26.04`) or local Docker |
+| Linux x86_64 / Ubuntu 26.04 LTS | `LCDiff_<version>_ubuntu26.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:26.04`) or local Docker |
 | Windows 10/11 x64 | `LCDiff-<version>-windows-x64-setup.exe` | GitHub Actions (`windows-latest`) |
 | Arch Linux | `aur/lcdiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
@@ -32,7 +35,19 @@ The version lives in three manifests, kept in sync:
 
 Bump all three for a new version, commit, then tag `v<version>`.
 
-## 2. Build the macOS bundle (on macOS)
+## 2. Build the macOS bundle
+
+Future tags run the `macOS Release` workflow from
+`.github/workflows/macos-release.yml`. It builds on `macos-15`, runs:
+
+```bash
+scripts/verify-macos-distribution.sh --target aarch64-apple-darwin
+```
+
+Then it uploads `LCDiff-<version>-aarch64.dmg` and `install-macos.sh` to the
+matching GitHub Release.
+
+For a local/manual macOS build:
 
 ```bash
 npm install
@@ -59,7 +74,21 @@ For a Gatekeeper-clean signed/notarized build instead, supply Developer ID
 credentials and run `scripts/notarize-macos-app.sh` between the two commands —
 see `docs/OPERATIONS_MACOS.md`.
 
-## 3. Build the Linux bundles (Docker, from any host)
+## 3. Build the Linux bundles
+
+Future tags run the `Linux Release` workflow from
+`.github/workflows/linux-release.yml`. It builds the Docker matrix on
+`ubuntu-latest`, then stages unique GitHub release asset names:
+
+```text
+LCDiff_<version>_ubuntu24.04_amd64.AppImage
+LCDiff_<version>_ubuntu24.04_amd64.deb
+LCDiff_<version>_ubuntu26.04_amd64.AppImage
+LCDiff_<version>_ubuntu26.04_amd64.deb
+install-linux.sh
+```
+
+For a local/manual Linux build:
 
 ```bash
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
@@ -115,17 +144,22 @@ it with `yay -S lcdiff` or `paru -S lcdiff`.
 
 ## 4. Publish the release
 
-Stage every artifact under one folder, then create the tagged release:
+Normal path: push the committed `v<version>` tag. The `macOS Release`,
+`Linux Release`, and `Windows Release` workflows attach their assets to the
+matching GitHub Release using `docs/release-notes/v<version>.md`.
+
+Manual fallback: stage every artifact under one folder with unique basenames,
+then create the tagged release:
 
 ```bash
 gh release create v<version> \
   artifacts/macos/LCDiff-<version>-aarch64.dmg \
-  artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_<version>_amd64.AppImage \
-  artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_<version>_amd64.deb \
-  artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_<version>_amd64.AppImage \
-  artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_<version>_amd64.deb \
+  artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage \
+  artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.deb \
+  artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.AppImage \
+  artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.deb \
   scripts/install-macos.sh \
-  scripts/install-linux.sh \
+  artifacts/release-linux/install-linux.sh \
   --title "LCDiff v<version>" \
   --notes-file docs/release-notes/v<version>.md
 ```
@@ -135,8 +169,10 @@ gh release create v<version> \
 - macOS: download the DMG + `install-macos.sh`, run `bash install-macos.sh`,
   confirm `open -a LCDiff` launches.
 - Linux: download the AppImage or `.deb` matching the Ubuntu LTS floor plus
-  `install-linux.sh`, run `bash install-linux.sh LCDiff_<version>_amd64.AppImage`
-  or `bash install-linux.sh LCDiff_<version>_amd64.deb`, confirm `lcdiff` runs.
+  `install-linux.sh`, run
+  `bash install-linux.sh LCDiff_<version>_ubuntu24.04_amd64.AppImage` or
+  `bash install-linux.sh LCDiff_<version>_ubuntu24.04_amd64.deb`, confirm
+  `lcdiff` runs.
 - Windows: download `LCDiff-<version>-windows-x64-setup.exe`, install it on
   Windows 10 or 11, confirm LCDiff launches and decompile/bytecode views work.
 - Arch Linux: install from AUR with `yay -S lcdiff`, confirm `lcdiff` runs.

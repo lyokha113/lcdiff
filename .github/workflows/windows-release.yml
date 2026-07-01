@@ -25,10 +25,12 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            "tag=${{ inputs.tag }}" >> $env:GITHUB_OUTPUT
+            $tag = "${{ inputs.tag }}"
           } else {
-            "tag=${{ github.ref_name }}" >> $env:GITHUB_OUTPUT
+            $tag = "${{ github.ref_name }}"
           }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "notes=docs/release-notes/$tag.md" >> $env:GITHUB_OUTPUT
 
       - name: Checkout release tag
         uses: actions/checkout@v4
@@ -70,4 +72,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
+          body_path: ${{ steps.release.outputs.notes }}
           files: artifacts/windows/*

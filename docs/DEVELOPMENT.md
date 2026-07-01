@@ -80,7 +80,9 @@ the shell under Playwright and fails on browser page errors.
 
 ## Build Linux
 
-For release artifacts, prefer Docker from any host:
+For release artifacts, prefer Docker from any host. Future `v*` tags run the
+`Linux Release` workflow, which calls the same matrix script on
+`ubuntu-latest` and uploads the staged release assets.
 
 ```bash
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
@@ -120,6 +122,10 @@ Debug app bundle:
 ```bash
 npm run tauri -- build --debug --bundles app
 ```
+
+Future `v*` tags run the `macOS Release` workflow on `macos-15`, which calls
+the macOS distribution verifier for Apple Silicon and uploads the DMG plus
+`install-macos.sh`.
 
 Release distribution order is always sign, notarize, package DMG, then verify:
 
@@ -174,6 +180,12 @@ present, `scripts\build-windows.ps1 -SignIfSecretsPresent` signs `.exe` and
 ## Release
 
 Use [RELEASING.md](RELEASING.md) for the full tagged release process.
+
+Future release tags build and upload platform assets through:
+
+- `macOS Release` (`.github/workflows/macos-release.yml`).
+- `Linux Release` (`.github/workflows/linux-release.yml`).
+- `Windows Release` (`.github/workflows/windows-release.yml`).
 
 Current release focus:
 
