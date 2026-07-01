@@ -95,6 +95,14 @@ describe("ConfigDrawer", () => {
     expect(screen.getByRole("button", { name: "System" })).toHaveClass("preference-choice");
   });
 
+  it("explains Appearance options with short hover hints", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.hover(screen.getByRole("button", { name: "System" }));
+    expect(await screen.findAllByText("Follow macOS appearance.")).not.toHaveLength(0);
+  });
+
   it("marks Editor controls for overflow-safe layout", async () => {
     setup({
       systemFonts: [
@@ -109,6 +117,26 @@ describe("ConfigDrawer", () => {
     expect(screen.getByText("Monaco minimap").closest("label")).toHaveClass("editor-minimap-toggle");
   });
 
+  it("explains Editor font with a short hover hint", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.click(screen.getByRole("button", { name: "Editor" }));
+    const fontControl = screen.getByLabelText("Editor font family").closest(".preference-tooltip-control");
+    expect(fontControl).toBeInTheDocument();
+    await user.hover(fontControl as Element);
+    expect(await screen.findAllByText("Font used by Monaco editors.")).not.toHaveLength(0);
+  });
+
+  it("explains Editor toggles with short hover hints", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.click(screen.getByRole("button", { name: "Editor" }));
+    await user.hover(screen.getByText("Monaco minimap"));
+    expect(await screen.findAllByText("Show a mini file map.")).not.toHaveLength(0);
+  });
+
   it("marks Misc controls for overflow-safe layout", async () => {
     setup();
 
@@ -116,6 +144,47 @@ describe("ConfigDrawer", () => {
     const segmented = screen.getByRole("group", { name: "Misc preference panels" });
     expect(segmented).toHaveClass("segmented-control");
     expect(within(segmented).getByRole("button", { name: "Decompiler" })).toHaveClass("segmented-control__button");
+  });
+
+  it("explains Include source with a short hover hint", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.click(screen.getByRole("button", { name: "Misc" }));
+    const includeSourceLabel = screen.getByText("Include source by default");
+    await user.hover(includeSourceLabel);
+
+    expect(await screen.findAllByText("Search decompiled Java too. Slower.")).not.toHaveLength(0);
+  });
+
+  it("explains Search result grouping with a short hover hint", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.click(screen.getByRole("button", { name: "Misc" }));
+
+    await user.hover(screen.getByLabelText("Result grouping help"));
+    expect(await screen.findAllByText("Kind = match type. Side = left/right.")).not.toHaveLength(0);
+  });
+
+  it("explains Decompiler and Save options with short hover hints", async () => {
+    const user = userEvent.setup();
+    setup();
+
+    await user.click(screen.getByRole("button", { name: "Misc" }));
+    await user.hover(screen.getByRole("button", { name: "Decompiler" }));
+    expect(await screen.findAllByText("Class preview defaults.")).not.toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Decompiler" }));
+    const engineControl = screen.getByLabelText("Decompiler engine").closest(".preference-tooltip-control");
+    expect(engineControl).toBeInTheDocument();
+    await user.hover(engineControl as Element);
+    expect(await screen.findAllByText("Java source preview engine.")).not.toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.hover(screen.getByText("Keep one overwritten .bak on save"));
+    expect(await screen.findAllByText("Keep one .bak before overwrite.")).not.toHaveLength(0);
+
   });
 
   it("changes editor font size from the Editor section", async () => {

@@ -1,5 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Info } from "lucide-react";
+import { PreferenceHint } from "@/components/preferences/PreferenceHint";
 import {
   Select,
   SelectContent,
@@ -19,10 +21,10 @@ interface MiscPreferencesProps {
 
 type Panel = "search" | "decompiler" | "save";
 
-const panels: Array<{ id: Panel; label: string }> = [
-  { id: "search", label: "Search" },
-  { id: "decompiler", label: "Decompiler" },
-  { id: "save", label: "Save" },
+const panels: Array<{ id: Panel; label: string; hint: string }> = [
+  { id: "search", label: "Search", hint: "Search defaults." },
+  { id: "decompiler", label: "Decompiler", hint: "Class preview defaults." },
+  { id: "save", label: "Save", hint: "Archive save defaults." },
 ];
 
 export function MiscPreferences({
@@ -39,105 +41,123 @@ export function MiscPreferences({
       <span className="zone-label">Misc</span>
       <div className="segmented-control" role="group" aria-label="Misc preference panels">
         {panels.map((item) => (
-          <Button
-            key={item.id}
-            type="button"
-            className="segmented-control__button"
-            variant={panel === item.id ? "secondary" : "outline"}
-            size="sm"
-            aria-pressed={panel === item.id}
-            onClick={() => onPanelChange(item.id)}
-          >
-            {item.label}
-          </Button>
+          <PreferenceHint key={item.id} text={item.hint}>
+            <Button
+              type="button"
+              className="segmented-control__button"
+              variant={panel === item.id ? "secondary" : "outline"}
+              size="sm"
+              aria-pressed={panel === item.id}
+              onClick={() => onPanelChange(item.id)}
+            >
+              {item.label}
+            </Button>
+          </PreferenceHint>
         ))}
       </div>
 
       {panel === "search" && (
         <>
-          <label className="check-label">
-            <Checkbox
-              checked={preferences.misc.search.includeSourceByDefault}
-              onCheckedChange={(checked) => updateMisc({
+          <PreferenceHint text="Search decompiled Java too. Slower.">
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.misc.search.includeSourceByDefault}
+                onCheckedChange={(checked) => updateMisc({
+                  ...preferences.misc,
+                  search: {
+                    ...preferences.misc.search,
+                    includeSourceByDefault: checked === true,
+                  },
+                })}
+              />
+              <span>Include source by default</span>
+            </label>
+          </PreferenceHint>
+          <div className="preference-control-row">
+            <Select
+              value={preferences.misc.search.resultGrouping}
+              onValueChange={(value) => updateMisc({
                 ...preferences.misc,
                 search: {
                   ...preferences.misc.search,
-                  includeSourceByDefault: checked === true,
+                  resultGrouping: value as UiPreferences["misc"]["search"]["resultGrouping"],
                 },
               })}
-            />
-            Include source by default
-          </label>
-          <Select
-            value={preferences.misc.search.resultGrouping}
-            onValueChange={(value) => updateMisc({
-              ...preferences.misc,
-              search: {
-                ...preferences.misc.search,
-                resultGrouping: value as UiPreferences["misc"]["search"]["resultGrouping"],
-              },
-            })}
-          >
-            <SelectTrigger aria-label="Search result grouping"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="kind">By kind</SelectItem>
-                <SelectItem value="side">By side</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            >
+              <SelectTrigger aria-label="Search result grouping"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="kind">By kind</SelectItem>
+                  <SelectItem value="side">By side</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <PreferenceHint text="Kind = match type. Side = left/right.">
+              <Button type="button" variant="ghost" size="icon" className="preference-help-button" aria-label="Result grouping help">
+                <Info />
+              </Button>
+            </PreferenceHint>
+          </div>
         </>
       )}
 
       {panel === "decompiler" && (
         <>
-          <Select
-            value={preferences.misc.decompiler.engine}
-            onValueChange={(value) => updateMisc({
-              ...preferences.misc,
-              decompiler: {
-                ...preferences.misc.decompiler,
-                engine: value as UiPreferences["misc"]["decompiler"]["engine"],
-              },
-            })}
-          >
-            <SelectTrigger aria-label="Decompiler engine"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="vineflower">Vineflower</SelectItem>
-                <SelectItem value="cfr">CFR</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <label className="check-label">
-            <Checkbox
-              checked={preferences.misc.decompiler.ignoreTrimWhitespace}
-              onCheckedChange={(checked) => updateMisc({
-                ...preferences.misc,
-                decompiler: {
-                  ...preferences.misc.decompiler,
-                  ignoreTrimWhitespace: checked === true,
-                },
-              })}
-            />
-            Ignore trim whitespace
-          </label>
+          <PreferenceHint text="Java source preview engine.">
+            <div className="preference-tooltip-control">
+              <Select
+                value={preferences.misc.decompiler.engine}
+                onValueChange={(value) => updateMisc({
+                  ...preferences.misc,
+                  decompiler: {
+                    ...preferences.misc.decompiler,
+                    engine: value as UiPreferences["misc"]["decompiler"]["engine"],
+                  },
+                })}
+              >
+                <SelectTrigger aria-label="Decompiler engine"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="vineflower">Vineflower</SelectItem>
+                    <SelectItem value="cfr">CFR</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+          </PreferenceHint>
+          <PreferenceHint text="Ignore edge whitespace in diffs.">
+            <label className="check-label">
+              <Checkbox
+                checked={preferences.misc.decompiler.ignoreTrimWhitespace}
+                onCheckedChange={(checked) => updateMisc({
+                  ...preferences.misc,
+                  decompiler: {
+                    ...preferences.misc.decompiler,
+                    ignoreTrimWhitespace: checked === true,
+                  },
+                })}
+              />
+              <span>Ignore trim whitespace</span>
+            </label>
+          </PreferenceHint>
         </>
       )}
 
       {panel === "save" && (
-        <label className="check-label">
-          <Checkbox
-            checked={preferences.misc.save.backupEnabled}
-            onCheckedChange={(checked) => updateMisc({
-              ...preferences.misc,
-              save: {
-                backupEnabled: checked === true,
-              },
-            })}
-          />
-          Keep one overwritten .bak on save
-        </label>
+        <PreferenceHint text="Keep one .bak before overwrite.">
+          <label className="check-label">
+            <Checkbox
+              checked={preferences.misc.save.backupEnabled}
+              onCheckedChange={(checked) => updateMisc({
+                ...preferences.misc,
+                save: {
+                  backupEnabled: checked === true,
+                },
+              })}
+            />
+            <span>Keep one overwritten .bak on save</span>
+          </label>
+        </PreferenceHint>
       )}
     </section>
   );

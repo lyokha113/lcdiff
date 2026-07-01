@@ -1,5 +1,6 @@
 import {
   DEFAULT_EDITOR_FONT_FAMILY,
+  editorFontAlias,
   SYSTEM_MONO_FONT_FAMILY,
   SYSTEM_SANS_FONT_FAMILY,
 } from "@/lib/preferences";
@@ -7,6 +8,8 @@ import {
 export interface SystemFont {
   family: string;
   monospaceLikely: boolean;
+  localNames?: string[];
+  fontFile?: string | null;
 }
 
 export const FALLBACK_SYSTEM_FONTS: SystemFont[] = [
@@ -26,7 +29,17 @@ export function normalizeSystemFonts(fonts: readonly SystemFont[]): SystemFont[]
     if (!family) continue;
     const key = family.toLowerCase();
     if (!byFamily.has(key)) {
-      byFamily.set(key, { family, monospaceLikely: font.monospaceLikely });
+      const localNames = (font.localNames ?? [])
+        .map((name) => name.trim())
+        .filter((name, index, names) =>
+          name.length > 0 && names.findIndex((candidate) => candidate.toLowerCase() === name.toLowerCase()) === index
+        );
+      byFamily.set(key, {
+        family,
+        monospaceLikely: font.monospaceLikely,
+        ...(localNames.length > 0 ? { localNames } : {}),
+        ...(font.fontFile ? { fontFile: font.fontFile } : {}),
+      });
     }
   }
 
@@ -42,4 +55,32 @@ export function normalizeSystemFonts(fonts: readonly SystemFont[]): SystemFont[]
 
 export function fontFamilies(fonts: readonly SystemFont[]): string[] {
   return fonts.map((font) => font.family);
+}
+
+function quoteCssString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
+
+export function installedFontFaceCss(
+  font: SystemFont,
+  fileSrc: (path: string) => string = (path) => path,
+): string | undefined {
+  const localNames = font.localNames ?? [];
+  const sources = [
+    ...(font.fontFile ? [`url(${quoteCssString(fileSrc(font.fontFile))})`] : []),
+    ...localNames.map((name) => `local(${quoteCssString(name)})`),
+  ];
+  if (sources.length === 0) return undefined;
+  const src = sources.join(", ");
+  return `@font-face{font-family:${quoteCssString(editorFontAlias(font.family))};src:${src};font-weight:400;font-style:normal;font-display:block;}`;
+}
+
+export function installedFontFacesCss(
+  fonts: readonly SystemFont[],
+  fileSrc?: (path: string) => string,
+): string {
+  return fonts
+    .map((font) => installedFontFaceCss(font, fileSrc))
+    .filter((css): css is string => css !== undefined)
+    .join("\n");
 }

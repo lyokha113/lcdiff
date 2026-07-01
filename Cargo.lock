@@ -1716,6 +1716,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-range"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21dec9db110f5f872ed9699c3ecf50cf16f423502706ba5c72462e28d3157573"
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2083,7 +2089,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lcdiff-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2095,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "lcdiff-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "crc32fast",
  "serde",
@@ -2108,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "lcdiff-desktop"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "font-kit",
  "lcdiff-core",
@@ -3615,6 +3621,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "http-range",
  "jni",
  "libc",
  "log",

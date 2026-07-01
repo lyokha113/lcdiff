@@ -21,7 +21,7 @@ import {
   type TreeFilter,
   type ViewMode,
 } from "@/lib/types";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { open as chooseFile } from "@tauri-apps/plugin-dialog";
@@ -55,6 +55,7 @@ import {
 import {
   FALLBACK_SYSTEM_FONTS,
   fontFamilies,
+  installedFontFacesCss,
   normalizeSystemFonts,
   type SystemFont,
 } from "@/lib/system-fonts";
@@ -345,6 +346,31 @@ export function App() {
   useEffect(() => {
     setIncludeSourceSearch(preferences.misc.search.includeSourceByDefault);
   }, [preferences.misc.search.includeSourceByDefault]);
+  useEffect(() => {
+    const styleId = "lcdiff-installed-editor-fonts";
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    const css = installedFontFacesCss(systemFonts, (path) =>
+      isTauriRuntime() ? convertFileSrc(path) : path,
+    );
+    if (!css) {
+      style?.remove();
+      return;
+    }
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      document.head.append(style);
+    }
+    style.textContent = css;
+    return () => {
+      style?.remove();
+    };
+  }, [systemFonts]);
+  useEffect(() => {
+    monacoRef.current?.editor?.remeasureFonts?.();
+    if (typeof editorRef.current?.layout === "function") editorRef.current.layout();
+    if (typeof diffEditorRef.current?.layout === "function") diffEditorRef.current.layout();
+  }, [preferences.editor.fontFamily, preferences.editor.fontSize, systemFonts]);
   useEffect(() => {
     let cancelled = false;
     const requestedEngine = engine;
