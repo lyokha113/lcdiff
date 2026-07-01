@@ -27,16 +27,22 @@ function setup(overrides = {}) {
 }
 
 describe("SourceChips", () => {
-  it("renders explicit source slots and removes the right slot in View mode", () => {
+  it("labels the picker as File/Folder in View mode and removes the right slot", () => {
     setup({ mode: "single" });
-    expect(screen.getByRole("region", { name: "Left source" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Right source" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
+  });
+
+  it("uses side-specific File/Folder labels in Compare mode", () => {
+    setup();
+    expect(screen.getByRole("region", { name: "Left File/Folder" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Right File/Folder" })).toBeInTheDocument();
   });
 
   it("keeps semantic side regions without standalone side labels", () => {
     setup();
-    expect(screen.getByRole("region", { name: "Left source" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Right source" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Left File/Folder" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Right File/Folder" })).toBeInTheDocument();
     expect(document.querySelector(".source-slot__side")).not.toBeInTheDocument();
     expect(document.querySelector(".source-slot__identity")).not.toBeInTheDocument();
   });
@@ -48,6 +54,7 @@ describe("SourceChips", () => {
   it("opens a repick popover when a chip is clicked", async () => {
     setup();
     await userEvent.click(screen.getByRole("button", { name: /change left source/i }));
+    expect(screen.getByText("Left File/Folder")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Browse file/i })).toBeInTheDocument();
   });
   it("browses for a file from the popover", async () => {

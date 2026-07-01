@@ -189,7 +189,7 @@ try {
     throw new Error("startup history did not expand to the stored list");
   }
   await page.getByRole("button", { name: "Compare two sources" }).click();
-  await page.locator("text=Open a JAR, ZIP, or folder on each side.").waitFor({ timeout: 5_000 });
+  await page.locator("text=Nothing to compare yet").waitFor({ timeout: 5_000 });
   if (await page.locator(".source-slot__identity").count() !== 0) {
     throw new Error("source rail still renders visual Left/Right identity labels");
   }
@@ -360,8 +360,8 @@ try {
   if (messages.length > 0) {
     throw new Error(`browser console/page errors:\n${messages.join("\n")}`);
   }
-  if (!bodyText.includes("Open a JAR, ZIP, or folder on each side.")) {
-    throw new Error("frontend shell did not render initial open message");
+  if (!bodyText.includes("Choose a JAR, ZIP, folder, or text file above on each side")) {
+    throw new Error("frontend shell did not render compare empty-state message");
   }
   if (buttonCount < 10) {
     throw new Error(`frontend shell rendered too few buttons: ${buttonCount}`);

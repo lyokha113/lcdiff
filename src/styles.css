@@ -535,6 +535,27 @@ main.app-shell {
   width: 100%;
   max-width: 100%;
 }
+.preference-control-row,
+.preference-tooltip-control {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+.preference-control-row {
+  align-items: center;
+  gap: 0.35rem;
+}
+.preference-control-row [data-slot="select-trigger"],
+.preference-tooltip-control [data-slot="select-trigger"] {
+  width: 100%;
+}
+.preference-help-button {
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  border-radius: 0.45rem;
+  color: var(--text-2);
+}
 .editor-font-select-item > span:last-child {
   min-width: 0;
 }

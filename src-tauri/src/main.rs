@@ -1,5 +1,6 @@
 use std::{
     env,
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -14,6 +15,8 @@ use lcdiff_core::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::{
     Emitter, Manager, Runtime, State, Window,
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder},
@@ -163,6 +166,7 @@ struct AppState {
     deep_search_sidecar: Arc<Mutex<SidecarClient>>,
     prefetch_generation: [Arc<AtomicU64>; 2],
     deep_search_generation: Arc<AtomicU64>,
+    pending_open_paths: Vec<String>,
 }
 
 impl Default for AppState {
@@ -189,7 +193,16 @@ impl AppState {
             deep_search_sidecar: Arc::new(Mutex::new(deep_search_sidecar)),
             prefetch_generation: [Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))],
             deep_search_generation: Arc::new(AtomicU64::new(0)),
+            pending_open_paths: Vec::new(),
         }
+    }
+
+    fn push_pending_open_paths(&mut self, paths: Vec<String>) {
+        self.pending_open_paths.extend(paths);
+    }
+
+    fn take_pending_open_paths(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_open_paths)
     }
 
     #[cfg(test)]
@@ -371,6 +384,12 @@ struct PlatformHints {
     drop_hint: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OsOpenPathsPayload {
+    paths: Vec<String>,
+}
+
 #[tauri::command]
 fn validate_path(raw: String) -> Result<String, String> {
     validate_archive_path(&raw)
@@ -406,6 +425,14 @@ fn platform_hints_from(
             "Linux Wayland file drop can be unreliable here; Browse and path input are the reliable open paths.".to_owned()
         }),
     }
+}
+
+#[tauri::command]
+fn pending_open_paths(state: State<'_, SharedState>) -> Result<Vec<String>, String> {
+    let mut state = state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?;
+    Ok(state.take_pending_open_paths())
 }
 
 #[tauri::command]
@@ -1273,12 +1300,65 @@ fn install_app_menu<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+fn open_paths_from_args<I, S>(args: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .skip(1)
+        .filter_map(|arg| open_path_from_arg(arg.as_ref()))
+        .collect()
+}
+
+fn open_path_from_arg(arg: &str) -> Option<PathBuf> {
+    if arg.is_empty() || arg.starts_with('-') {
+        return None;
+    }
+    if arg.starts_with("file://") {
+        let url = url::Url::parse(arg).ok()?;
+        return url.to_file_path().ok();
+    }
+    Some(PathBuf::from(arg))
+}
+
+fn startup_open_paths() -> Vec<PathBuf> {
+    open_paths_from_args(env::args_os().map(|arg| arg.to_string_lossy().to_string()))
+}
+
+fn path_strings(paths: Vec<PathBuf>) -> Vec<String> {
+    paths
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .filter(|path| !path.is_empty())
+        .collect()
+}
+
+fn store_and_emit_open_paths<R: Runtime>(app: &tauri::AppHandle<R>, paths: Vec<PathBuf>) {
+    let paths = path_strings(paths);
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(state) = app.try_state::<SharedState>() {
+        if let Ok(mut state) = state.lock() {
+            state.push_pending_open_paths(paths.clone());
+        }
+    }
+    if let Err(error) = app.emit("os-open-paths", OsOpenPathsPayload { paths }) {
+        eprintln!("failed to emit os-open-paths: {error}");
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            store_and_emit_open_paths(app, open_paths_from_args(args));
+        }))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             install_app_menu(app)?;
-            let state = AppState::new(app.path().resource_dir().ok());
+            let mut state = AppState::new(app.path().resource_dir().ok());
+            state.push_pending_open_paths(path_strings(startup_open_paths()));
             let sidecar = Arc::clone(&state.sidecar);
             std::thread::spawn(move || {
                 if let Ok(mut sidecar) = sidecar.lock() {
@@ -1316,10 +1396,28 @@ fn main() {
             search,
             deep_search,
             cancel_deep_search,
-            prefetch_siblings
+            prefetch_siblings,
+            pending_open_paths
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running LCDiff");
+        .build(tauri::generate_context!())
+        .expect("error while building LCDiff")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            {
+                if let RunEvent::Opened { urls } = event {
+                    let paths = urls
+                        .into_iter()
+                        .filter_map(|url| url.to_file_path().ok())
+                        .collect();
+                    store_and_emit_open_paths(app, paths);
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (app, event);
+            }
+        });
 }
 
 #[cfg(test)]

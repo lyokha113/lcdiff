@@ -219,6 +219,22 @@ function normalizeFontFamily(value: unknown, availableFonts?: readonly string[])
   return DEFAULT_EDITOR_FONT_FAMILY;
 }
 
+function quoteCssFontFamilyName(family: string): string {
+  return `"${family.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
+
+export function editorFontAlias(fontFamily: string): string {
+  return `LCDiff Editor Font ${fontFamily}`;
+}
+
+export function editorFontFamilyForCss(fontFamily: string): string {
+  const normalized = stringValue(fontFamily, DEFAULT_EDITOR_FONT_FAMILY);
+  if (isBuiltInFontFamily(normalized)) {
+    return normalized;
+  }
+  return `${quoteCssFontFamilyName(editorFontAlias(normalized))}, ${quoteCssFontFamilyName(normalized)}, ui-monospace, monospace`;
+}
+
 function migrateOldFontFamily(typography: Record<string, unknown>): string | undefined {
   if (typography.editorFont === "systemMono") {
     return SYSTEM_MONO_FONT_FAMILY;

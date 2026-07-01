@@ -2,7 +2,7 @@ import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-edit
 import type { editor } from "monaco-editor";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { EffectiveColorPattern, UiPreferences } from "@/lib/preferences";
+import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
 import type { ComparePair, EntryPreview, Mode, Side } from "@/lib/types";
 
 export function pairHasClass(pair?: ComparePair) {
@@ -57,9 +57,11 @@ export function DiffView({
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
+  const editorFontFamily = editorFontFamilyForCss(preferences.editor.fontFamily);
   const editorOptions: editor.IEditorConstructionOptions = {
-    fontFamily: preferences.editor.fontFamily,
+    fontFamily: editorFontFamily,
     fontSize: preferences.editor.fontSize,
+    fontLigatures: true,
     minimap: preferences.editor.minimap === "on"
       ? { enabled: true, side: "right", size: "proportional", showSlider: "mouseover" }
       : { enabled: false },

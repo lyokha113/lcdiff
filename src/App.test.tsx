@@ -24,6 +24,7 @@ let deepSearchBlock: { promise: Promise<void> } | undefined;
 let deepSearchError: Error | undefined;
 let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
+let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
@@ -56,6 +57,8 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "platform_hints":
       return { os: "linux", sessionType: null, wayland: false, dropHint: null };
+    case "pending_open_paths":
+      return [];
     case "list_system_fonts":
       return [
         { family: "Menlo", monospaceLikely: true },
@@ -112,6 +115,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 const listen = vi.fn((eventName: string, handler: unknown) => {
   if (eventName === "app-action") {
     appActionHandler = handler as typeof appActionHandler;
+  }
+  if (eventName === "os-open-paths") {
+    osOpenPathsHandler = handler as typeof osOpenPathsHandler;
   }
   if (eventName === "app-action" && deferredAppActionListen) {
     return deferredAppActionListen;
@@ -295,6 +301,7 @@ describe("App file-merge wiring", () => {
     deepSearchError = undefined;
     deferredAppActionListen = undefined;
     appActionHandler = undefined;
+    osOpenPathsHandler = undefined;
     listen.mockClear();
     Object.defineProperty(Element.prototype, "hasPointerCapture", {
       configurable: true,
@@ -329,6 +336,21 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Workspace canvas" })).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+
+  it("opens OS-launched files in View mode on the left side", async () => {
+    (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    render(<App />);
+
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+    act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/from-finder.jar", side: "left" }),
+    );
+    expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
   });
 
   it("shows the Source/Bytecode switch only on the active Diff tab", async () => {

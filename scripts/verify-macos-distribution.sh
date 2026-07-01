@@ -163,6 +163,8 @@ assert_macho_arch "LCDIFF_JLINK java" "$JLINK_JAVA" "$EXPECTED_ARCH"
 if [[ "$SKIP_INSTALL" == "0" ]]; then
   step "npm ci"
   npm ci
+  step "install Playwright Chromium"
+  npx playwright install chromium
 fi
 INSTALL_STATUS="$([[ "$SKIP_INSTALL" == "0" ]] && printf executed || printf skipped)"
 

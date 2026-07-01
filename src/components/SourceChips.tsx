@@ -20,15 +20,20 @@ function basename(path: string) {
   return normalized.split("/").pop() || path;
 }
 
+function pickerLabel(mode: Mode, side: Side) {
+  if (mode === "single") return "File/Folder";
+  return side === "left" ? "Left File/Folder" : "Right File/Folder";
+}
+
 export function SourceChips({
   mode, archives, paths, pathErrors, onPathChange, onOpenPath, onBrowse, onBrowseFolder,
 }: SourceChipsProps) {
   const renderSlot = (side: Side) => {
     const archive = archives[side];
-    const sideLabel = side === "left" ? "Left" : "Right";
+    const slotLabel = pickerLabel(mode, side);
 
     return (
-      <section className={`source-slot source-slot--${side}`} aria-label={`${sideLabel} source`} key={side}>
+      <section className={`source-slot source-slot--${side}`} aria-label={slotLabel} key={side}>
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="ghost" className="source-slot__trigger" aria-label={`Change ${side} source`}>
@@ -42,13 +47,13 @@ export function SourceChips({
           <PopoverContent className="source-picker">
             <div className="repick">
               <div className="repick-head">
-                <strong>{sideLabel} source</strong>
+                <strong>{slotLabel}</strong>
                 {archive && <span className="repick-kind">{archive.metadata.sourceKind}</span>}
               </div>
               <Input
                 value={paths[side]}
                 placeholder="~/path/to/archive.jar or folder"
-                aria-label={`${sideLabel} source path`}
+                aria-label={`${slotLabel} path`}
                 onChange={(event) => onPathChange(side, event.target.value)}
                 onKeyDown={(event) => { if (event.key === "Enter") onOpenPath(side, paths[side]); }}
               />

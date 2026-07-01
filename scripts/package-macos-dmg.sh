@@ -11,6 +11,7 @@ DMG="${2:?usage: scripts/package-macos-dmg.sh /path/to/LCDiff.app /path/to/outpu
 VOLUME_NAME="${3:-LCDiff}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/lcdiff-dmg.XXXXXX")"
 STAGING_DIR="$WORK_DIR/staging"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 clean_app_xattrs() {
   local app="$1"
@@ -33,6 +34,15 @@ clean_app_xattrs() {
   fi
 }
 
+create_dmg() {
+  hdiutil create \
+    -volname "$VOLUME_NAME" \
+    -srcfolder "$STAGING_DIR" \
+    -ov \
+    -format UDZO \
+    "$DMG"
+}
+
 if [[ ! -d "$APP" ]]; then
   printf 'app bundle not found: %s\n' "$APP" >&2
   exit 1
@@ -53,12 +63,20 @@ ditto --norsrc "$APP" "$STAGING_DIR/$(basename "$APP")"
 clean_app_xattrs "$STAGING_DIR/$(basename "$APP")"
 ln -s /Applications "$STAGING_DIR/Applications"
 
-hdiutil create \
-  -volname "$VOLUME_NAME" \
-  -srcfolder "$STAGING_DIR" \
-  -ov \
-  -format UDZO \
-  "$DMG"
+for attempt in 1 2 3 4 5; do
+  rm -f "$DMG"
+  if create_dmg; then
+    break
+  fi
+
+  if [[ "$attempt" == "5" ]]; then
+    printf 'failed to create macOS DMG after %s attempts\n' "$attempt" >&2
+    exit 1
+  fi
+
+  printf 'hdiutil create failed; retrying DMG package attempt %s/5\n' "$((attempt + 1))" >&2
+  sleep "$((attempt * 2))"
+done
 
 hdiutil verify "$DMG"
 clean_app_xattrs "$APP"

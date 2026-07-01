@@ -36,8 +36,10 @@ if ($null -eq $signtool) {
   throw "signtool.exe not found. Install Windows SDK on the runner."
 }
 
-$artifacts = Get-ChildItem -LiteralPath $BundleDir -Recurse -File |
-  Where-Object { $_.Extension -in ".exe", ".msi" }
+$artifacts = @(
+  Get-ChildItem -LiteralPath $BundleDir -Recurse -File |
+    Where-Object { $_.Extension -in ".exe", ".msi" }
+)
 
 if ($artifacts.Count -eq 0) {
   throw "no .exe or .msi bundles found under $BundleDir"

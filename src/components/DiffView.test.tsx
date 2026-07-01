@@ -117,8 +117,9 @@ describe("DiffView", () => {
     expect(editorMock.mock.calls[0]?.[0]).toMatchObject({
       theme: "light",
       options: {
-        fontFamily: "Menlo",
+        fontFamily: "\"LCDiff Editor Font Menlo\", \"Menlo\", ui-monospace, monospace",
         fontSize: 16,
+        fontLigatures: true,
       },
     });
   });
@@ -139,8 +140,28 @@ describe("DiffView", () => {
     expect(diffEditorMock.mock.calls[0]?.[0]).toMatchObject({
       theme: "vs-dark",
       options: {
-        fontFamily: "Cascadia Code",
+        fontFamily: "\"LCDiff Editor Font Cascadia Code\", \"Cascadia Code\", ui-monospace, monospace",
         fontSize: 15,
+        fontLigatures: true,
+      },
+    });
+  });
+
+  it("quotes installed font family names before passing them to Monaco", () => {
+    const preferences: UiPreferences = {
+      ...DEFAULT_UI_PREFERENCES,
+      editor: {
+        ...DEFAULT_UI_PREFERENCES.editor,
+        fontFamily: "Fira Code",
+      },
+    };
+
+    renderDiffView("single", preferences, "dark");
+
+    expect(editorMock.mock.calls[0]?.[0]).toMatchObject({
+      options: {
+        fontFamily: "\"LCDiff Editor Font Fira Code\", \"Fira Code\", ui-monospace, monospace",
+        fontLigatures: true,
       },
     });
   });

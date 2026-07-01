@@ -1,0 +1,83 @@
+name: Linux Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload, for example v0.3.1"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build Linux Ubuntu LTS matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${{ github.ref_name }}"
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'notes=docs/release-notes/%s.md\n' "$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Linux AppImage/deb matrix
+        shell: bash
+        run: docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
+
+      - name: Stage Linux release assets
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          out="artifacts/release-linux"
+          rm -rf "$out"
+          mkdir -p "$out"
+          cp \
+            "artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
+            "$out/LCDiff_${version}_ubuntu24.04_amd64.AppImage"
+          cp \
+            "artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_${version}_amd64.deb" \
+            "$out/LCDiff_${version}_ubuntu24.04_amd64.deb"
+          cp \
+            "artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
+            "$out/LCDiff_${version}_ubuntu26.04_amd64.AppImage"
+          cp \
+            "artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_${version}_amd64.deb" \
+            "$out/LCDiff_${version}_ubuntu26.04_amd64.deb"
+          cp scripts/install-linux.sh "$out/install-linux.sh"
+          ls -lh "$out"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcdiff-linux-${{ steps.release.outputs.tag }}
+          path: artifacts/release-linux/*
+          if-no-files-found: error
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          body_path: ${{ steps.release.outputs.notes }}
+          files: artifacts/release-linux/*

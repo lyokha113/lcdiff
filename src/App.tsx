@@ -21,7 +21,7 @@ import {
   type TreeFilter,
   type ViewMode,
 } from "@/lib/types";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { open as chooseFile } from "@tauri-apps/plugin-dialog";
@@ -55,6 +55,7 @@ import {
 import {
   FALLBACK_SYSTEM_FONTS,
   fontFamilies,
+  installedFontFacesCss,
   normalizeSystemFonts,
   type SystemFont,
 } from "@/lib/system-fonts";
@@ -100,6 +101,10 @@ type DiffLineChange = NonNullable<ReturnType<DiffCodeEditor["getLineChanges"]>>[
 type DiffNavigatorState = {
   currentIndex: number;
   total: number;
+};
+
+type OsOpenPathsPayload = {
+  paths: string[];
 };
 
 function applySearchLineHighlight(
@@ -342,6 +347,31 @@ export function App() {
     setIncludeSourceSearch(preferences.misc.search.includeSourceByDefault);
   }, [preferences.misc.search.includeSourceByDefault]);
   useEffect(() => {
+    const styleId = "lcdiff-installed-editor-fonts";
+    let style = document.getElementById(styleId) as HTMLStyleElement | null;
+    const css = installedFontFacesCss(systemFonts, (path) =>
+      isTauriRuntime() ? convertFileSrc(path) : path,
+    );
+    if (!css) {
+      style?.remove();
+      return;
+    }
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      document.head.append(style);
+    }
+    style.textContent = css;
+    return () => {
+      style?.remove();
+    };
+  }, [systemFonts]);
+  useEffect(() => {
+    monacoRef.current?.editor?.remeasureFonts?.();
+    if (typeof editorRef.current?.layout === "function") editorRef.current.layout();
+    if (typeof diffEditorRef.current?.layout === "function") diffEditorRef.current.layout();
+  }, [preferences.editor.fontFamily, preferences.editor.fontSize, systemFonts]);
+  useEffect(() => {
     let cancelled = false;
     const requestedEngine = engine;
     const previousEngine = appliedEngineRef.current;
@@ -466,6 +496,13 @@ export function App() {
     }
   }, [refreshDiff]);
 
+  const openFromOs = useCallback((path: string) => {
+    if (!path) return;
+    setMode("single");
+    setView("workspace");
+    void openPath("left", path, true);
+  }, [openPath]);
+
   useEffect(() => {
     openTabsCountRef.current = openTabs.length;
   }, [openTabs]);
@@ -495,6 +532,33 @@ export function App() {
       });
     return () => unlisten?.();
   }, [mode, openPath]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let disposed = false;
+    let unlisten: undefined | (() => void);
+    void invoke<string[]>("pending_open_paths")
+      .then((paths) => {
+        if (!disposed && paths.length > 0) openFromOs(paths[0]);
+      })
+      .catch((error) => {
+        if (!disposed) setMessage(`Open-with handoff failed: ${String(error)}`);
+      });
+    listen<OsOpenPathsPayload>("os-open-paths", (event) => {
+      const [path] = event.payload.paths;
+      if (path) openFromOs(path);
+      void invoke<string[]>("pending_open_paths").catch(() => undefined);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      if (!disposed) setMessage(`Open-with listener failed: ${String(error)}`);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [openFromOs]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;

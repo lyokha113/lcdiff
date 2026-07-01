@@ -14,6 +14,9 @@ const files = [
   "docs/ARCHITECTURE.md",
   "docs/PLATFORM_VALIDATION.md",
   releaseNotesFile,
+  ".github/workflows/macos-release.yml",
+  ".github/workflows/linux-release.yml",
+  ".github/workflows/windows-release.yml",
   "aur/lcdiff/PKGBUILD",
   "aur/lcdiff/.SRCINFO",
   "aur/lcdiff/lcdiff.install",
@@ -69,8 +72,14 @@ if (!readme.includes("JAR/ZIP archives and folders")) {
 if (!development.includes("scripts/build-linux.sh")) {
   failures.push("docs/DEVELOPMENT.md: missing Linux build script command");
 }
+if (!development.includes("scripts\\build-windows.ps1")) {
+  failures.push("docs/DEVELOPMENT.md: missing Windows build script command");
+}
 if (!readme.includes("yay -S lcdiff")) {
   failures.push("README.md: missing Arch AUR install note");
+}
+if (!readme.includes("LCDiff-<version>-windows-x64-setup.exe")) {
+  failures.push("README.md: missing Windows installer note");
 }
 
 const releasing = readFileSync("docs/RELEASING.md", "utf8");
@@ -79,6 +88,24 @@ if (!releasing.includes("aur/lcdiff/PKGBUILD")) {
 }
 if (!releasing.includes("yay -S lcdiff")) {
   failures.push("docs/RELEASING.md: missing AUR install command");
+}
+if (!releasing.includes("Windows Release")) {
+  failures.push("docs/RELEASING.md: missing Windows Release workflow note");
+}
+if (!releasing.includes("macOS Release")) {
+  failures.push("docs/RELEASING.md: missing macOS Release workflow note");
+}
+if (!releasing.includes("Linux Release")) {
+  failures.push("docs/RELEASING.md: missing Linux Release workflow note");
+}
+if (!releasing.includes("LCDiff-<version>-windows-x64-setup.exe")) {
+  failures.push("docs/RELEASING.md: missing Windows release artifact name");
+}
+if (!releasing.includes("LCDiff_<version>_ubuntu24.04_amd64.AppImage")) {
+  failures.push("docs/RELEASING.md: missing Ubuntu 24.04 release artifact name");
+}
+if (!releasing.includes("LCDiff_<version>_ubuntu26.04_amd64.deb")) {
+  failures.push("docs/RELEASING.md: missing Ubuntu 26.04 release artifact name");
 }
 
 const aurPkgbuild = readFileSync("aur/lcdiff/PKGBUILD", "utf8");
@@ -122,6 +149,9 @@ if (!releaseNotes.includes("yay -S lcdiff")) {
 }
 if (!releaseNotes.includes("Arch Linux")) {
   failures.push(`${releaseNotesFile}: missing Arch Linux note`);
+}
+if (!releaseNotes.includes("Windows 10/11")) {
+  failures.push(`${releaseNotesFile}: missing Windows release note`);
 }
 
 const audit = readFileSync("docs/LCDIFF_COMPLETION_AUDIT.md", "utf8");
@@ -208,6 +238,58 @@ if (!platformValidation.includes("docs/OPERATIONS_MACOS.md")) {
 }
 if (!platformValidation.includes("Arch Linux AUR package for `lcdiff`")) {
   failures.push("docs/PLATFORM_VALIDATION.md: missing Arch AUR package note");
+}
+if (!platformValidation.includes(".github/workflows/windows-release.yml")) {
+  failures.push("docs/PLATFORM_VALIDATION.md: missing Windows release workflow note");
+}
+if (!platformValidation.includes(".github/workflows/macos-release.yml")) {
+  failures.push("docs/PLATFORM_VALIDATION.md: missing macOS release workflow note");
+}
+if (!platformValidation.includes(".github/workflows/linux-release.yml")) {
+  failures.push("docs/PLATFORM_VALIDATION.md: missing Linux release workflow note");
+}
+
+const macosWorkflow = readFileSync(".github/workflows/macos-release.yml", "utf8");
+for (const marker of [
+  "runs-on: macos-15",
+  "actions/setup-node@v4",
+  "actions/setup-java@v4",
+  "rustup target add aarch64-apple-darwin",
+  "scripts/verify-macos-distribution.sh --target aarch64-apple-darwin",
+  "LCDiff-${version}-aarch64.dmg",
+  "softprops/action-gh-release@v2",
+]) {
+  if (!macosWorkflow.includes(marker)) {
+    failures.push(`.github/workflows/macos-release.yml: missing ${marker}`);
+  }
+}
+
+const linuxWorkflow = readFileSync(".github/workflows/linux-release.yml", "utf8");
+for (const marker of [
+  "runs-on: ubuntu-latest",
+  "actions/setup-node@v4",
+  "docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb",
+  "LCDiff_${version}_ubuntu24.04_amd64.AppImage",
+  "LCDiff_${version}_ubuntu26.04_amd64.deb",
+  "softprops/action-gh-release@v2",
+]) {
+  if (!linuxWorkflow.includes(marker)) {
+    failures.push(`.github/workflows/linux-release.yml: missing ${marker}`);
+  }
+}
+
+const windowsWorkflow = readFileSync(".github/workflows/windows-release.yml", "utf8");
+for (const marker of [
+  "runs-on: windows-latest",
+  "actions/setup-node@v4",
+  "dtolnay/rust-toolchain@stable",
+  "actions/setup-java@v4",
+  "scripts/build-windows.ps1 -Bundles nsis -SignIfSecretsPresent",
+  "softprops/action-gh-release@v2",
+]) {
+  if (!windowsWorkflow.includes(marker)) {
+    failures.push(`.github/workflows/windows-release.yml: missing ${marker}`);
+  }
 }
 
 for (const marker of [
