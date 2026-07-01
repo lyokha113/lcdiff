@@ -1,4 +1,5 @@
 name: Windows Release
+run-name: Release ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }} - Windows
 
 on:
   push:
