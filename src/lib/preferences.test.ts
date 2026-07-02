@@ -111,6 +111,19 @@ describe("UI preferences persistence", () => {
     ).toEqual(DEFAULT_UI_PREFERENCES);
   });
 
+  it("keeps JD-Core decompiler engine selections", () => {
+    expect(
+      mergeUiPreferences({
+        misc: { decompiler: { engine: "jdCore", ignoreTrimWhitespace: true } },
+      }).misc.decompiler.engine,
+    ).toBe("jdCore");
+    expect(
+      mergeUiPreferences({
+        misc: { decompiler: { engine: "jdCoreV0", ignoreTrimWhitespace: true } },
+      }).misc.decompiler.engine,
+    ).toBe("jdCoreV0");
+  });
+
   it("falls back when a selected font is unavailable", () => {
     const preferences = normalizeUiPreferences(
       {

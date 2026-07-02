@@ -12,7 +12,7 @@ Rust src-tauri  (commands, async adapters)
         |
 Rust lcdiff-core  (archive state, staged bytes, CRC diff, search, save)
         |  framed stdio
-JVM decompiler sidecar  (Vineflower default / CFR / ASM, jlink Java 17)
+JVM decompiler sidecar  (Vineflower default / CFR / JD-Core / JD-Core v0 / ASM, jlink Java 17)
 ```
 
 The frontend never owns archive bytes. Rust owns archive state, staged changes,

@@ -30,8 +30,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import jd.core.preferences.Preferences;
+import jd.core.process.DecompilerImpl;
 import org.benf.cfr.reader.api.CfrDriver;
 import org.benf.cfr.reader.api.OutputSinkFactory;
+import org.jd.core.v1.ClassFileToJavaSourceDecompiler;
+import org.jd.core.v1.api.loader.Loader;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.util.Textifier;
 import org.objectweb.asm.util.TraceClassVisitor;
@@ -69,16 +73,22 @@ public final class SidecarMain {
       }
       if ("decompile".equals(action)) {
         String engine = request.path("engine").asText("vineflower");
-        String source =
-            "vineflower".equals(engine)
-                ? decompileVineflower(archive, entry, bytes)
-                : decompileCfr(archive, entry, bytes);
+        String source = decompile(engine, archive, entry, bytes);
         return ok(id).put("source", source);
       }
       return error(id, "NotFound", "unknown action: " + action, "none");
     } catch (Exception exception) {
       return error(id, "EngineError", rootMessage(exception), "bytecode");
     }
+  }
+
+  private static String decompile(String engine, Path archive, String entry, byte[] bytes)
+      throws Exception {
+    if ("vineflower".equals(engine)) return decompileVineflower(archive, entry, bytes);
+    if ("cfr".equals(engine)) return decompileCfr(archive, entry, bytes);
+    if ("jdCore".equals(engine)) return decompileJdCore(archive, entry);
+    if ("jdCoreV0".equals(engine)) return decompileJdCoreV0(archive, entry);
+    throw new IOException("unknown decompiler engine: " + engine);
   }
 
   private static String decompileCfr(Path archive, String entry, byte[] bytes) throws IOException {
@@ -114,6 +124,32 @@ public final class SidecarMain {
     } finally {
       deleteTree(root);
     }
+  }
+
+  private static String decompileJdCore(Path archive, String entry) throws IOException {
+    org.jd.core.v1.printer.PlainTextPrinter printer =
+        new org.jd.core.v1.printer.PlainTextPrinter();
+    new ClassFileToJavaSourceDecompiler()
+        .decompile(new ArchiveLoader(archive), printer, internalName(entry));
+    String source = printer.toString();
+    if (source.isEmpty()) throw new IOException("JD-Core returned no source");
+    return source;
+  }
+
+  private static String decompileJdCoreV0(Path archive, String entry) throws IOException {
+    Preferences preferences = new Preferences();
+    preferences.setRealignmentLineNumber(true);
+    preferences.setShowDefaultConstructor(true);
+    preferences.setShowLineNumbers(true);
+    preferences.setShowPrefixThis(true);
+    preferences.setUnicodeEscape(false);
+    preferences.setWriteMetaData(true);
+    jd.core.printer.PlainTextPrinter printer = new jd.core.printer.PlainTextPrinter();
+    String source =
+        printer.buildDecompiledOutput(
+            new ArchiveLoader(archive), internalName(entry), preferences, new DecompilerImpl());
+    if (source.isEmpty()) throw new IOException("JD-Core v0 returned no source");
+    return source;
   }
 
   private static String decompileVineflower(Path archive, String entry, byte[] bytes)
@@ -153,6 +189,15 @@ public final class SidecarMain {
     return output.toString();
   }
 
+  private static String internalName(String entry) throws IOException {
+    if (!entry.endsWith(".class")) throw new IOException("entry is not a class file: " + entry);
+    return entry.substring(0, entry.length() - ".class".length());
+  }
+
+  private static String classEntry(String internalName) {
+    return internalName.endsWith(".class") ? internalName : internalName + ".class";
+  }
+
   private static Path firstClasspath(JsonNode request) throws IOException {
     JsonNode classpath = request.path("classpath");
     if (!classpath.isArray() || classpath.size() == 0) {
@@ -171,6 +216,14 @@ public final class SidecarMain {
     try (ZipFile zip = new ZipFile(archive.toFile())) {
       ZipEntry zipEntry = zip.getEntry(entry);
       if (zipEntry == null) throw new IOException("entry not found: " + entry);
+      return readAllBytes(zip.getInputStream(zipEntry));
+    }
+  }
+
+  private static byte[] readOptionalEntry(Path archive, String entry) throws IOException {
+    try (ZipFile zip = new ZipFile(archive.toFile())) {
+      ZipEntry zipEntry = zip.getEntry(entry);
+      if (zipEntry == null) return null;
       return readAllBytes(zip.getInputStream(zipEntry));
     }
   }
@@ -245,5 +298,27 @@ public final class SidecarMain {
     Throwable current = exception;
     while (current.getCause() != null) current = current.getCause();
     return current.getMessage() == null ? current.toString() : current.getMessage();
+  }
+
+  private static final class ArchiveLoader implements Loader {
+    private final Path archive;
+
+    ArchiveLoader(Path archive) {
+      this.archive = archive;
+    }
+
+    @Override
+    public byte[] load(String internalName) throws IOException {
+      return readOptionalEntry(archive, classEntry(internalName));
+    }
+
+    @Override
+    public boolean canLoad(String internalName) {
+      try {
+        return readOptionalEntry(archive, classEntry(internalName)) != null;
+      } catch (IOException ignored) {
+        return false;
+      }
+    }
   }
 }

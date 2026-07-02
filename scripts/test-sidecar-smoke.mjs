@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 const root = new URL("..", import.meta.url).pathname;
 const bundledJava = join(root, "src-tauri", "resources", "jre", "bin", process.platform === "win32" ? "java.exe" : "java");
 const java = process.env.LCDIFF_JAVA || (existsSync(bundledJava) ? bundledJava : "java");
-const jar = process.env.LCDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "lcdiff-sidecar-0.3.1.jar");
+const jar = process.env.LCDIFF_SIDECAR_JAR || join(root, "sidecar", "target", "lcdiff-sidecar-0.3.2.jar");
 const tmp = mkdtempSync(join(tmpdir(), "lcdiff-sidecar-smoke-"));
 
 try {
@@ -25,7 +25,7 @@ try {
     ].join("\n"),
   );
   writeFileSync(join(tmp, "classes", "Malformed.class"), "not-bytecode");
-  run("javac", ["-d", join(tmp, "classes"), join(tmp, "demo", "Hello.java")]);
+  run("javac", ["--release", "8", "-d", join(tmp, "classes"), join(tmp, "demo", "Hello.java")]);
   run("jar", ["cf", join(tmp, "hello.jar"), "-C", join(tmp, "classes"), "."]);
 
   const child = spawn(java, ["-jar", jar], { stdio: ["pipe", "pipe", "inherit"] });
@@ -103,6 +103,26 @@ try {
   });
   assertIncludes(vineflowerDecompiler, "hello-lcdiff");
   assertSameSource(defaultDecompiler, vineflowerDecompiler);
+  assertIncludes(
+    await request(child, pending, {
+      id: "jd-core",
+      action: "decompile",
+      engine: "jdCore",
+      classpath: [archive],
+      entry: "demo/Hello.class",
+    }),
+    "hello-lcdiff",
+  );
+  assertIncludes(
+    await request(child, pending, {
+      id: "jd-core-v0",
+      action: "decompile",
+      engine: "jdCoreV0",
+      classpath: [archive],
+      entry: "demo/Hello.class",
+    }),
+    "hello-lcdiff",
+  );
   const malformed = await request(child, pending, {
     id: "malformed",
     action: "disassemble",
@@ -112,7 +132,7 @@ try {
   if (malformed.ok || malformed.fallback !== "bytecode") throw new Error(JSON.stringify(malformed));
   child.kill();
   console.log(
-    "sidecar smoke passed: ping, CFR, inner/anonymous classes, ASM, Vineflower, malformed fallback",
+    "sidecar smoke passed: ping, CFR, inner/anonymous classes, ASM, Vineflower, JD-Core, JD-Core v0, malformed fallback",
   );
 } finally {
   rmSync(tmp, { recursive: true, force: true });

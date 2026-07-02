@@ -96,7 +96,7 @@ In **Single** mode, LCDiff is an archive inspector:
 
 - browse entries without loading the whole archive into the UI;
 - preview Java source, bytecode, text, binary metadata, and hex;
-- switch decompiler engine between Vineflower and CFR;
+- switch decompiler engine between Vineflower, CFR, JD-Core, and JD-Core v0;
 - inspect folders with the same mental model as archives.
 
 ### 2. Compare Two Things That Claim To Be The Same

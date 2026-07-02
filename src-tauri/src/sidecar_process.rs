@@ -254,7 +254,7 @@ fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
         || {
             resource_candidate(resource_dir, "sidecar/lcdiff-sidecar.jar").unwrap_or_else(|| {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../sidecar/target/lcdiff-sidecar-0.3.1.jar")
+                    .join("../sidecar/target/lcdiff-sidecar-0.3.2.jar")
             })
         },
         PathBuf::from,
@@ -335,6 +335,8 @@ fn cache_key(
 fn engine_version(action: SidecarAction, engine: Option<DecompileEngine>) -> &'static str {
     match (action, engine) {
         (SidecarAction::Decompile, Some(DecompileEngine::Cfr)) => "cfr-0.152",
+        (SidecarAction::Decompile, Some(DecompileEngine::JdCore)) => "jd-core-1.3.3",
+        (SidecarAction::Decompile, Some(DecompileEngine::JdCoreV0)) => "jd-core-v0-0.8.29",
         (SidecarAction::Decompile, Some(DecompileEngine::Vineflower)) => "vineflower-1.12.0",
         (SidecarAction::Disassemble, _) => "asm-9.10.1",
         _ => "control-v1",

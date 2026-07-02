@@ -8,7 +8,7 @@ export interface StagedEntry {
 }
 export type PairStatus = "onlyLeft" | "onlyRight" | "identical" | "different" | "differentMetadataOnly";
 export type EntryKind = "directory" | "class" | "text" | "archive" | "binary";
-export type Engine = "cfr" | "vineflower";
+export type Engine = "cfr" | "jdCore" | "jdCoreV0" | "vineflower";
 export const DEFAULT_ENGINE: Engine = "vineflower";
 export type Mode = "single" | "compare" | "text";
 export type TreeFilter = "all" | "diff" | "same";

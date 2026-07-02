@@ -120,6 +120,8 @@ export function MiscPreferences({
                   <SelectGroup>
                     <SelectItem value="vineflower">Vineflower</SelectItem>
                     <SelectItem value="cfr">CFR</SelectItem>
+                    <SelectItem value="jdCore">JD-Core</SelectItem>
+                    <SelectItem value="jdCoreV0">JD-Core v0</SelectItem>
                   </SelectGroup>
                 </SelectContent>
               </Select>

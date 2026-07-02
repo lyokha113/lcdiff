@@ -8,7 +8,7 @@ React + shadcn/ui + Tailwind v4 + Monaco desktop view
     -> lcdiff-core Rust domain/application crate
       -> lazy ZIP/JAR reads and atomic rewrite
       -> length-prefixed JSON sidecar protocol
-        -> bundled JVM service: Vineflower default, CFR alternate, ASM Textifier
+        -> bundled JVM service: Vineflower default, CFR/JD-Core/JD-Core v0 alternates, ASM Textifier
 ```
 
 `lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
@@ -37,8 +37,8 @@ to cached temp files on demand, and merge by flattening staged replacements back
 into their parent archives. ZIP open/diff/read/search/save and sidecar read
 operations
 use async Tauri commands with blocking work offloaded from the IPC thread. The
-Java sidecar implements Vineflower decompile by default, CFR as an explicit
-alternate source engine, and ASM Textifier for bytecode.
+Java sidecar implements Vineflower decompile by default, CFR, JD-Core, and
+JD-Core v0 as explicit alternate source engines, and ASM Textifier for bytecode.
 `scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
 and copies the shaded sidecar JAR into Tauri resources. Release verification is
 split between local invariants and external platform gates. Locally,

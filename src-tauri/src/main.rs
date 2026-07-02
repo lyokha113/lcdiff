@@ -1339,10 +1339,10 @@ fn store_and_emit_open_paths<R: Runtime>(app: &tauri::AppHandle<R>, paths: Vec<P
     if paths.is_empty() {
         return;
     }
-    if let Some(state) = app.try_state::<SharedState>() {
-        if let Ok(mut state) = state.lock() {
-            state.push_pending_open_paths(paths.clone());
-        }
+    if let Some(state) = app.try_state::<SharedState>()
+        && let Ok(mut state) = state.lock()
+    {
+        state.push_pending_open_paths(paths.clone());
     }
     if let Err(error) = app.emit("os-open-paths", OsOpenPathsPayload { paths }) {
         eprintln!("failed to emit os-open-paths: {error}");

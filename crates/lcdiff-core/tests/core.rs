@@ -319,7 +319,7 @@ fn round_trips_length_prefixed_sidecar_json() {
     let request = SidecarRequest {
         id: "u1".to_owned(),
         action: SidecarAction::Decompile,
-        engine: Some(DecompileEngine::Cfr),
+        engine: Some(DecompileEngine::JdCore),
         classpath: vec!["/tmp/app.jar".to_owned()],
         entry: Some("pkg/A.class".to_owned()),
         target: None,
@@ -334,6 +334,18 @@ fn round_trips_length_prefixed_sidecar_json() {
     assert_eq!(
         read_frame::<SidecarRequest>(bytes.as_slice()).unwrap(),
         request
+    );
+}
+
+#[test]
+fn decompile_engine_values_match_sidecar_protocol() {
+    assert_eq!(
+        serde_json::to_value(DecompileEngine::JdCore).unwrap(),
+        serde_json::json!("jdCore")
+    );
+    assert_eq!(
+        serde_json::to_value(DecompileEngine::JdCoreV0).unwrap(),
+        serde_json::json!("jdCoreV0")
     );
 }
 
