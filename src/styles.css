@@ -1342,8 +1342,15 @@ button.launch-card {
   text-align: left;
 }
 
+.launch-card--text {
+  grid-column: span 4;
+  background:
+    radial-gradient(circle at 85% 16%, color-mix(in oklab, var(--status-meta-text) 18%, transparent), transparent 12rem),
+    linear-gradient(145deg, color-mix(in oklab, var(--ink-2) 82%, transparent), color-mix(in oklab, var(--ink-1) 96%, black));
+}
+
 .launch-card--compare {
-  grid-column: span 8;
+  grid-column: span 5;
   background:
     radial-gradient(circle at 15% 12%, color-mix(in oklab, var(--brass) 22%, transparent), transparent 16rem),
     linear-gradient(145deg, color-mix(in oklab, var(--ink-2) 88%, transparent), color-mix(in oklab, var(--ink-1) 94%, black));
@@ -1360,7 +1367,7 @@ button.launch-card {
   mask-image: linear-gradient(to bottom, transparent, black 18%, black 72%, transparent);
 }
 
-.launch-card--view { grid-column: span 4; border-left: 1px solid var(--line); }
+.launch-card--view { grid-column: span 3; border-left: 1px solid var(--line); }
 .launch-card--recent {
   border: 1px solid color-mix(in oklab, var(--line) 74%, transparent);
   border-radius: 0.85rem;
@@ -1435,7 +1442,7 @@ button.launch-card:focus-visible { z-index: 2; outline: 2px solid var(--brass); 
   .launch { padding: 1rem; }
   .launch__descriptor, .launch__edition { display: none; }
   .launch__grid { grid-template-columns: 1fr; grid-template-rows: auto; min-height: 0; }
-  .launch-card--compare, .launch-card--view { grid-column: 1; grid-row: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .launch-card--text, .launch-card--compare, .launch-card--view { grid-column: 1; grid-row: auto; border-left: 0; border-bottom: 1px solid var(--line); }
   button.launch-card { min-height: 10rem; }
   .launch-history button { grid-template-columns: 3.5rem minmax(0, 1fr) auto; }
   .launch-history button > svg { display: none; }

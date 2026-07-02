@@ -1,5 +1,6 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
+import { useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
@@ -24,6 +25,8 @@ interface DiffViewProps {
   onEditChange: (value: string | undefined) => void;
   onEditBlur: (content: string) => void;
   fileMerge: boolean;
+  entryCopyEnabled?: boolean;
+  diffEditable?: boolean;
   hunkMerge: boolean;
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
@@ -53,9 +56,17 @@ export function DiffView({
   mode, selected, preview, preferences, effectiveColorPattern, ignoreTrimWhitespace,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
-  fileMerge, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  fileMerge, entryCopyEnabled = true, diffEditable, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
+  const resolvedDiffEditable = diffEditable ?? hunkMerge;
+  const diffEditableRef = useRef(resolvedDiffEditable);
+  const onDiffEditEitherRef = useRef(onDiffEditEither);
+  useEffect(() => {
+    diffEditableRef.current = resolvedDiffEditable;
+    onDiffEditEitherRef.current = onDiffEditEither;
+  }, [resolvedDiffEditable, onDiffEditEither]);
+
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
   const editorFontFamily = editorFontFamilyForCss(preferences.editor.fontFamily);
   const editorOptions: editor.IEditorConstructionOptions = {
@@ -86,7 +97,7 @@ export function DiffView({
               variant="outline"
               size="sm"
               aria-label={`Copy file to ${target}`}
-              disabled={!sourceEntry || sourceEntry.kind === "directory"}
+              disabled={!entryCopyEnabled || !sourceEntry || sourceEntry.kind === "directory"}
               onClick={() => onCopy(source, target)}
             >
               Copy file {arrow}
@@ -164,7 +175,7 @@ export function DiffView({
             {preview.right?.details && `RIGHT: ${preview.right.details}`}
           </p>
         )}
-        {mode === "compare" ? (
+        {mode === "compare" || mode === "text" ? (
           <DiffEditor
             height="100%"
             language={preview.left?.language ?? preview.right?.language ?? "plaintext"}
@@ -173,22 +184,24 @@ export function DiffView({
             theme={monacoTheme}
             options={{
               ...editorOptions,
-              readOnly: !hunkMerge,
-              originalEditable: hunkMerge,
-              renderMarginRevertIcon: hunkMerge,
+              readOnly: !resolvedDiffEditable,
+              originalEditable: resolvedDiffEditable,
+              renderMarginRevertIcon: resolvedDiffEditable,
               renderSideBySide: true,
               useInlineViewWhenSpaceIsLimited: false,
               ignoreTrimWhitespace,
             }}
             onMount={(editor, monaco) => {
               onDiffMount(editor, monaco);
-              if (hunkMerge) {
-                const orig = editor.getOriginalEditor();
-                const mod = editor.getModifiedEditor();
-                const d1 = orig.onDidBlurEditorText(() => onDiffEditEither("left", orig.getValue()));
-                const d2 = mod.onDidBlurEditorText(() => onDiffEditEither("right", mod.getValue()));
-                editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });
-              }
+              const orig = editor.getOriginalEditor();
+              const mod = editor.getModifiedEditor();
+              const d1 = orig.onDidBlurEditorText(() => {
+                if (diffEditableRef.current) onDiffEditEitherRef.current("left", orig.getValue());
+              });
+              const d2 = mod.onDidBlurEditorText(() => {
+                if (diffEditableRef.current) onDiffEditEitherRef.current("right", mod.getValue());
+              });
+              editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });
             }}
           />
         ) : (

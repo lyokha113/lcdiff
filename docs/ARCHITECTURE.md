@@ -8,7 +8,7 @@ React + shadcn/ui + Tailwind v4 + Monaco desktop view
     -> lcdiff-core Rust domain/application crate
       -> lazy ZIP/JAR reads and atomic rewrite
       -> length-prefixed JSON sidecar protocol
-        -> bundled JVM service: Vineflower default, CFR alternate, ASM Textifier
+        -> bundled JVM service: Vineflower default, CFR/JD-Core/JD-Core v0 alternates, ASM Textifier
 ```
 
 `lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
@@ -37,8 +37,8 @@ to cached temp files on demand, and merge by flattening staged replacements back
 into their parent archives. ZIP open/diff/read/search/save and sidecar read
 operations
 use async Tauri commands with blocking work offloaded from the IPC thread. The
-Java sidecar implements Vineflower decompile by default, CFR as an explicit
-alternate source engine, and ASM Textifier for bytecode.
+Java sidecar implements Vineflower decompile by default, CFR, JD-Core, and
+JD-Core v0 as explicit alternate source engines, and ASM Textifier for bytecode.
 `scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
 and copies the shaded sidecar JAR into Tauri resources. Release verification is
 split between local invariants and external platform gates. Locally,
@@ -75,7 +75,11 @@ context overlays: search, preferences, pending changes, confirmations
 `SearchResultsPanel`, `ConfigDrawer`, and `StatusBar` render state and emit typed
 intent callbacks. Search opens on demand and closes after result selection, so
 the contextual surface cannot block the Files navigator. View mode removes
-right-side and merge-only controls instead of disabling them.
+right-side and merge-only controls instead of disabling them. Text mode is a
+separate frontend-only workspace for ad hoc paste/type comparison; it renders
+the Monaco diff editor directly and skips source pickers, file trees, tree
+expansion, diff tabs, merge staging, save, reload, history, hunk controls, and
+diff-block navigation.
 
 GSAP and `@gsap/react` are restricted to the startup composition. Normal
 workspace interactions use transform/opacity CSS transitions, and reduced

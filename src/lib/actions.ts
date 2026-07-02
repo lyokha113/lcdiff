@@ -148,7 +148,7 @@ export function getActionState(actionId: AppActionId, context: AppActionContext)
   switch (actionId) {
     case "file.openRightFile":
     case "file.openRightDirectory":
-      return context.mode === "single" ? blocked("Open right source is available only in Compare mode.") : enabled();
+      return context.mode !== "compare" ? blocked("Open right source is available only in Compare mode.") : enabled();
     case "file.refresh":
       return context.loadedSourceCount > 0 ? enabled() : blocked("Open a source before refreshing.");
     case "file.save":

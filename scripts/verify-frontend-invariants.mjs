@@ -330,12 +330,12 @@ if (!frontend.includes('{mode === "compare" &&') || !frontend.includes('Keep one
 
 const changeModeBody = app.match(/function changeMode\(next: Mode\) {([\s\S]*?)\n  }/)?.[1] ?? "";
 if (
-  !changeModeBody.includes('next === "single" && stagedTarget') ||
-  !changeModeBody.includes("Save or clear unsaved changes before switching to Single mode.") ||
+  !changeModeBody.includes("next !== mode && stagedTarget") ||
+  !changeModeBody.includes("Save or clear unsaved changes before switching to") ||
   !changeModeBody.includes("diffEditorRef.current?.setModel(null);") ||
   !changeModeBody.includes("setMode(next);")
 ) {
-  failures.push("src/App.tsx: dirty staged changes must block switching to Single mode and reset Monaco DiffEditor before unmount");
+  failures.push("src/App.tsx: dirty staged changes must block guarded mode switches and reset Monaco DiffEditor before unmount");
 }
 
 if (!frontend.includes('onValueChange={(value) => onChangeMode(value as Mode)}') &&

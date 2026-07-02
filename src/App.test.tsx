@@ -185,6 +185,9 @@ const MODIFY_LINE_2 = {
 };
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
 let diffEditorMounted = false;
+let diffEditorProps: { original?: string; modified?: string; options?: { readOnly?: boolean; originalEditable?: boolean } } = {};
+let blurOriginalEditor: (() => void) | undefined;
+let blurModifiedEditor: (() => void) | undefined;
 
 function makeFakeDiffEditor() {
   // App's search-highlight effect calls deltaDecorations/revealLineInCenter on
@@ -192,7 +195,11 @@ function makeFakeDiffEditor() {
   const subEditor = (buf: "left" | "right", set: typeof setOriginal, reveal: typeof revealOriginal) => ({
     getValue: () => buffers[buf],
     setValue: set,
-    onDidBlurEditorText: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidBlurEditorText: vi.fn((handler: () => void) => {
+      if (buf === "left") blurOriginalEditor = handler;
+      else blurModifiedEditor = handler;
+      return { dispose: vi.fn() };
+    }),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     onDidFocusEditorText: vi.fn((handler: () => void) => {
       if (buf === "left") focusOriginalEditor = handler;
@@ -231,12 +238,24 @@ vi.mock("@monaco-editor/react", () => ({
   default: () => <div data-testid="editor" />,
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
-  DiffEditor: ({ onMount }: { onMount?: (e: unknown, m: unknown) => void }) => {
+  DiffEditor: (props: {
+    onMount?: (e: unknown, m: unknown) => void;
+    original?: string;
+    modified?: string;
+    options?: { readOnly?: boolean; originalEditable?: boolean };
+  }) => {
+    diffEditorProps = props;
     if (!diffEditorMounted) {
       diffEditorMounted = true;
-      queueMicrotask(() => onMount?.(makeFakeDiffEditor(), {}));
+      queueMicrotask(() => props.onMount?.(makeFakeDiffEditor(), {}));
     }
-    return <div className="monaco-editor" data-testid="diff-editor"><span data-testid="diff-editor-cell" /></div>;
+    return (
+      <div className="monaco-editor" data-testid="diff-editor">
+        <span data-testid="diff-editor-cell" />
+        <span data-testid="diff-original">{props.original}</span>
+        <span data-testid="diff-modified">{props.modified}</span>
+      </div>
+    );
   },
 }));
 
@@ -292,6 +311,9 @@ describe("App file-merge wiring", () => {
     revealOriginal.mockClear();
     revealModified.mockClear();
     focusOriginalEditor = undefined;
+    blurOriginalEditor = undefined;
+    blurModifiedEditor = undefined;
+    diffEditorProps = {};
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
     lineChanges = [MODIFY_LINE_2];
@@ -336,6 +358,36 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Workspace canvas" })).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+
+  it("opens editable Text mode without source pickers, tree controls, merge controls, or staging", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Left File/Folder" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Open files" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Diff block navigation" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/LEFT: Left free text/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/RIGHT: Right free text/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("diff-editor")).toBeInTheDocument();
+    expect(diffEditorProps.options?.readOnly).toBe(false);
+    expect(diffEditorProps.options?.originalEditable).toBe(true);
+    await waitFor(() => expect(blurOriginalEditor).toBeDefined());
+    await waitFor(() => expect(blurModifiedEditor).toBeDefined());
+
+    buffers.left = "left pasted text";
+    buffers.right = "right typed text";
+    act(() => blurOriginalEditor?.());
+    act(() => blurModifiedEditor?.());
+
+    await waitFor(() => expect(screen.getByTestId("diff-original")).toHaveTextContent("left pasted text"));
+    expect(screen.getByTestId("diff-modified")).toHaveTextContent("right typed text");
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });
 
   it("opens OS-launched files in View mode on the left side", async () => {

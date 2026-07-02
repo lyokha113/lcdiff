@@ -907,7 +907,7 @@ try {
   // Single-mode switch guard: blocked while staged.
   await mockedPage.getByRole("combobox", { name: "Mode" }).click();
   await mockedPage.getByRole("option", { name: "View" }).click();
-  await mockedPage.locator("text=Save or clear unsaved changes before switching to Single mode.").waitFor({ timeout: 5_000 });
+  await mockedPage.locator("text=Save or clear unsaved changes before switching to View mode.").waitFor({ timeout: 5_000 });
 
   // Clear staged (MenuBar icon button): badges gone.
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();

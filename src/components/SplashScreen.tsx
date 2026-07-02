@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { ArrowUpRight, Clock3, FileSearch, GitCompareArrows, Trash2 } from "lucide-react";
+import { ArrowUpRight, Clock3, FileSearch, FileText, GitCompareArrows, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import type { HistoryEntry, Mode } from "@/lib/history";
@@ -88,6 +88,22 @@ export function SplashScreen({
           <div className="launch__grid">
             <button
               type="button"
+              className="launch-card launch-card--text"
+              onClick={() => onPickMode("text")}
+              aria-label="Compare free text"
+            >
+              <span className="launch-card__icon"><FileText aria-hidden="true" /></span>
+              <span className="launch-card__content">
+                <span className="launch-card__title">Text</span>
+                <span className="launch-card__description">
+                  Paste or type snippets directly into a clean two-pane diff.
+                </span>
+              </span>
+              <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
               className="launch-card launch-card--compare"
               onClick={() => onPickMode("compare")}
               aria-label="Compare two sources"
@@ -147,7 +163,7 @@ export function SplashScreen({
                       onClick={() => onOpenEntry(entry)}
                     >
                       <span className="launch-history__mode">
-                        {entry.mode === "compare" ? "Compare" : "View"}
+                        {entry.mode === "compare" ? "Compare" : entry.mode === "text" ? "Text" : "View"}
                       </span>
                       <span className="launch-history__sources">
                         <span className="launch-history__name">{entry.paths.map(basename).join(" ↔ ")}</span>

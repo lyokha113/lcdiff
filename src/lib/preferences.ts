@@ -4,7 +4,7 @@ export type ColorPattern = "light" | "dark" | "system";
 export type EffectiveColorPattern = "light" | "dark";
 export type Toggle = "on" | "off";
 export type ResultGrouping = "kind" | "side";
-export type DecompilerEngine = "vineflower" | "cfr";
+export type DecompilerEngine = "vineflower" | "cfr" | "jdCore" | "jdCoreV0";
 
 export const DEFAULT_EDITOR_FONT_FAMILY = "\"JetBrains Mono Variable\", ui-monospace, monospace";
 export const SYSTEM_MONO_FONT_FAMILY = "ui-monospace, monospace";
@@ -67,7 +67,7 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
 const COLOR_PATTERNS = ["light", "dark", "system"] as const;
 const TOGGLES = ["on", "off"] as const;
 const RESULT_GROUPINGS = ["kind", "side"] as const;
-const DECOMPILER_ENGINES = ["vineflower", "cfr"] as const;
+const DECOMPILER_ENGINES = ["vineflower", "cfr", "jdCore", "jdCoreV0"] as const;
 const BUILT_IN_FONT_FAMILIES = [
   DEFAULT_EDITOR_FONT_FAMILY,
   SYSTEM_MONO_FONT_FAMILY,

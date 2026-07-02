@@ -37,10 +37,10 @@ export function SourceChips({
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="ghost" className="source-slot__trigger" aria-label={`Change ${side} source`}>
-              <span className="source-slot__icon">{archive ? <Package /> : <Plus />}</span>
+              <span className="source-slot__icon">{archive?.metadata.sourceKind === "text" ? <FileText /> : archive ? <Package /> : <Plus />}</span>
               <span className="source-slot__text">
                 <span className="source-slot__name">{archive ? basename(archive.path) : "Choose a source"}</span>
-                <span className="source-slot__path">{archive?.path ?? "JAR, ZIP, folder, or text file"}</span>
+                <span className="source-slot__path">{archive?.metadata.sourceKind === "text" ? "Paste or type directly in the diff editor" : archive?.path ?? "JAR, ZIP, folder, or text file"}</span>
               </span>
             </Button>
           </PopoverTrigger>

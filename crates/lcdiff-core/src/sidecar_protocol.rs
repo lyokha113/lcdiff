@@ -10,6 +10,8 @@ const MAX_FRAME_SIZE: usize = 32 * 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub enum DecompileEngine {
     Cfr,
+    JdCore,
+    JdCoreV0,
     Vineflower,
 }
 

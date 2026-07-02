@@ -1,4 +1,4 @@
-export type Mode = "single" | "compare";
+export type Mode = "single" | "compare" | "text";
 
 export interface HistoryEntry {
   id: string;
@@ -26,7 +26,7 @@ export function loadHistory(): HistoryEntry[] {
       (e): e is HistoryEntry =>
         e &&
         typeof e.id === "string" &&
-        (e.mode === "single" || e.mode === "compare") &&
+        (e.mode === "single" || e.mode === "compare" || e.mode === "text") &&
         Array.isArray(e.paths) &&
         typeof e.openedAt === "number",
     );

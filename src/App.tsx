@@ -89,6 +89,7 @@ function isTauriRuntime() {
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
+const FREE_TEXT_PATH = "Free text";
 
 const SIDE_PREFIX_RE = /^(left|right):/;
 const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
@@ -106,6 +107,30 @@ type DiffNavigatorState = {
 type OsOpenPathsPayload = {
   paths: string[];
 };
+
+const freeTextPair: ComparePair = {
+  path: FREE_TEXT_PATH,
+  status: "different",
+  left: { path: FREE_TEXT_PATH, kind: "text" },
+  right: { path: FREE_TEXT_PATH, kind: "text" },
+};
+
+function freeTextSummary(side: Side): ArchiveSummary {
+  return {
+    path: side === "left" ? "Left text" : "Right text",
+    metadata: { sourceKind: "text", signed: false, multiRelease: false, zip64: false },
+    entries: [{ path: FREE_TEXT_PATH, kind: "text", uncompressedSize: 0 }],
+  };
+}
+
+function freeTextPreview(side: Side, content: string): EntryPreview {
+  return {
+    path: FREE_TEXT_PATH,
+    kind: "text",
+    language: "plaintext",
+    content,
+  };
+}
 
 function applySearchLineHighlight(
   editor: CodeEditor | undefined,
@@ -229,6 +254,7 @@ export function App() {
   const [stagedTarget, setStagedTarget] = useState<Side>();
   const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
   const [editBuffer, setEditBuffer] = useState<string>("");
+  const [freeText, setFreeText] = useState<Record<Side, string>>({ left: "", right: "" });
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
@@ -496,6 +522,43 @@ export function App() {
     }
   }, [refreshDiff]);
 
+  const openTextMode = useCallback(() => {
+    if (stagedTarget) {
+      setMessage("Save or clear unsaved changes before switching to text compare.");
+      return;
+    }
+    previewRequestId.current += 1;
+    searchStreamId.current += 1;
+    setSearching(false);
+    setMode("text");
+    setView("workspace");
+    setPaths(emptyPaths);
+    setPathErrors({});
+    setArchives({ left: freeTextSummary("left"), right: freeTextSummary("right") });
+    setPairs([freeTextPair]);
+    setNestedPairs({});
+    setSelected(freeTextPair);
+    setActiveTab(FREE_TEXT_PATH);
+    setViewMode("source");
+    const nextPreview = {
+      left: freeTextPreview("left", freeText.left),
+      right: freeTextPreview("right", freeText.right),
+    };
+    setPreview(nextPreview);
+    focusCounter.current += 1;
+    setOpenTabs([{
+      path: FREE_TEXT_PATH,
+      pair: freeTextPair,
+      preview: nextPreview,
+      viewMode: "source",
+      lastFocus: focusCounter.current,
+    }]);
+    setSearchPaths(undefined);
+    setSearchResults([]);
+    setSelectedSearchResult(undefined);
+    setMessage("Text compare is ready. Paste or type directly in either pane.");
+  }, [freeText.left, freeText.right, stagedTarget]);
+
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
     setMode("single");
@@ -509,6 +572,8 @@ export function App() {
 
   useEffect(() => {
     if (view !== "workspace") return;
+    if (mode === "text") return;
+    if (archives.left?.metadata.sourceKind === "text" || archives.right?.metadata.sourceKind === "text") return;
     const left = archives.left?.path;
     const right = archives.right?.path;
     if (mode === "single" && left) {
@@ -718,6 +783,7 @@ export function App() {
   function refreshSources() {
     const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
     for (const side of sides) {
+      if (archives[side]?.metadata.sourceKind === "text") continue;
       const current = archives[side]?.path;
       if (current) void openPath(side, current, true);
     }
@@ -842,6 +908,10 @@ export function App() {
   }
 
   function pickMode(next: Mode) {
+    if (next === "text") {
+      openTextMode();
+      return;
+    }
     setMode(next);
     setView("workspace");
   }
@@ -864,19 +934,41 @@ export function App() {
   }
 
   function changeMode(next: Mode) {
-    if (next === "single" && stagedTarget) {
-      setMessage("Save or clear unsaved changes before switching to Single mode.");
+    if (next === "text") {
+      openTextMode();
       return;
     }
-    if (mode === "compare" && next === "single") {
+    if (next !== mode && stagedTarget) {
+      setMessage(`Save or clear unsaved changes before switching to ${next === "single" ? "View" : "Compare"} mode.`);
+      return;
+    }
+    if ((mode === "compare" || mode === "text") && next === "single") {
       diffEditorRef.current?.setModel(null);
       diffEditorRef.current = undefined;
+    }
+    if (mode === "text") {
+      setPaths(emptyPaths);
+      setPathErrors({});
+      setArchives({});
+      setPairs([]);
+      setNestedPairs({});
+      setSelected(undefined);
+      setActiveTab("files");
+      setOpenTabs([]);
+      setPreview({});
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
     }
     setMode(next);
   }
 
   async function copy(from: Side, to: Side, pair = selected) {
     if (!pair) return;
+    if (pair.path === FREE_TEXT_PATH) {
+      setMessage("Free text compare is edited directly in the diff editor.");
+      return;
+    }
     try {
       await invoke("stage_copy", { from, to, entryPath: pair.path });
       setStagedTarget(to);
@@ -1018,6 +1110,20 @@ export function App() {
 
   async function stageFileSide(side: Side, content: string) {
     if (!selected) return;
+    if (mode === "text" && selected.path === FREE_TEXT_PATH) {
+      const nextSidePreview = freeTextPreview(side, content);
+      setFreeText((current) => ({ ...current, [side]: content }));
+      setPreview((current) => {
+        const next = { ...current, [side]: nextSidePreview };
+        setOpenTabs((tabs) =>
+          tabs.map((tab) =>
+            tab.path === FREE_TEXT_PATH ? { ...tab, preview: next } : tab,
+          ),
+        );
+        return next;
+      });
+      return;
+    }
     const key = `${side}:${selected.path}`;
     const original = (side === "left" ? preview.left?.content : preview.right?.content) ?? "";
     if (content === original) {
@@ -1151,7 +1257,7 @@ export function App() {
       const results: SearchResult[] = [];
       const options = { includePath: true, includeText: true, includeConstants: true };
       for (const side of searchSides()) {
-        if (!archives[side]) continue;
+        if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
         for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
           if (searchStreamId.current !== searchId) return;
           matches.add(hit.entryPath);
@@ -1170,7 +1276,7 @@ export function App() {
         setSearchResults([...results]);
         try {
           for (const side of searchSides()) {
-            if (!archives[side]) continue;
+            if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
             for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
               if (searchStreamId.current !== searchId) return;
               matches.add(hit.entryPath);
@@ -1275,6 +1381,7 @@ export function App() {
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
+  const isTextMode = mode === "text";
   const backupEnabled = preferences.misc.save.backupEnabled;
   const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
   const activeColorPattern = effectiveColorPattern(
@@ -1294,6 +1401,8 @@ export function App() {
       EDIT_EXTENSIONS.includes(p.path.split(".").pop()?.toLowerCase() ?? ""));
   const isTextMerge =
     mode === "compare" && sideEditableText(preview.left) && sideEditableText(preview.right);
+  const isDiffEditable =
+    isTextMerge || (isTextMode && sideEditableText(preview.left) && sideEditableText(preview.right));
 
   const isEditableEntry =
     mode === "single" &&
@@ -1304,8 +1413,8 @@ export function App() {
       EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
-  const leftLabel = baseName(archives.left?.path ?? paths.left) ?? "Left";
-  const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
+  const leftLabel = isTextMode ? "Left text" : baseName(archives.left?.path ?? paths.left) ?? "Left";
+  const rightLabel = isTextMode ? "Right text" : baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
   const hunkMerge = isTextMerge;
 
@@ -1443,6 +1552,32 @@ export function App() {
     onNext: () => navigateDiffBlock(1),
   };
 
+  const diffView = (
+    <DiffView
+      mode={mode}
+      selected={selected}
+      preview={preview}
+      preferences={preferences}
+      effectiveColorPattern={activeColorPattern}
+      ignoreTrimWhitespace={ignoreTrimWhitespace}
+      onCopy={(from, to) => void copy(from, to)}
+      onEditorMount={handleEditorMount}
+      onDiffMount={handleDiffMount}
+      editable={isEditableEntry}
+      editValue={editBuffer}
+      onEditChange={(value) => setEditBuffer(value ?? "")}
+      onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
+      fileMerge={isFileMerge}
+      entryCopyEnabled={mode === "compare"}
+      diffEditable={isDiffEditable}
+      hunkMerge={mode === "compare" && isTextMerge}
+      onDiffEditEither={(side, content) => void stageFileSide(side, content)}
+      onTakeAll={(t) => void takeAllTo(t)}
+      onMoveHunk={(t) => void moveHunkTo(t)}
+      diffNavigator={diffNavigator}
+    />
+  );
+
   if (view === "splash") {
     return (
       <SplashScreen
@@ -1461,7 +1596,7 @@ export function App() {
     <main
       className="app-shell"
       ref={appShellRef}
-      aria-label={mode === "compare" ? "Comparison workspace" : "Source workspace"}
+      aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Text comparison workspace" : "Source workspace"}
     >
       <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
       <MenuBar
@@ -1471,7 +1606,10 @@ export function App() {
         onUnstageOne={(entryPath) => void unstage(entryPath)}
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
-        canRefresh={Boolean(archives.left || archives.right)}
+        canRefresh={Boolean(
+          (archives.left && archives.left.metadata.sourceKind !== "text") ||
+          (archives.right && archives.right.metadata.sourceKind !== "text"),
+        )}
         onChangeMode={changeMode}
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
@@ -1480,16 +1618,18 @@ export function App() {
         onToggleDrawer={() => setDrawerOpen((o) => !o)}
       />
 
-      <SourceChips
-        mode={mode}
-        archives={archives}
-        paths={paths}
-        pathErrors={pathErrors}
-        onPathChange={(side, value) => setPaths((current) => ({ ...current, [side]: value }))}
-        onOpenPath={(side, path) => void openPath(side, path)}
-        onBrowse={(side) => void browse(side)}
-        onBrowseFolder={(side) => void browseFolder(side)}
-      />
+      {mode !== "text" && (
+        <SourceChips
+          mode={mode}
+          archives={archives}
+          paths={paths}
+          pathErrors={pathErrors}
+          onPathChange={(side, value) => setPaths((current) => ({ ...current, [side]: value }))}
+          onOpenPath={(side, path) => void openPath(side, path)}
+          onBrowse={(side) => void browse(side)}
+          onBrowseFolder={(side) => void browseFolder(side)}
+        />
+      )}
 
       {searchOpen && (
         <aside className="search-surface" aria-label="Search workspace">
@@ -1516,72 +1656,62 @@ export function App() {
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
-          <WorkspaceTabs
-            fileCount={visiblePairs.length}
-            activeId={activeTab}
-            mode={mode}
-            tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
-            treeFilter={treeFilter}
-            viewMode={viewMode}
-            canShowSource={!!selected}
-            canShowBytecode={pairHasClass(selected)}
-            onSelectFiles={() => setActiveTab("files")}
-            onSelectTab={(path) => focusTab(path)}
-            onCloseTab={(path) => closeTab(path)}
-            onFilterChange={setTreeFilter}
-            onExpandTree={() => setTreeExpandAllVersion((version) => version + 1)}
-            onCollapseTree={() => setTreeCollapseAllVersion((version) => version + 1)}
-            onShowSource={() => selected && void inspect(selected, true)}
-            onShowBytecode={showBytecode}
-          />
+          {mode !== "text" && (
+            <WorkspaceTabs
+              fileCount={visiblePairs.length}
+              activeId={activeTab}
+              mode={mode}
+              tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+              treeFilter={treeFilter}
+              viewMode={viewMode}
+              canShowSource={!!selected}
+              canShowBytecode={pairHasClass(selected)}
+              onSelectFiles={() => setActiveTab("files")}
+              onSelectTab={(path) => focusTab(path)}
+              onCloseTab={(path) => closeTab(path)}
+              onFilterChange={setTreeFilter}
+              onExpandTree={() => setTreeExpandAllVersion((version) => version + 1)}
+              onCollapseTree={() => setTreeCollapseAllVersion((version) => version + 1)}
+              onShowSource={() => selected && void inspect(selected, true)}
+              onShowBytecode={showBytecode}
+            />
+          )}
           <div
             className="workspace-tabpanels"
             id="workspace-canvas"
             role="region"
             aria-label="Workspace canvas"
           >
-            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
-              <FileTree
-                visiblePairs={visiblePairs}
-                selected={selected}
-                stagedEntries={stagedEntries}
-                mode={mode}
-                treeFilter={treeFilter}
-                nestedPairs={nestedPairs}
-                leftLabel={leftLabel}
-                rightLabel={rightLabel}
-                expandAllVersion={treeExpandAllVersion}
-                collapseAllVersion={treeCollapseAllVersion}
-                onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
-                onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
-                onCopy={(from, to, pair) => void copy(from, to, pair)}
-                onUnstage={(entryPath) => void unstage(entryPath)}
-                onExpandArchive={(fullPath) => void expandArchive(fullPath)}
-              />
-            </div>
-            <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab === "files"}>
-              <DiffView
-                mode={mode}
-                selected={selected}
-                preview={preview}
-                preferences={preferences}
-                effectiveColorPattern={activeColorPattern}
-                ignoreTrimWhitespace={ignoreTrimWhitespace}
-                onCopy={(from, to) => void copy(from, to)}
-                onEditorMount={handleEditorMount}
-                onDiffMount={handleDiffMount}
-                editable={isEditableEntry}
-                editValue={editBuffer}
-                onEditChange={(value) => setEditBuffer(value ?? "")}
-                onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
-                fileMerge={isFileMerge}
-                hunkMerge={isTextMerge}
-                onDiffEditEither={(side, content) => void stageFileSide(side, content)}
-                onTakeAll={(t) => void takeAllTo(t)}
-                onMoveHunk={(t) => void moveHunkTo(t)}
-                diffNavigator={diffNavigator}
-              />
-            </div>
+            {mode === "text" ? (
+              <div className="workspace-tabpanel" role="tabpanel">
+                {diffView}
+              </div>
+            ) : (
+              <>
+                <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
+                  <FileTree
+                    visiblePairs={visiblePairs}
+                    selected={selected}
+                    stagedEntries={stagedEntries}
+                    mode={mode}
+                    treeFilter={treeFilter}
+                    nestedPairs={nestedPairs}
+                    leftLabel={leftLabel}
+                    rightLabel={rightLabel}
+                    expandAllVersion={treeExpandAllVersion}
+                    collapseAllVersion={treeCollapseAllVersion}
+                    onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
+                    onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                    onCopy={(from, to, pair) => void copy(from, to, pair)}
+                    onUnstage={(entryPath) => void unstage(entryPath)}
+                    onExpandArchive={(fullPath) => void expandArchive(fullPath)}
+                  />
+                </div>
+                <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab === "files"}>
+                  {diffView}
+                </div>
+              </>
+            )}
           </div>
         </section>
         <ConfigDrawer

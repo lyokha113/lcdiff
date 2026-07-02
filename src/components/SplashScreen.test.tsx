@@ -40,6 +40,7 @@ describe("SplashScreen", () => {
     expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();
   });
 
@@ -47,6 +48,7 @@ describe("SplashScreen", () => {
     setup();
     expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
   });
 
   it("calls onPickMode with the mode when a button is clicked", async () => {
@@ -55,6 +57,8 @@ describe("SplashScreen", () => {
     expect(props.onPickMode).toHaveBeenCalledWith("single");
     await userEvent.click(screen.getByRole("button", { name: "Compare two sources" }));
     expect(props.onPickMode).toHaveBeenCalledWith("compare");
+    await userEvent.click(screen.getByRole("button", { name: "Compare free text" }));
+    expect(props.onPickMode).toHaveBeenCalledWith("text");
   });
 
   it("renders a compare entry with both paths", () => {

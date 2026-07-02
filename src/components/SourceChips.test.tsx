@@ -63,4 +63,5 @@ describe("SourceChips", () => {
     await userEvent.click(screen.getByRole("button", { name: /Browse file/i }));
     expect(props.onBrowse).toHaveBeenCalledWith("left");
   });
+
 });
