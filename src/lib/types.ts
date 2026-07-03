@@ -21,6 +21,28 @@ export type MonacoApi = Parameters<OnMount>[1];
 export type DecorationRef = { current: string[] };
 export type ViewMode = "source" | "bytecode";
 
+export interface ViewEntryTab {
+  entryPath: string;
+  preview: EntryPreview;
+  viewMode: ViewMode;
+  lastFocus: number;
+}
+
+export interface ViewSource {
+  sourceId: string;
+  path: string;
+  metadata: ArchiveSummary["metadata"];
+  entries: ArchiveSummary["entries"];
+  nestedPairs: Record<string, ComparePair[]>;
+  entryTabs: ViewEntryTab[];
+}
+
+export interface ViewWorkspaceState {
+  sources: ViewSource[];
+  activeSourceId?: string;
+  activeEntryPath?: string;
+}
+
 export interface ArchiveSummary {
   path: string;
   metadata: { sourceKind: "archive" | "directory" | "file" | "text"; signed: boolean; multiRelease: boolean; zip64: boolean };
