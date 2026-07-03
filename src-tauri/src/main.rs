@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env,
     path::PathBuf,
     sync::{
@@ -158,6 +159,7 @@ struct AppState {
     right: Option<Archive>,
     left_nested: NestedArchiveCache,
     right_nested: NestedArchiveCache,
+    view_sources: BTreeMap<String, ViewSourceState>,
     left_plan: MergePlan,
     right_plan: MergePlan,
     engine: DecompileEngine,
@@ -185,6 +187,7 @@ impl AppState {
             right: None,
             left_nested: NestedArchiveCache::new().expect("temp dir for nested cache"),
             right_nested: NestedArchiveCache::new().expect("temp dir for nested cache"),
+            view_sources: BTreeMap::new(),
             left_plan: MergePlan::new(),
             right_plan: MergePlan::new(),
             engine: DEFAULT_DECOMPILE_ENGINE,
@@ -203,6 +206,53 @@ impl AppState {
 
     fn take_pending_open_paths(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_open_paths)
+    }
+
+    fn view_source_id(path: &std::path::Path) -> String {
+        format!("view:{}", path.display())
+    }
+
+    fn open_view_source(&mut self, path: String) -> Result<ViewSourceSummary, String> {
+        let archive = Archive::open(path).map_err(|error| error.to_string())?;
+        self.insert_view_source(archive)
+    }
+
+    fn insert_view_source(&mut self, archive: Archive) -> Result<ViewSourceSummary, String> {
+        let source_id = Self::view_source_id(archive.path());
+        let summary = ViewSourceSummary {
+            source_id: source_id.clone(),
+            path: archive.path().display().to_string(),
+            metadata: archive.metadata().clone(),
+            entries: archive.entries().cloned().collect(),
+        };
+        self.view_sources.insert(
+            source_id,
+            ViewSourceState {
+                archive,
+                nested: NestedArchiveCache::new().map_err(|error| error.to_string())?,
+            },
+        );
+        Ok(summary)
+    }
+
+    fn view_source_archive(&self, source_id: &str) -> Result<&Archive, String> {
+        self.view_sources
+            .get(source_id)
+            .map(|source| &source.archive)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
+    }
+
+    fn view_source_archive_mut(&mut self, source_id: &str) -> Result<&mut ViewSourceState, String> {
+        self.view_sources
+            .get_mut(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
+    }
+
+    fn close_view_source(&mut self, source_id: &str) -> Result<(), String> {
+        self.view_sources
+            .remove(source_id)
+            .map(|_| ())
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
     }
 
     #[cfg(test)]
@@ -365,6 +415,20 @@ struct ArchiveSummary {
     entries: Vec<ArchiveEntry>,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewSourceSummary {
+    source_id: String,
+    path: String,
+    metadata: ArchiveMetadata,
+    entries: Vec<ArchiveEntry>,
+}
+
+struct ViewSourceState {
+    archive: Archive,
+    nested: NestedArchiveCache,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EntryPreview {
@@ -497,6 +561,22 @@ async fn compute_nested_diff(
     }
 }
 
+#[tauri::command]
+async fn open_view_source(
+    path: String,
+    state: State<'_, SharedState>,
+) -> Result<ViewSourceSummary, String> {
+    let archive = tauri::async_runtime::spawn_blocking(move || {
+        Archive::open(path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .insert_view_source(archive)
+}
+
 fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Option<Archive> {
     let mut state = state.lock().ok()?;
     let root = archive(&state, side)?.clone();
@@ -550,6 +630,56 @@ async fn read_entry(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_view_entry(
+    source_id: String,
+    entry_path: String,
+    state: State<'_, SharedState>,
+) -> Result<EntryPreview, String> {
+    let (archive, leaf, engine, sidecar) = {
+        let mut state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let engine = state.engine;
+        let sidecar = Arc::clone(&state.sidecar);
+        let source = state.view_source_archive_mut(&source_id)?;
+        let (archive, leaf) = resolve_view_entry(source, &entry_path)?;
+        (archive, leaf, engine, sidecar)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        read_entry_preview(&archive, engine, &sidecar, leaf)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn compute_view_nested_entries(
+    source_id: String,
+    nested_path: String,
+    state: State<'_, SharedState>,
+) -> Result<ArchiveDiff, String> {
+    let archive = {
+        let mut state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let source = state.view_source_archive_mut(&source_id)?;
+        source
+            .nested
+            .resolve_archive(&source.archive, &nested_path)
+            .map_err(|error| error.to_string())?
+    };
+    Ok(one_sided_diff(&archive, Side::Left))
+}
+
+#[tauri::command]
+fn close_view_source(source_id: String, state: State<'_, SharedState>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .close_view_source(&source_id)
 }
 
 fn read_entry_preview(
@@ -1079,6 +1209,20 @@ fn resolve_side_entry(
         .map_err(|error| error.to_string())
 }
 
+fn resolve_view_entry(
+    source: &mut ViewSourceState,
+    entry_path: &str,
+) -> Result<(Archive, String), String> {
+    if let Some((root, leaf)) = entry_path.rsplit_once("!/") {
+        let archive = source
+            .nested
+            .resolve_archive(&source.archive, root)
+            .map_err(|error| error.to_string())?;
+        return Ok((archive, leaf.to_owned()));
+    }
+    Ok((source.archive.clone(), entry_path.to_owned()))
+}
+
 fn summarize(archive: &Archive) -> ArchiveSummary {
     ArchiveSummary {
         path: archive.path().display().to_string(),
@@ -1385,7 +1529,11 @@ fn main() {
             open_archive,
             compute_diff,
             compute_nested_diff,
+            open_view_source,
             read_entry,
+            read_view_entry,
+            compute_view_nested_entries,
+            close_view_source,
             set_engine,
             disassemble,
             stage_copy,
@@ -1702,6 +1850,62 @@ mod tests {
         let state = AppState::default();
 
         assert_eq!(state.engine, DecompileEngine::Vineflower);
+    }
+
+    #[test]
+    fn view_sources_open_read_and_close_independently() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let first_path = dir.path().join("first.jar");
+        let second_path = dir.path().join("second.jar");
+        write_zip(&first_path, &[("a.txt", b"first")]);
+        write_zip(&second_path, &[("a.txt", b"second")]);
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(first_path.display().to_string())
+            .expect("open first view source");
+        let second = state
+            .open_view_source(second_path.display().to_string())
+            .expect("open second view source");
+
+        assert_ne!(first.source_id, second.source_id);
+        assert_eq!(state.view_sources.len(), 2);
+
+        let first_entry = state
+            .view_source_archive(&first.source_id)
+            .expect("first source")
+            .read_entry("a.txt")
+            .expect("read first");
+        let second_entry = state
+            .view_source_archive(&second.source_id)
+            .expect("second source")
+            .read_entry("a.txt")
+            .expect("read second");
+
+        assert_eq!(first_entry, b"first");
+        assert_eq!(second_entry, b"second");
+
+        state.close_view_source(&first.source_id).expect("close first");
+        assert!(state.view_source_archive(&first.source_id).is_err());
+        assert!(state.view_source_archive(&second.source_id).is_ok());
+    }
+
+    #[test]
+    fn view_source_ids_are_stable_for_canonical_paths() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let archive_path = dir.path().join("app.jar");
+        write_zip(&archive_path, &[("a.txt", b"content")]);
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("first open");
+        let second = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("second open");
+
+        assert_eq!(first.source_id, second.source_id);
+        assert_eq!(state.view_sources.len(), 1);
     }
 
     #[test]
@@ -2166,6 +2370,10 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        create_zip(path, entries);
     }
 
     fn class_with_utf8(value: &str) -> Vec<u8> {
