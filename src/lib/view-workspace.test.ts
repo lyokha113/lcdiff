@@ -120,6 +120,18 @@ describe("view workspace state", () => {
     expect(next).toEqual(state);
   });
 
+  it("ignores focus for a missing entry in an existing source", () => {
+    const state = {
+      sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],
+      activeSourceId: "s1",
+      activeEntryPath: "A.class",
+    };
+
+    const next = focusViewEntryTab(state, "s1", "Missing.class", 5);
+
+    expect(next).toEqual(state);
+  });
+
   it("focuses one entry tab for the active source", () => {
     const state = {
       sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],

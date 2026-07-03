@@ -63,17 +63,19 @@ export function focusViewEntryTab(
   entryPath: string,
   lastFocus: number,
 ): ViewWorkspaceState {
-  if (!state.sources.some((source) => source.sourceId === sourceId)) return state;
+  const source = state.sources.find((candidate) => candidate.sourceId === sourceId);
+  if (!source) return state;
+  if (!source.entryTabs.some((tab) => tab.entryPath === entryPath)) return state;
 
   return {
     ...state,
     activeSourceId: sourceId,
     activeEntryPath: entryPath,
-    sources: state.sources.map((source) => {
-      if (source.sourceId !== sourceId) return source;
+    sources: state.sources.map((candidate) => {
+      if (candidate.sourceId !== sourceId) return candidate;
       return {
-        ...source,
-        entryTabs: source.entryTabs.map((tab) =>
+        ...candidate,
+        entryTabs: candidate.entryTabs.map((tab) =>
           tab.entryPath === entryPath ? { ...tab, lastFocus } : tab,
         ),
       };
