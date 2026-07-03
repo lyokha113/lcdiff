@@ -67,6 +67,18 @@ describe("view workspace state", () => {
     expect(next.sources[1].entryTabs.map((entry) => entry.entryPath)).toEqual(["B.class"]);
   });
 
+  it("ignores upserts for a missing source", () => {
+    const state = {
+      sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],
+      activeSourceId: "s1",
+      activeEntryPath: "A.class",
+    };
+
+    const next = upsertViewEntryTab(state, "missing", tab("B.class", 2), 10);
+
+    expect(next).toEqual(state);
+  });
+
   it("evicts least recently focused tabs within one source only", () => {
     const state = {
       sources: [
@@ -82,6 +94,32 @@ describe("view workspace state", () => {
     expect(next.sources[1].entryTabs.map((entry) => entry.entryPath)).toEqual(["Other.class"]);
   });
 
+  it("trims repeatedly until the source is within cap", () => {
+    const state = {
+      sources: [
+        { ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1), tab("B.class", 2), tab("C.class", 3), tab("D.class", 4)] },
+      ],
+      activeSourceId: "s1",
+      activeEntryPath: "D.class",
+    };
+
+    const next = upsertViewEntryTab(state, "s1", tab("E.class", 5), 2);
+
+    expect(next.sources[0].entryTabs.map((entry) => entry.entryPath)).toEqual(["D.class", "E.class"]);
+  });
+
+  it("keeps focus state unchanged for a missing source", () => {
+    const state = {
+      sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],
+      activeSourceId: "s1",
+      activeEntryPath: "A.class",
+    };
+
+    const next = focusViewEntryTab(state, "missing", "B.class", 4);
+
+    expect(next).toEqual(state);
+  });
+
   it("focuses one entry tab for the active source", () => {
     const state = {
       sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],
@@ -93,6 +131,19 @@ describe("view workspace state", () => {
       activeSourceId: "s1",
       activeEntryPath: "A.class",
     });
+  });
+
+  it("drops all entry tabs when cap is zero", () => {
+    const state = {
+      sources: [{ ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] }],
+      activeSourceId: "s1",
+      activeEntryPath: "A.class",
+    };
+
+    const next = upsertViewEntryTab(state, "s1", tab("B.class", 2), 0);
+
+    expect(next.sources[0].entryTabs).toEqual([]);
+    expect(next.activeEntryPath).toBeUndefined();
   });
 
   it("closes a source and activates a neighbor", () => {

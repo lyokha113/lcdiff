@@ -1,12 +1,17 @@
 import type { ViewEntryTab, ViewSource, ViewWorkspaceState } from "./types";
 
 function evictLeastRecentlyFocused(tabs: ViewEntryTab[], cap: number): ViewEntryTab[] {
+  if (cap <= 0) return [];
   if (tabs.length <= cap) return tabs;
-  let lru = tabs[0];
-  for (const tab of tabs) {
-    if (tab.lastFocus < lru.lastFocus) lru = tab;
+  const nextTabs = tabs.slice();
+  while (nextTabs.length > cap) {
+    let lruIndex = 0;
+    for (let index = 1; index < nextTabs.length; index += 1) {
+      if (nextTabs[index].lastFocus < nextTabs[lruIndex].lastFocus) lruIndex = index;
+    }
+    nextTabs.splice(lruIndex, 1);
   }
-  return tabs.filter((tab) => tab.entryPath !== lru.entryPath);
+  return nextTabs;
 }
 
 export function openViewSource(state: ViewWorkspaceState, source: ViewSource): ViewWorkspaceState {
@@ -28,18 +33,27 @@ export function upsertViewEntryTab(
   tab: ViewEntryTab,
   cap: number,
 ): ViewWorkspaceState {
+  const sourceExists = state.sources.some((source) => source.sourceId === sourceId);
+  if (!sourceExists) return state;
+
+  let activeEntryPath: string | undefined = tab.entryPath;
+  const sources = state.sources.map((source) => {
+    if (source.sourceId !== sourceId) return source;
+    const idx = source.entryTabs.findIndex((candidate) => candidate.entryPath === tab.entryPath);
+    const tabs = source.entryTabs.slice();
+    if (idx === -1) tabs.push(tab);
+    else tabs[idx] = tab;
+    const entryTabs = evictLeastRecentlyFocused(tabs, cap);
+    if (!entryTabs.some((candidate) => candidate.entryPath === tab.entryPath)) {
+      activeEntryPath = undefined;
+    }
+    return { ...source, entryTabs };
+  });
   return {
     ...state,
     activeSourceId: sourceId,
-    activeEntryPath: tab.entryPath,
-    sources: state.sources.map((source) => {
-      if (source.sourceId !== sourceId) return source;
-      const idx = source.entryTabs.findIndex((candidate) => candidate.entryPath === tab.entryPath);
-      const tabs = source.entryTabs.slice();
-      if (idx === -1) tabs.push(tab);
-      else tabs[idx] = tab;
-      return { ...source, entryTabs: evictLeastRecentlyFocused(tabs, cap) };
-    }),
+    activeEntryPath,
+    sources,
   };
 }
 
@@ -49,6 +63,8 @@ export function focusViewEntryTab(
   entryPath: string,
   lastFocus: number,
 ): ViewWorkspaceState {
+  if (!state.sources.some((source) => source.sourceId === sourceId)) return state;
+
   return {
     ...state,
     activeSourceId: sourceId,
@@ -72,6 +88,7 @@ export function closeViewSource(state: ViewWorkspaceState, sourceId: string): Vi
   if (state.activeSourceId !== sourceId) return { ...state, sources };
   const next = sources[index] ?? sources[index - 1];
   return {
+    ...state,
     sources,
     activeSourceId: next?.sourceId,
     activeEntryPath: undefined,
