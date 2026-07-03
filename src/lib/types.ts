@@ -29,10 +29,11 @@ export interface ViewEntryTab {
 }
 
 export interface ViewSource {
-  sourceId: string;
+  id: string;
   path: string;
-  metadata: ArchiveSummary["metadata"];
-  entries: ArchiveSummary["entries"];
+  name: string;
+  kind: "archive" | "directory" | "file";
+  entryCount: number;
   nestedPairs: Record<string, ComparePair[]>;
   entryTabs: ViewEntryTab[];
 }

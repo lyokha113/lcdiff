@@ -15,14 +15,14 @@ function evictLeastRecentlyFocused(tabs: ViewEntryTab[], cap: number): ViewEntry
 }
 
 export function openViewSource(state: ViewWorkspaceState, source: ViewSource): ViewWorkspaceState {
-  const idx = state.sources.findIndex((candidate) => candidate.sourceId === source.sourceId);
+  const idx = state.sources.findIndex((candidate) => candidate.id === source.id);
   const sources = state.sources.slice();
   if (idx === -1) sources.push(source);
   else sources[idx] = { ...source, entryTabs: sources[idx].entryTabs };
   return {
     ...state,
     sources,
-    activeSourceId: source.sourceId,
+    activeSourceId: source.id,
     activeEntryPath: undefined,
   };
 }
@@ -33,12 +33,12 @@ export function upsertViewEntryTab(
   tab: ViewEntryTab,
   cap: number,
 ): ViewWorkspaceState {
-  const sourceExists = state.sources.some((source) => source.sourceId === sourceId);
+  const sourceExists = state.sources.some((source) => source.id === sourceId);
   if (!sourceExists) return state;
 
   let activeEntryPath: string | undefined = tab.entryPath;
   const sources = state.sources.map((source) => {
-    if (source.sourceId !== sourceId) return source;
+    if (source.id !== sourceId) return source;
     const idx = source.entryTabs.findIndex((candidate) => candidate.entryPath === tab.entryPath);
     const tabs = source.entryTabs.slice();
     if (idx === -1) tabs.push(tab);
@@ -63,7 +63,7 @@ export function focusViewEntryTab(
   entryPath: string,
   lastFocus: number,
 ): ViewWorkspaceState {
-  const source = state.sources.find((candidate) => candidate.sourceId === sourceId);
+  const source = state.sources.find((candidate) => candidate.id === sourceId);
   if (!source) return state;
   if (!source.entryTabs.some((tab) => tab.entryPath === entryPath)) return state;
 
@@ -72,7 +72,7 @@ export function focusViewEntryTab(
     activeSourceId: sourceId,
     activeEntryPath: entryPath,
     sources: state.sources.map((candidate) => {
-      if (candidate.sourceId !== sourceId) return candidate;
+      if (candidate.id !== sourceId) return candidate;
       return {
         ...candidate,
         entryTabs: candidate.entryTabs.map((tab) =>
@@ -84,15 +84,15 @@ export function focusViewEntryTab(
 }
 
 export function closeViewSource(state: ViewWorkspaceState, sourceId: string): ViewWorkspaceState {
-  const index = state.sources.findIndex((source) => source.sourceId === sourceId);
+  const index = state.sources.findIndex((source) => source.id === sourceId);
   if (index === -1) return state;
-  const sources = state.sources.filter((source) => source.sourceId !== sourceId);
+  const sources = state.sources.filter((source) => source.id !== sourceId);
   if (state.activeSourceId !== sourceId) return { ...state, sources };
   const next = sources[index] ?? sources[index - 1];
   return {
     ...state,
     sources,
-    activeSourceId: next?.sourceId,
+    activeSourceId: next?.id,
     activeEntryPath: undefined,
   };
 }

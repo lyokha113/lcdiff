@@ -9,10 +9,11 @@ import {
 
 function source(id: string, path: string): ViewSource {
   return {
-    sourceId: id,
+    id,
     path,
-    metadata: { sourceKind: "archive", signed: false, multiRelease: false, zip64: false },
-    entries: [],
+    name: path.split("/").at(-1) ?? path,
+    kind: "archive",
+    entryCount: 0,
     nestedPairs: {},
     entryTabs: [],
   };
@@ -36,7 +37,7 @@ describe("view workspace state", () => {
     const first = openViewSource({ sources: [], activeSourceId: undefined }, source("s1", "/a.jar"));
     const second = openViewSource(first, source("s2", "/b.jar"));
 
-    expect(second.sources.map((item) => item.sourceId)).toEqual(["s1", "s2"]);
+    expect(second.sources.map((item) => item.id)).toEqual(["s1", "s2"]);
     expect(second.activeSourceId).toBe("s2");
   });
 
@@ -167,7 +168,7 @@ describe("view workspace state", () => {
 
     const next = closeViewSource(state, "s2");
 
-    expect(next.sources.map((item) => item.sourceId)).toEqual(["s1", "s3"]);
+    expect(next.sources.map((item) => item.id)).toEqual(["s1", "s3"]);
     expect(next.activeSourceId).toBe("s3");
     expect(next.activeEntryPath).toBeUndefined();
   });
