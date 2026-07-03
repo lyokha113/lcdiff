@@ -61,7 +61,19 @@ export function loadFreeTextHistory(): FreeTextHistoryEntry[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isEntry).slice(0, FREE_TEXT_HISTORY_LIMIT);
+    const validEntries = parsed.filter(isEntry);
+    validEntries.sort((left, right) => right.createdAt - left.createdAt);
+
+    const seenIds = new Set<string>();
+    const normalized: FreeTextHistoryEntry[] = [];
+    for (const entry of validEntries) {
+      if (seenIds.has(entry.id)) continue;
+      seenIds.add(entry.id);
+      normalized.push(entry);
+      if (normalized.length === FREE_TEXT_HISTORY_LIMIT) break;
+    }
+
+    return normalized;
   } catch {
     return [];
   }

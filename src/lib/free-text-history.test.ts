@@ -72,6 +72,67 @@ describe("free text history", () => {
     ]);
   });
 
+  it("dedupes duplicate ids from stored history", () => {
+    localStorage.setItem(
+      FREE_TEXT_HISTORY_STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "dup",
+          left: "older",
+          right: "value",
+          createdAt: 1000,
+          title: "Older",
+          summary: "Older",
+        },
+        {
+          id: "dup",
+          left: "newer",
+          right: "value",
+          createdAt: 2000,
+          title: "Newer",
+          summary: "Newer",
+        },
+      ]),
+    );
+
+    expect(loadFreeTextHistory()).toEqual([
+      {
+        id: "dup",
+        left: "newer",
+        right: "value",
+        createdAt: 2000,
+        title: "Newer",
+        summary: "Newer",
+      },
+    ]);
+  });
+
+  it("normalizes out-of-order stored history to newest first", () => {
+    localStorage.setItem(
+      FREE_TEXT_HISTORY_STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "older",
+          left: "old",
+          right: "value",
+          createdAt: 1000,
+          title: "Older",
+          summary: "Older",
+        },
+        {
+          id: "newer",
+          left: "new",
+          right: "value",
+          createdAt: 2000,
+          title: "Newer",
+          summary: "Newer",
+        },
+      ]),
+    );
+
+    expect(loadFreeTextHistory().map((entry) => entry.id)).toEqual(["newer", "older"]);
+  });
+
   it("clears only free text history storage", () => {
     localStorage.setItem("lcdiff.history", "keep");
     recordFreeTextResult({ left: "a", right: "b", createdAt: 4000 });
