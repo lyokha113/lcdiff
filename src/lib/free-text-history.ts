@@ -55,6 +55,7 @@ function isEntry(value: unknown): value is FreeTextHistoryEntry {
     typeof entry.left === "string" &&
     typeof entry.right === "string" &&
     typeof entry.createdAt === "number" &&
+    Number.isFinite(entry.createdAt) &&
     typeof entry.title === "string" &&
     typeof entry.summary === "string"
   );

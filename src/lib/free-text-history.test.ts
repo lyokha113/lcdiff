@@ -72,6 +72,24 @@ describe("free text history", () => {
     ]);
   });
 
+  it("rejects non-finite timestamps from overflowed JSON numbers", () => {
+    localStorage.setItem(
+      FREE_TEXT_HISTORY_STORAGE_KEY,
+      '[{"id":"bad","left":"x","right":"y","createdAt":1e999,"title":"Bad","summary":"Bad"},{"id":"ok","left":"","right":"r","createdAt":2,"title":"Empty vs 1 char","summary":"Left empty, right 1 char"}]',
+    );
+
+    expect(loadFreeTextHistory()).toEqual([
+      {
+        id: "ok",
+        left: "",
+        right: "r",
+        createdAt: 2,
+        title: "Empty vs 1 char",
+        summary: "Left empty, right 1 char",
+      },
+    ]);
+  });
+
   it("dedupes duplicate ids from stored history", () => {
     localStorage.setItem(
       FREE_TEXT_HISTORY_STORAGE_KEY,
