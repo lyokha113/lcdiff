@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearFreeTextHistory,
   FREE_TEXT_HISTORY_LIMIT,
@@ -164,6 +164,22 @@ describe("free text history", () => {
       "free-text:5000:2:2:1",
       "free-text:5000:2:2",
     ]);
+  });
+
+  it("does not throw when localStorage write fails", () => {
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+
+    expect(() =>
+      recordFreeTextResult({ left: "large left", right: "large right", createdAt: 6000 }),
+    ).not.toThrow();
+    expect(loadFreeTextHistory()).toEqual([]);
+    expect(setItemSpy).toHaveBeenCalled();
+
+    setItemSpy.mockRestore();
   });
 
   it("clears only free text history storage", () => {

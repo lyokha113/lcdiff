@@ -62,7 +62,12 @@ function isEntry(value: unknown): value is FreeTextHistoryEntry {
 }
 
 function saveFreeTextHistory(entries: FreeTextHistoryEntry[]): void {
-  localStorage.setItem(FREE_TEXT_HISTORY_STORAGE_KEY, JSON.stringify(entries));
+  try {
+    localStorage.setItem(FREE_TEXT_HISTORY_STORAGE_KEY, JSON.stringify(entries));
+  } catch {
+    // Best-effort persistence: quota and platform storage failures must not
+    // block the confirm flow.
+  }
 }
 
 export function loadFreeTextHistory(): FreeTextHistoryEntry[] {
