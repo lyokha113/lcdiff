@@ -28,12 +28,15 @@ export interface ViewEntryTab {
   lastFocus: number;
 }
 
-export interface ViewSource {
+export interface ViewSourceSummary {
   id: string;
   path: string;
   name: string;
   kind: "archive" | "directory" | "file";
   entryCount: number;
+}
+
+export interface ViewSource extends ViewSourceSummary {
   nestedPairs: Record<string, ComparePair[]>;
   entryTabs: ViewEntryTab[];
 }

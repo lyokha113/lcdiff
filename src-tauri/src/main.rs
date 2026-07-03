@@ -10,8 +10,8 @@ use std::{
 
 use lcdiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions,
-    CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan,
-    NestedArchiveCache, compare, edit, search_constant_pool,
+    CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, Error as CoreError,
+    MergePlan, NestedArchiveCache, compare, edit, search_constant_pool,
     validate_path as validate_archive_path,
 };
 use serde::{Deserialize, Serialize};
@@ -630,13 +630,18 @@ async fn compute_nested_diff(
     };
     let left = resolve_optional_side_nested_archive(left, nested_path.clone()).await?;
     let right = resolve_optional_side_nested_archive(right, nested_path).await?;
+    tauri::async_runtime::spawn_blocking(move || compute_nested_diff_from_archives(left, right))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn compute_nested_diff_from_archives(
+    left: Option<Archive>,
+    right: Option<Archive>,
+) -> Result<ArchiveDiff, String> {
     match (left, right) {
         (None, None) => Err("nested archive is not present on either side".to_owned()),
-        (Some(left), Some(right)) => {
-            tauri::async_runtime::spawn_blocking(move || Ok(compare(&left, &right)))
-                .await
-                .map_err(|error| error.to_string())?
-        }
+        (Some(left), Some(right)) => Ok(compare(&left, &right)),
         (Some(only), None) => Ok(one_sided_diff(&only, Side::Left)),
         (None, Some(only)) => Ok(one_sided_diff(&only, Side::Right)),
     }
@@ -1301,13 +1306,16 @@ fn resolve_side_entry(
 fn resolve_side_nested_archive(
     source: &SideSnapshot,
     nested_path: &str,
-) -> Result<Archive, String> {
+) -> Result<Archive, CoreError> {
     source
         .nested
         .lock()
-        .map_err(|_| "nested compare source cache lock is poisoned".to_owned())?
+        .map_err(|_| {
+            CoreError::Io(std::io::Error::other(
+                "nested compare source cache lock is poisoned",
+            ))
+        })?
         .resolve_archive(&source.archive, nested_path)
-        .map_err(|error| error.to_string())
 }
 
 async fn resolve_optional_side_nested_archive(
@@ -1317,12 +1325,16 @@ async fn resolve_optional_side_nested_archive(
     let Some(source) = source else {
         return Ok(None);
     };
-    let archive = tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         resolve_side_nested_archive(&source, &nested_path)
     })
     .await
-    .map_err(|error| error.to_string())??;
-    Ok(Some(archive))
+    .map_err(|error| error.to_string())?;
+    match result {
+        Ok(archive) => Ok(Some(archive)),
+        Err(CoreError::EntryNotFound(_)) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn resolve_view_entry(
@@ -1709,9 +1721,10 @@ mod tests {
     use super::{
         AppActionPayload, AppState, MENU_ACTIONS, SearchHit, SearchHitKind, SearchOptions, Side,
         SidecarClient, ViewSourceSummary, class_source_path, close_window_placement,
-        deep_search_hit, is_prefetch_sibling, language_for_path, one_sided_diff,
-        platform_hints_from, read_entry_preview, resolve_view_entry, resolve_view_nested_archive,
-        search_archive, validate_path,
+        compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling, language_for_path,
+        one_sided_diff, platform_hints_from, read_entry_preview,
+        resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
+        search_archive, side_snapshot, validate_path,
     };
     #[cfg(not(target_os = "macos"))]
     use super::{build_app_menu, install_app_menu};
@@ -2192,6 +2205,44 @@ mod tests {
         assert_eq!(first.id, second.id);
         assert_eq!(state.view_sources.len(), 1);
         assert_eq!(preview.content, "nested-content");
+    }
+
+    #[test]
+    fn compute_nested_diff_returns_one_sided_when_nested_archive_missing_on_other_side() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let left_path = create_nested_view_archive(dir.path());
+        let right_path = dir.path().join("right.jar");
+        create_zip(&right_path, &[("plain.txt", b"right-only")]);
+
+        let mut state = AppState::default();
+        state
+            .load_archive(left_path.to_str().unwrap(), Side::Left)
+            .expect("load left");
+        state
+            .load_archive(right_path.to_str().unwrap(), Side::Right)
+            .expect("load right");
+
+        let left = side_snapshot(&state, Side::Left).expect("left snapshot");
+        let right = side_snapshot(&state, Side::Right).expect("right snapshot");
+
+        let left_archive = tauri::async_runtime::block_on(resolve_optional_side_nested_archive(
+            Some(left),
+            "lib/inner.jar".to_owned(),
+        ))
+        .expect("left nested archive");
+        let right_archive = tauri::async_runtime::block_on(resolve_optional_side_nested_archive(
+            Some(right),
+            "lib/inner.jar".to_owned(),
+        ))
+        .expect("right nested archive should be optional");
+
+        let diff = compute_nested_diff_from_archives(left_archive, right_archive)
+            .expect("one-sided nested diff");
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "docs/file.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
     }
 
     #[test]

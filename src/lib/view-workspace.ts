@@ -1,4 +1,12 @@
-import type { ViewEntryTab, ViewSource, ViewWorkspaceState } from "./types";
+import type { ViewEntryTab, ViewSource, ViewSourceSummary, ViewWorkspaceState } from "./types";
+
+export function createViewSource(summary: ViewSourceSummary): ViewSource {
+  return {
+    ...summary,
+    nestedPairs: {},
+    entryTabs: [],
+  };
+}
 
 function evictLeastRecentlyFocused(tabs: ViewEntryTab[], cap: number): ViewEntryTab[] {
   if (cap <= 0) return [];

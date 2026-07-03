@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { EntryPreview, ViewEntryTab, ViewSource } from "./types";
+import type { EntryPreview, ViewEntryTab, ViewSourceSummary } from "./types";
 import {
+  createViewSource,
   closeViewSource,
   focusViewEntryTab,
   openViewSource,
   upsertViewEntryTab,
 } from "./view-workspace";
 
-function source(id: string, path: string): ViewSource {
-  return {
+function source(id: string, path: string) {
+  const summary: ViewSourceSummary = {
     id,
     path,
     name: path.split("/").at(-1) ?? path,
     kind: "archive",
     entryCount: 0,
-    nestedPairs: {},
-    entryTabs: [],
   };
+  return createViewSource(summary);
 }
 
 function preview(path: string): EntryPreview {
