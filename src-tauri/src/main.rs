@@ -208,20 +208,42 @@ impl AppState {
         std::mem::take(&mut self.pending_open_paths)
     }
 
-    fn view_source_id(path: &std::path::Path) -> String {
+    fn canonical_view_source_path(path: &std::path::Path) -> Result<PathBuf, String> {
+        std::fs::canonicalize(path).map_err(|error| {
+            format!(
+                "failed to canonicalize view source path {}: {error}",
+                path.display()
+            )
+        })
+    }
+
+    fn view_source_id(path: &std::path::Path) -> Result<String, String> {
+        Ok(Self::format_view_source_id(
+            &Self::canonical_view_source_path(path)?,
+        ))
+    }
+
+    fn format_view_source_id(path: &std::path::Path) -> String {
         format!("view:{}", path.display())
     }
 
+    fn open_view_archive(path: String) -> Result<Archive, String> {
+        let validated = validate_archive_path(&path).map_err(|error| error.to_string())?;
+        let canonical = Self::canonical_view_source_path(&validated)?;
+        Archive::open_validated(canonical).map_err(|error| error.to_string())
+    }
+
     fn open_view_source(&mut self, path: String) -> Result<ViewSourceSummary, String> {
-        let archive = Archive::open(path).map_err(|error| error.to_string())?;
+        let archive = Self::open_view_archive(path)?;
         self.insert_view_source(archive)
     }
 
     fn insert_view_source(&mut self, archive: Archive) -> Result<ViewSourceSummary, String> {
-        let source_id = Self::view_source_id(archive.path());
+        let canonical_path = Self::canonical_view_source_path(archive.path())?;
+        let source_id = Self::view_source_id(&canonical_path)?;
         let summary = ViewSourceSummary {
             source_id: source_id.clone(),
-            path: archive.path().display().to_string(),
+            path: canonical_path.display().to_string(),
             metadata: archive.metadata().clone(),
             entries: archive.entries().cloned().collect(),
         };
@@ -566,9 +588,7 @@ async fn open_view_source(
     path: String,
     state: State<'_, SharedState>,
 ) -> Result<ViewSourceSummary, String> {
-    let archive = tauri::async_runtime::spawn_blocking(move || {
-        Archive::open(path).map_err(|error| error.to_string())
-    })
+    let archive = tauri::async_runtime::spawn_blocking(move || AppState::open_view_archive(path))
     .await
     .map_err(|error| error.to_string())??;
     state
@@ -1570,7 +1590,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs::File, io::Write, path::Path};
+    use std::{collections::HashSet, fs::File, io::Write, path::{Path, PathBuf}};
 
     use tempfile::tempdir;
     use zip::{ZipWriter, write::SimpleFileOptions};
@@ -1895,15 +1915,20 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let archive_path = dir.path().join("app.jar");
         write_zip(&archive_path, &[("a.txt", b"content")]);
+        let alias_path = archive_alias_path(&archive_path);
 
         let mut state = AppState::new(None);
         let first = state
             .open_view_source(archive_path.display().to_string())
             .expect("first open");
         let second = state
-            .open_view_source(archive_path.display().to_string())
+            .open_view_source(alias_path.display().to_string())
             .expect("second open");
 
+        assert_ne!(
+            archive_path.display().to_string(),
+            alias_path.display().to_string()
+        );
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(state.view_sources.len(), 1);
     }
@@ -2374,6 +2399,23 @@ mod tests {
 
     fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
         create_zip(path, entries);
+    }
+
+    fn archive_alias_path(path: &Path) -> PathBuf {
+        let alias_path = path.with_file_name("app-alias.jar");
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(path, &alias_path).is_ok() {
+                return alias_path;
+            }
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(path, &alias_path).is_ok() {
+                return alias_path;
+            }
+        }
+        path.parent().unwrap().join(".").join(path.file_name().unwrap())
     }
 
     fn class_with_utf8(value: &str) -> Vec<u8> {
