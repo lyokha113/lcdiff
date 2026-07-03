@@ -217,12 +217,6 @@ impl AppState {
         })
     }
 
-    fn view_source_id(path: &std::path::Path) -> Result<String, String> {
-        Ok(Self::format_view_source_id(
-            &Self::canonical_view_source_path(path)?,
-        ))
-    }
-
     fn format_view_source_id(path: &std::path::Path) -> String {
         format!("view:{}", path.display())
     }
@@ -233,17 +227,17 @@ impl AppState {
         Archive::open_validated(canonical).map_err(|error| error.to_string())
     }
 
+    #[cfg(test)]
     fn open_view_source(&mut self, path: String) -> Result<ViewSourceSummary, String> {
         let archive = Self::open_view_archive(path)?;
         self.insert_view_source(archive)
     }
 
     fn insert_view_source(&mut self, archive: Archive) -> Result<ViewSourceSummary, String> {
-        let canonical_path = Self::canonical_view_source_path(archive.path())?;
-        let source_id = Self::view_source_id(&canonical_path)?;
+        let source_id = Self::format_view_source_id(archive.path());
         let summary = ViewSourceSummary {
             source_id: source_id.clone(),
-            path: canonical_path.display().to_string(),
+            path: archive.path().display().to_string(),
             metadata: archive.metadata().clone(),
             entries: archive.entries().cloned().collect(),
         };
@@ -251,22 +245,30 @@ impl AppState {
             source_id,
             ViewSourceState {
                 archive,
-                nested: NestedArchiveCache::new().map_err(|error| error.to_string())?,
+                nested: Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|error| error.to_string())?,
+                )),
             },
         );
         Ok(summary)
     }
 
+    fn view_source_snapshot(&self, source_id: &str) -> Result<ViewSourceSnapshot, String> {
+        let source = self
+            .view_sources
+            .get(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))?;
+        Ok(ViewSourceSnapshot {
+            archive: source.archive.clone(),
+            nested: Arc::clone(&source.nested),
+        })
+    }
+
+    #[cfg(test)]
     fn view_source_archive(&self, source_id: &str) -> Result<&Archive, String> {
         self.view_sources
             .get(source_id)
             .map(|source| &source.archive)
-            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
-    }
-
-    fn view_source_archive_mut(&mut self, source_id: &str) -> Result<&mut ViewSourceState, String> {
-        self.view_sources
-            .get_mut(source_id)
             .ok_or_else(|| format!("view source is not loaded: {source_id}"))
     }
 
@@ -448,7 +450,13 @@ struct ViewSourceSummary {
 
 struct ViewSourceState {
     archive: Archive,
-    nested: NestedArchiveCache,
+    nested: Arc<Mutex<NestedArchiveCache>>,
+}
+
+#[derive(Clone)]
+struct ViewSourceSnapshot {
+    archive: Archive,
+    nested: Arc<Mutex<NestedArchiveCache>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -658,17 +666,17 @@ async fn read_view_entry(
     entry_path: String,
     state: State<'_, SharedState>,
 ) -> Result<EntryPreview, String> {
-    let (archive, leaf, engine, sidecar) = {
-        let mut state = state
+    let (source, engine, sidecar) = {
+        let state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
         let engine = state.engine;
         let sidecar = Arc::clone(&state.sidecar);
-        let source = state.view_source_archive_mut(&source_id)?;
-        let (archive, leaf) = resolve_view_entry(source, &entry_path)?;
-        (archive, leaf, engine, sidecar)
+        let source = state.view_source_snapshot(&source_id)?;
+        (source, engine, sidecar)
     };
     tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_view_entry(&source, &entry_path)?;
         read_entry_preview(&archive, engine, &sidecar, leaf)
     })
     .await
@@ -681,17 +689,18 @@ async fn compute_view_nested_entries(
     nested_path: String,
     state: State<'_, SharedState>,
 ) -> Result<ArchiveDiff, String> {
-    let archive = {
-        let mut state = state
+    let source = {
+        let state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
-        let source = state.view_source_archive_mut(&source_id)?;
-        source
-            .nested
-            .resolve_archive(&source.archive, &nested_path)
-            .map_err(|error| error.to_string())?
+        state.view_source_snapshot(&source_id)?
     };
-    Ok(one_sided_diff(&archive, Side::Left))
+    tauri::async_runtime::spawn_blocking(move || {
+        let archive = resolve_view_nested_archive(&source, &nested_path)?;
+        Ok(one_sided_diff(&archive, Side::Left))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1229,18 +1238,24 @@ fn resolve_side_entry(
         .map_err(|error| error.to_string())
 }
 
-fn resolve_view_entry(
-    source: &mut ViewSourceState,
-    entry_path: &str,
-) -> Result<(Archive, String), String> {
+fn resolve_view_entry(source: &ViewSourceSnapshot, entry_path: &str) -> Result<(Archive, String), String> {
     if let Some((root, leaf)) = entry_path.rsplit_once("!/") {
-        let archive = source
-            .nested
-            .resolve_archive(&source.archive, root)
-            .map_err(|error| error.to_string())?;
+        let archive = resolve_view_nested_archive(source, root)?;
         return Ok((archive, leaf.to_owned()));
     }
     Ok((source.archive.clone(), entry_path.to_owned()))
+}
+
+fn resolve_view_nested_archive(
+    source: &ViewSourceSnapshot,
+    nested_path: &str,
+) -> Result<Archive, String> {
+    source
+        .nested
+        .lock()
+        .map_err(|_| "nested view source cache lock is poisoned".to_owned())?
+        .resolve_archive(&source.archive, nested_path)
+        .map_err(|error| error.to_string())
 }
 
 fn summarize(archive: &Archive) -> ArchiveSummary {
@@ -1598,8 +1613,9 @@ mod tests {
     use super::{
         AppActionPayload, AppState, MENU_ACTIONS, SearchHit, SearchHitKind, SearchOptions, Side,
         SidecarClient, class_source_path, close_window_placement, deep_search_hit,
-        is_prefetch_sibling, language_for_path, platform_hints_from, read_entry_preview,
-        search_archive, validate_path,
+        is_prefetch_sibling, language_for_path, one_sided_diff, platform_hints_from,
+        read_entry_preview, resolve_view_entry, resolve_view_nested_archive, search_archive,
+        validate_path,
     };
     #[cfg(not(target_os = "macos"))]
     use super::{build_app_menu, install_app_menu};
@@ -1931,6 +1947,98 @@ mod tests {
         );
         assert_eq!(first.source_id, second.source_id);
         assert_eq!(state.view_sources.len(), 1);
+    }
+
+    #[test]
+    fn view_source_nested_entry_reads_from_inner_archive() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("open nested view source");
+        let snapshot = state
+            .view_source_snapshot(&source.source_id)
+            .expect("nested source snapshot");
+
+        let (archive, leaf) =
+            resolve_view_entry(&snapshot, "lib/inner.jar!/docs/file.txt").expect("resolve view entry");
+        let preview = read_entry_preview(
+            &archive,
+            DecompileEngine::Cfr,
+            &std::sync::Mutex::new(SidecarClient::default()),
+            leaf,
+        )
+        .expect("read nested preview");
+
+        assert_eq!(preview.path, "docs/file.txt");
+        assert_eq!(preview.content, "nested-content");
+    }
+
+    #[test]
+    fn view_source_nested_diff_lists_inner_entries() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("open nested view source");
+        let snapshot = state
+            .view_source_snapshot(&source.source_id)
+            .expect("nested source snapshot");
+
+        let archive =
+            resolve_view_nested_archive(&snapshot, "lib/inner.jar").expect("resolve nested archive");
+        let diff = one_sided_diff(&archive, Side::Left);
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "docs/file.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
+    }
+
+    #[test]
+    fn view_source_close_and_reopen_rebuilds_nested_cache() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("first open");
+        let first_snapshot = state
+            .view_source_snapshot(&first.source_id)
+            .expect("first snapshot");
+        let (_, first_leaf) = resolve_view_entry(&first_snapshot, "lib/inner.jar!/docs/file.txt")
+            .expect("resolve first nested entry");
+        assert_eq!(first_leaf, "docs/file.txt");
+
+        state
+            .close_view_source(&first.source_id)
+            .expect("close first source");
+        assert!(state.view_sources.is_empty());
+
+        let second = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("reopen source");
+        let second_snapshot = state
+            .view_source_snapshot(&second.source_id)
+            .expect("second snapshot");
+        let (archive, leaf) =
+            resolve_view_entry(&second_snapshot, "lib/inner.jar!/docs/file.txt").expect("resolve second nested entry");
+        let preview = read_entry_preview(
+            &archive,
+            DecompileEngine::Cfr,
+            &std::sync::Mutex::new(SidecarClient::default()),
+            leaf,
+        )
+        .expect("read nested preview after reopen");
+
+        assert_eq!(first.source_id, second.source_id);
+        assert_eq!(state.view_sources.len(), 1);
+        assert_eq!(preview.content, "nested-content");
     }
 
     #[test]
@@ -2416,6 +2524,16 @@ mod tests {
             }
         }
         path.parent().unwrap().join(".").join(path.file_name().unwrap())
+    }
+
+    fn create_nested_view_archive(dir: &Path) -> PathBuf {
+        let inner_path = dir.join("inner.jar");
+        create_zip(&inner_path, &[("docs/file.txt", b"nested-content")]);
+        let inner_bytes = std::fs::read(&inner_path).expect("read inner jar");
+
+        let outer_path = dir.join("outer.jar");
+        create_zip(&outer_path, &[("lib/inner.jar", &inner_bytes)]);
+        outer_path
     }
 
     fn class_with_utf8(value: &str) -> Vec<u8> {
