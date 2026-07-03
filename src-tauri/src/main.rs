@@ -1352,6 +1352,9 @@ fn resolve_view_nested_archive(
     source: &ViewSourceSnapshot,
     nested_path: &str,
 ) -> Result<Archive, String> {
+    if nested_path.is_empty() {
+        return Ok(source.archive.clone());
+    }
     source
         .nested
         .lock()
@@ -2161,6 +2164,29 @@ mod tests {
 
         assert_eq!(diff.pairs.len(), 1);
         assert_eq!(diff.pairs[0].path, "docs/file.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
+    }
+
+    #[test]
+    fn view_source_root_diff_lists_root_entries() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let archive_path = dir.path().join("root.jar");
+        write_zip(&archive_path, &[("root.txt", b"root-content")]);
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("open view source");
+        let snapshot = state
+            .view_source_snapshot(&source.id)
+            .expect("view source snapshot");
+
+        let archive = resolve_view_nested_archive(&snapshot, "").expect("resolve root archive");
+        let diff = one_sided_diff(&archive, Side::Left);
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "root.txt");
         assert!(diff.pairs[0].left.is_some());
         assert!(diff.pairs[0].right.is_none());
     }

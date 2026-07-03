@@ -151,13 +151,17 @@ if (!app.includes("dropSideForPosition(mode, event.payload.position.x, window.in
   failures.push("src/App.tsx: drag/drop handler must use dropSideForPosition");
 }
 
-const dragDropEffectBody = app.match(/useEffect\(\(\) => {\n    if \(!isTauriRuntime\(\)\) return;([\s\S]*?)\n  }, \[mode, openPath\]\);/)?.[1] ?? "";
+const dragDropEffectBody = app.match(/useEffect\(\(\) => {\n    if \(!isTauriRuntime\(\)\) return;([\s\S]*?)\n  }, \[mode, openPath, openViewPath\]\);/)?.[1] ?? "";
 if (!dragDropEffectBody.includes("getCurrentWindow()") || !dragDropEffectBody.includes(".onDragDropEvent(")) {
   failures.push("src/App.tsx: drag/drop effect must be guarded for non-Tauri browser preview");
 }
 
-if (!app.includes("}, [mode, openPath]);")) {
-  failures.push("src/App.tsx: drag/drop effect must refresh when mode changes");
+if (!app.includes("}, [mode, openPath, openViewPath]);")) {
+  failures.push("src/App.tsx: drag/drop effect must refresh when mode or View open handler changes");
+}
+
+if (!app.includes('if (mode === "single") void openViewPath(event.payload.paths[0]);')) {
+  failures.push("src/App.tsx: Single/View drag-drop must open through open_view_source state");
 }
 
 if (

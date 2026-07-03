@@ -652,6 +652,67 @@ main.app-shell {
 .source-rail__bridge svg { width: 0.9rem; }
 .source-picker { width: min(27rem, calc(100vw - 2rem)); }
 
+/* ---------- View source tabs ---------- */
+.view-source-tabs {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-inline: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
+  border-top: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
+  background: color-mix(in oklab, var(--ink-1) 72%, transparent);
+}
+.view-source-tabs__scroll {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.view-source-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 8rem;
+  max-width: 18rem;
+  min-height: 2.15rem;
+  padding: 0.28rem 0.35rem 0.28rem 0.65rem;
+  border-right: 1px solid var(--line-soft);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.view-source-tab:hover { background: color-mix(in oklab, var(--ink-2) 58%, transparent); }
+.view-source-tab.active {
+  color: var(--text-0);
+  background: color-mix(in oklab, var(--ink-2) 84%, transparent);
+  box-shadow: inset 0 -2px var(--brass);
+}
+.view-source-tab__icon,
+.view-source-tab__close {
+  flex: 0 0 auto;
+}
+.view-source-tab__icon svg { width: 0.86rem; height: 0.86rem; color: var(--brass); }
+.view-source-tab__label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.7rem;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view-source-tab__count {
+  flex: 0 0 auto;
+  padding: 0.04rem 0.32rem;
+  border-radius: 0.32rem;
+  background: color-mix(in oklab, var(--brass) 12%, transparent);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+}
+.view-source-tab__close {
+  margin-left: auto;
+  opacity: 0.72;
+}
+.view-source-tab__close:hover { opacity: 1; }
+
 /* ---------- persistent status ---------- */
 .status-bar {
   display: flex;

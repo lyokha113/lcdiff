@@ -19,7 +19,11 @@ import {
   type Side,
   type StagedEntry,
   type TreeFilter,
+  type ViewEntryTab,
   type ViewMode,
+  type ViewSource,
+  type ViewSourceSummary,
+  type ViewWorkspaceState,
 } from "@/lib/types";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -62,6 +66,7 @@ import {
 import { searchContextForActiveTab, searchResultKey } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
+import { ViewSourceTabs } from "@/components/ViewSourceTabs";
 import { FileTree } from "@/components/FileTree";
 import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -81,6 +86,13 @@ import {
   type AppActionHandlers,
 } from "@/lib/actions";
 import { classifyFocusTarget, currentPlatform, matchShortcut } from "@/lib/shortcuts";
+import {
+  closeViewSource,
+  createViewSource,
+  focusViewEntryTab,
+  openViewSource,
+  upsertViewEntryTab,
+} from "@/lib/view-workspace";
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -90,6 +102,7 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
 const FREE_TEXT_PATH = "Free text";
+const VIEW_ROOT_KEY = "";
 
 const SIDE_PREFIX_RE = /^(left|right):/;
 const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
@@ -129,6 +142,30 @@ function freeTextPreview(side: Side, content: string): EntryPreview {
     kind: "text",
     language: "plaintext",
     content,
+  };
+}
+
+function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
+  return {
+    path: tab.entryPath,
+    status: "onlyLeft",
+    left: { path: tab.entryPath, kind: tab.preview.kind },
+  };
+}
+
+function latestViewEntryTab(source: ViewSource | undefined) {
+  return source?.entryTabs.reduce<ViewEntryTab | undefined>(
+    (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
+    undefined,
+  );
+}
+
+function summaryAsArchive(source: ViewSource | undefined): ArchiveSummary | undefined {
+  if (!source) return undefined;
+  return {
+    path: source.path,
+    metadata: { sourceKind: source.kind, signed: false, multiRelease: false, zip64: false },
+    entries: [],
   };
 }
 
@@ -227,6 +264,7 @@ export function App() {
   const [archives, setArchives] = useState<Partial<Record<Side, ArchiveSummary>>>({});
   const [pairs, setPairs] = useState<ComparePair[]>([]);
   const [nestedPairs, setNestedPairs] = useState<Record<string, ComparePair[]>>({});
+  const [viewWorkspace, setViewWorkspace] = useState<ViewWorkspaceState>({ sources: [] });
   const [selected, setSelected] = useState<ComparePair>();
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
@@ -447,27 +485,31 @@ export function App() {
     shortcutDialogOpenRef.current = resolved;
     setShortcutDialogOpen(resolved);
   }, []);
+  const activeViewSource = useMemo(
+    () => viewWorkspace.sources.find((source) => source.id === viewWorkspace.activeSourceId),
+    [viewWorkspace.activeSourceId, viewWorkspace.sources],
+  );
+  const activeViewEntryTab = useMemo(
+    () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
+    [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
+  );
+  const activeViewRootPairs = useMemo(
+    () => activeViewSource?.nestedPairs[VIEW_ROOT_KEY] ?? [],
+    [activeViewSource?.nestedPairs],
+  );
   const displayedPairs = useMemo<ComparePair[]>(
-    () =>
-      mode === "compare"
-        ? pairs
-        : (archives.left?.entries ?? []).map((entry) => ({
-            path: entry.path,
-            status: "onlyLeft" as const,
-            left: entry,
-            right: undefined,
-          })),
-    [archives.left?.entries, mode, pairs],
+    () => (mode === "compare" ? pairs : activeViewRootPairs),
+    [activeViewRootPairs, mode, pairs],
   );
   const visiblePairs = useMemo(
     () =>
       displayedPairs.filter(
         (pair) =>
           !isDirectoryPair(pair) &&
-          pairPassesTreeFilter(pair, treeFilter) &&
+          (mode !== "compare" || pairPassesTreeFilter(pair, treeFilter)) &&
           (!searchPaths || searchPaths.has(pair.path)),
       ),
-    [displayedPairs, searchPaths, treeFilter],
+    [displayedPairs, mode, searchPaths, treeFilter],
   );
 
   const refreshDiff = useCallback(async () => {
@@ -481,14 +523,65 @@ export function App() {
     }
   }, []);
 
+  const loadViewPairs = useCallback(async (sourceId: string, nestedPath = VIEW_ROOT_KEY) => {
+    const diff = await invoke<ArchiveDiff>("compute_view_nested_entries", { sourceId, nestedPath });
+    setViewWorkspace((current) => ({
+      ...current,
+      sources: current.sources.map((source) =>
+        source.id === sourceId
+          ? { ...source, nestedPairs: { ...source.nestedPairs, [nestedPath]: diff.pairs } }
+          : source,
+      ),
+    }));
+    return diff.pairs;
+  }, []);
+
   const expandArchive = useCallback(async (fullPath: string) => {
     try {
+      if (mode === "single") {
+        if (!activeViewSource) return;
+        await loadViewPairs(activeViewSource.id, fullPath);
+        return;
+      }
       const diff = await invoke<ArchiveDiff>("compute_nested_diff", { nestedPath: fullPath });
       setNestedPairs((prev) => ({ ...prev, [fullPath]: diff.pairs }));
     } catch (error) {
       setMessage(String(error));
     }
-  }, []);
+  }, [activeViewSource, loadViewPairs, mode]);
+
+  const openViewPath = useCallback(async (path: string) => {
+    try {
+      const validatedPath = await invoke<string>("validate_path", { raw: path });
+      const summary = await invoke<ViewSourceSummary>("open_view_source", { path: validatedPath });
+      previewRequestId.current += 1;
+      searchStreamId.current += 1;
+      setSearching(false);
+      setPathErrors((current) => ({ ...current, left: undefined }));
+      setPaths((current) => ({ ...current, left: summary.path }));
+      setArchives({});
+      setPairs([]);
+      setNestedPairs({});
+      setSelected(undefined);
+      setActiveTab("files");
+      setOpenTabs([]);
+      setPreview({});
+      setEditBuffer("");
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
+      setViewMode("source");
+      setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
+      await loadViewPairs(summary.id);
+      setMessage(`Opened ${summary.path}`);
+      return undefined;
+    } catch (error) {
+      const message = String(error);
+      setPathErrors((current) => ({ ...current, left: message }));
+      setMessage(message);
+      return message;
+    }
+  }, [loadViewPairs]);
 
   const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
     try {
@@ -563,8 +656,8 @@ export function App() {
     if (!path) return;
     setMode("single");
     setView("workspace");
-    void openPath("left", path, true);
-  }, [openPath]);
+    void openViewPath(path);
+  }, [openViewPath]);
 
   useEffect(() => {
     openTabsCountRef.current = openTabs.length;
@@ -574,14 +667,16 @@ export function App() {
     if (view !== "workspace") return;
     if (mode === "text") return;
     if (archives.left?.metadata.sourceKind === "text" || archives.right?.metadata.sourceKind === "text") return;
+    if (mode === "single" && activeViewSource) {
+      setHistory(recordSession("single", [activeViewSource.path], Date.now()));
+      return;
+    }
     const left = archives.left?.path;
     const right = archives.right?.path;
-    if (mode === "single" && left) {
-      setHistory(recordSession("single", [left], Date.now()));
-    } else if (mode === "compare" && left && right) {
+    if (mode === "compare" && left && right) {
       setHistory(recordSession("compare", [left, right], Date.now()));
     }
-  }, [view, mode, archives.left?.path, archives.right?.path]);
+  }, [view, mode, activeViewSource, archives.left?.path, archives.right?.path]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -590,13 +685,14 @@ export function App() {
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
         const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
-        void openPath(side, event.payload.paths[0]);
+        if (mode === "single") void openViewPath(event.payload.paths[0]);
+        else void openPath(side, event.payload.paths[0]);
       })
       .then((stop) => {
         unlisten = stop;
       });
     return () => unlisten?.();
-  }, [mode, openPath]);
+  }, [mode, openPath, openViewPath]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -762,7 +858,10 @@ export function App() {
           { name: "JAR or ZIP archive", extensions: ["jar", "zip", "war", "ear"] },
         ],
       });
-      if (path) await openPath(side, path);
+      if (path) {
+        if (mode === "single") await openViewPath(path);
+        else await openPath(side, path);
+      }
     } catch (error) {
       setMessage(`Open file picker failed: ${String(error)}`);
     }
@@ -774,13 +873,20 @@ export function App() {
         multiple: false,
         directory: true,
       });
-      if (path) await openPath(side, path);
+      if (path) {
+        if (mode === "single") await openViewPath(path);
+        else await openPath(side, path);
+      }
     } catch (error) {
       setMessage(`Open directory picker failed: ${String(error)}`);
     }
   }
 
   function refreshSources() {
+    if (mode === "single") {
+      if (activeViewSource) void openViewPath(activeViewSource.path);
+      return;
+    }
     const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
     for (const side of sides) {
       if (archives[side]?.metadata.sourceKind === "text") continue;
@@ -789,7 +895,106 @@ export function App() {
     }
   }
 
+  function focusViewTab(path: string) {
+    if (!activeViewSource) return;
+    const tab = activeViewSource.entryTabs.find((candidate) => candidate.entryPath === path);
+    if (!tab) return;
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setSelected(viewPairFromPreview(tab));
+    setPreview({ left: tab.preview });
+    setEditBuffer(tab.preview.content);
+    setViewMode(tab.viewMode);
+    setActiveTab(path);
+    setViewWorkspace((current) => focusViewEntryTab(current, activeViewSource.id, path, stamp));
+  }
+
+  function selectViewSource(sourceId: string) {
+    const source = viewWorkspace.sources.find((candidate) => candidate.id === sourceId);
+    const tab = latestViewEntryTab(source);
+    setViewWorkspace((current) => ({
+      ...current,
+      activeSourceId: sourceId,
+      activeEntryPath: tab?.entryPath,
+    }));
+    setActiveTab(tab?.entryPath ?? "files");
+    if (tab) {
+      setSelected(viewPairFromPreview(tab));
+      setPreview({ left: tab.preview });
+      setEditBuffer(tab.preview.content);
+      setViewMode(tab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+    setSelectedSearchResult(undefined);
+  }
+
+  function closeViewEntryTab(path: string) {
+    if (!activeViewSource) return;
+    const remainingTabs = activeViewSource.entryTabs.filter((tab) => tab.entryPath !== path);
+    const nextTab =
+      activeTab === path
+        ? remainingTabs.reduce<ViewEntryTab | undefined>(
+            (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
+            undefined,
+          )
+        : activeViewEntryTab;
+    setViewWorkspace((current) => ({
+      ...current,
+      activeEntryPath: nextTab?.entryPath,
+      sources: current.sources.map((source) =>
+        source.id === activeViewSource.id ? { ...source, entryTabs: remainingTabs } : source,
+      ),
+    }));
+    if (activeTab !== path) return;
+    setActiveTab(nextTab?.entryPath ?? "files");
+    if (nextTab) {
+      setSelected(viewPairFromPreview(nextTab));
+      setPreview({ left: nextTab.preview });
+      setEditBuffer(nextTab.preview.content);
+      setViewMode(nextTab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+  }
+
+  function closeViewSourceTab(sourceId: string) {
+    void invoke("close_view_source", { sourceId }).catch(() => undefined);
+    const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
+    const closedActive = viewWorkspace.activeSourceId === sourceId;
+    const sourceIndex = viewWorkspace.sources.findIndex((source) => source.id === sourceId);
+    const nextSource = closedActive ? remainingSources[sourceIndex] ?? remainingSources[sourceIndex - 1] : activeViewSource;
+    const nextTab = closedActive ? latestViewEntryTab(nextSource) : activeViewEntryTab;
+    setViewWorkspace((current) => ({
+      ...closeViewSource(current, sourceId),
+      activeEntryPath: nextTab?.entryPath,
+    }));
+    if (!closedActive) return;
+    setActiveTab(nextTab?.entryPath ?? "files");
+    if (nextTab) {
+      setSelected(viewPairFromPreview(nextTab));
+      setPreview({ left: nextTab.preview });
+      setEditBuffer(nextTab.preview.content);
+      setViewMode(nextTab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+  }
+
   function focusTab(path: string) {
+    if (mode === "single") {
+      focusViewTab(path);
+      return;
+    }
     const tab = openTabs.find((t) => t.path === path);
     if (!tab) return;
     focusCounter.current += 1;
@@ -802,7 +1007,43 @@ export function App() {
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
   }
 
+  async function inspectViewEntry(pair: ComparePair, force = false) {
+    const source = activeViewSource;
+    if (!source) return;
+    const existing = source.entryTabs.find((tab) => tab.entryPath === pair.path);
+    if (existing && !force) {
+      focusViewTab(pair.path);
+      return;
+    }
+    const requestId = previewRequestId.current + 1;
+    previewRequestId.current = requestId;
+    setSelected(pair);
+    setActiveTab(pair.path);
+    setViewMode("source");
+    const nextPreview = await invoke<EntryPreview>("read_view_entry", {
+      sourceId: source.id,
+      entryPath: pair.path,
+    });
+    if (previewRequestId.current !== requestId) return;
+    setPreview({ left: nextPreview });
+    setEditBuffer(nextPreview.content);
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setViewWorkspace((current) =>
+      upsertViewEntryTab(
+        current,
+        source.id,
+        { entryPath: pair.path, preview: nextPreview, viewMode: "source", lastFocus: stamp },
+        MAX_DIFF_TABS,
+      ),
+    );
+  }
+
   async function inspect(pair: ComparePair, force = false) {
+    if (mode === "single") {
+      await inspectViewEntry(pair, force);
+      return;
+    }
     const existing = openTabs.find((t) => t.path === pair.path);
     if (existing && !force) {
       focusTab(pair.path);
@@ -851,6 +1092,10 @@ export function App() {
   }
 
   function closeTab(path: string) {
+    if (mode === "single") {
+      closeViewEntryTab(path);
+      return;
+    }
     if (activeTab === path) {
       const next = pickNeighbor(openTabs, path);
       if (next === "files") {
@@ -863,6 +1108,19 @@ export function App() {
   }
 
   function focusRelativeTab(direction: 1 | -1) {
+    if (mode === "single") {
+      const tabs = activeViewSource?.entryTabs ?? [];
+      if (tabs.length === 0) return;
+      if (activeTab === "files") {
+        const target = direction > 0 ? tabs[0] : tabs.at(-1);
+        if (target) focusViewTab(target.entryPath);
+        return;
+      }
+      const index = tabs.findIndex((tab) => tab.entryPath === activeTab);
+      const nextIndex = index < 0 ? 0 : (index + direction + tabs.length) % tabs.length;
+      focusViewTab(tabs[nextIndex].entryPath);
+      return;
+    }
     if (openTabs.length === 0) return;
     if (activeTab === "files") {
       const target = direction > 0 ? openTabs[0] : openTabs.at(-1);
@@ -920,7 +1178,7 @@ export function App() {
     setMode(entry.mode);
     setView("workspace");
     if (entry.mode === "single") {
-      void openPath("left", entry.paths[0], true);
+      void openViewPath(entry.paths[0]);
     } else {
       void openPath("left", entry.paths[0], true).then(() =>
         openPath("right", entry.paths[1], true),
@@ -1404,19 +1662,23 @@ export function App() {
   const isDiffEditable =
     isTextMerge || (isTextMode && sideEditableText(preview.left) && sideEditableText(preview.right));
 
-  const isEditableEntry =
-    mode === "single" &&
-    viewMode === "source" &&
-    !!preview.left &&
-    preview.left.kind !== "class" &&
-    (preview.left.kind === "text" ||
-      EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
+  const isEditableEntry = false;
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
-  const leftLabel = isTextMode ? "Left text" : baseName(archives.left?.path ?? paths.left) ?? "Left";
+  const leftLabel = isTextMode
+    ? "Left text"
+    : mode === "single"
+      ? activeViewSource?.name ?? "Source"
+      : baseName(archives.left?.path ?? paths.left) ?? "Left";
   const rightLabel = isTextMode ? "Right text" : baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
   const hunkMerge = isTextMerge;
+  const sourceChipArchives = mode === "single"
+    ? { left: summaryAsArchive(activeViewSource) }
+    : archives;
+  const loadedSourceCount = mode === "single"
+    ? viewWorkspace.sources.length
+    : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
 
   const actionContext = useMemo<AppActionContext>(() => ({
     mode,
@@ -1427,11 +1689,11 @@ export function App() {
     selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
     stagedTarget,
     stagedCount: Object.keys(stagedEntries).length,
-    loadedSourceCount: Number(Boolean(archives.left)) + Number(Boolean(archives.right)),
+    loadedSourceCount,
     hunkMerge: activeTab !== "files" && hunkMerge,
     focusKind: classifyFocusTarget(document.activeElement),
     shortcutDialogOpen,
-  }), [activeTab, archives.left, archives.right, hunkMerge, mode, openTabs, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
+  }), [activeTab, hunkMerge, loadedSourceCount, mode, openTabs, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
 
   const actionHandlers = useMemo<AppActionHandlers>(() => ({
     openLeftFile: () => void browse("left"),
@@ -1607,8 +1869,10 @@ export function App() {
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
         canRefresh={Boolean(
-          (archives.left && archives.left.metadata.sourceKind !== "text") ||
-          (archives.right && archives.right.metadata.sourceKind !== "text"),
+          mode === "single"
+            ? activeViewSource
+            : (archives.left && archives.left.metadata.sourceKind !== "text") ||
+              (archives.right && archives.right.metadata.sourceKind !== "text"),
         )}
         onChangeMode={changeMode}
         onSave={(side) => void save(side)}
@@ -1621,11 +1885,11 @@ export function App() {
       {mode !== "text" && (
         <SourceChips
           mode={mode}
-          archives={archives}
+          archives={sourceChipArchives}
           paths={paths}
           pathErrors={pathErrors}
           onPathChange={(side, value) => setPaths((current) => ({ ...current, [side]: value }))}
-          onOpenPath={(side, path) => void openPath(side, path)}
+          onOpenPath={(side, path) => void (mode === "single" ? openViewPath(path) : openPath(side, path))}
           onBrowse={(side) => void browse(side)}
           onBrowseFolder={(side) => void browseFolder(side)}
         />
@@ -1656,16 +1920,31 @@ export function App() {
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
+          {mode === "single" && (
+            <ViewSourceTabs
+              sources={viewWorkspace.sources}
+              activeSourceId={viewWorkspace.activeSourceId}
+              onSelect={selectViewSource}
+              onClose={closeViewSourceTab}
+            />
+          )}
           {mode !== "text" && (
             <WorkspaceTabs
               fileCount={visiblePairs.length}
               activeId={activeTab}
               mode={mode}
-              tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+              tabs={
+                mode === "single"
+                  ? (activeViewSource?.entryTabs ?? []).map((tab) => ({
+                      path: tab.entryPath,
+                      status: "onlyLeft" as const,
+                    }))
+                  : openTabs.map((t) => ({ path: t.path, status: t.pair.status }))
+              }
               treeFilter={treeFilter}
               viewMode={viewMode}
               canShowSource={!!selected}
-              canShowBytecode={pairHasClass(selected)}
+              canShowBytecode={mode === "compare" && pairHasClass(selected)}
               onSelectFiles={() => setActiveTab("files")}
               onSelectTab={(path) => focusTab(path)}
               onCloseTab={(path) => closeTab(path)}
@@ -1695,7 +1974,7 @@ export function App() {
                     stagedEntries={stagedEntries}
                     mode={mode}
                     treeFilter={treeFilter}
-                    nestedPairs={nestedPairs}
+                    nestedPairs={mode === "single" ? activeViewSource?.nestedPairs ?? {} : nestedPairs}
                     leftLabel={leftLabel}
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}

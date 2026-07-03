@@ -25,11 +25,27 @@ let deepSearchError: Error | undefined;
 let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
+const viewRootEntries: Record<string, string[]> = {
+  "view:/tmp/alpha.jar": ["alpha.json"],
+  "view:/tmp/beta.jar": ["beta.json"],
+  "view:/tmp/from-finder.jar": ["finder.json"],
+};
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
     metadata: { sourceKind: summarySourceKind, signed: false, multiRelease: false, zip64: false },
     entries: [FILE_ENTRY],
+  };
+}
+
+function viewSummary(path: string) {
+  const name = path.split("/").pop() ?? path;
+  return {
+    id: `view:${path}`,
+    path,
+    name,
+    kind: "archive" as const,
+    entryCount: viewRootEntries[`view:${path}`]?.length ?? 1,
   };
 }
 
@@ -68,10 +84,34 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
       return (args?.raw as string) ?? "/tmp/config.json";
     case "open_archive":
       return fileSummary(args?.side as "left" | "right");
+    case "open_view_source":
+      return viewSummary(args?.path as string);
+    case "list_view_sources":
+      return [];
     case "compute_diff":
       return onePairDiff;
+    case "compute_view_nested_entries": {
+      const sourceId = args?.sourceId as string;
+      const paths = viewRootEntries[sourceId] ?? ["config.json"];
+      return {
+        pairs: paths.map((path) => ({
+          path,
+          status: "onlyLeft" as const,
+          left: { path, kind: "text" as const },
+        })),
+      };
+    }
     case "read_entry":
       return entryPreview(args?.side as "left" | "right");
+    case "read_view_entry": {
+      const entryPath = args?.entryPath as string;
+      return {
+        path: entryPath,
+        kind: "text" as const,
+        language: "json",
+        content: `${args?.sourceId}:${entryPath}`,
+      };
+    }
     case "search":
       return [
         { entryPath: "config.json", kind: "path" as const },
@@ -86,6 +126,7 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
     case "stage_write":
     case "prefetch_siblings":
     case "clear_staged":
+    case "close_view_source":
       return undefined;
     case "commit_merge":
       return {
@@ -301,11 +342,21 @@ async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByText("Compare / Merge"));
 }
 
+async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
+  let browseButton = screen.queryByRole("button", { name: /Browse file/i });
+  if (!browseButton) {
+    await user.click(screen.getByLabelText("Change left source"));
+    browseButton = await screen.findByRole("button", { name: /Browse file/i });
+  }
+  await user.click(browseButton);
+}
+
 describe("App file-merge wiring", () => {
   beforeEach(() => {
     invoke.mockClear();
     invoke.mockImplementation(defaultInvoke);
-    chooseFile.mockClear();
+    chooseFile.mockReset();
+    chooseFile.mockImplementation(async () => "/tmp/config.json");
     setOriginal.mockClear();
     setModified.mockClear();
     revealOriginal.mockClear();
@@ -390,7 +441,7 @@ describe("App file-merge wiring", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });
 
-  it("opens OS-launched files in View mode on the left side", async () => {
+  it("opens OS-launched files through the View workspace", async () => {
     (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
 
@@ -398,11 +449,99 @@ describe("App file-merge wiring", () => {
     act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } }));
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/from-finder.jar", side: "left" }),
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/from-finder.jar" }),
     );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
+  });
+
+  it("opens multiple View sources and switches the active source tree", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/alpha.jar" }),
+    );
+    expect(await screen.findByText("alpha.json")).toBeInTheDocument();
+
+    await browseViewSource(user);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/beta.jar" }),
+    );
+
+    expect(screen.getByRole("navigation", { name: "View sources" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByText("alpha.json")).not.toBeInTheDocument();
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("alpha.json")).toBeInTheDocument();
+    expect(screen.queryByText("beta.json")).not.toBeInTheDocument();
+  });
+
+  it("opens View entry tabs per source using read_view_entry", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "alpha.json",
+      }),
+    );
+    expect(screen.getByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+
+    await browseViewSource(user);
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByText("beta.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/beta.jar",
+        entryPath: "beta.json",
+      }),
+    );
+    expect(screen.getByRole("tab", { name: /beta\.json/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    expect(screen.getByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /beta\.json/ })).not.toBeInTheDocument();
+  });
+
+  it("hides compare-only controls in multi-source View mode", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+
+    expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy file to right")).not.toBeInTheDocument();
   });
 
   it("shows the Source/Bytecode switch only on the active Diff tab", async () => {
