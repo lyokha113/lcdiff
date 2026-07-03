@@ -36,6 +36,16 @@ function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
   };
 }
 
+function nextFreeTextId(baseId: string, existingIds: Set<string>): string {
+  if (!existingIds.has(baseId)) return baseId;
+
+  let suffix = 1;
+  while (existingIds.has(`${baseId}:${suffix}`)) {
+    suffix += 1;
+  }
+  return `${baseId}:${suffix}`;
+}
+
 function isEntry(value: unknown): value is FreeTextHistoryEntry {
   if (!value || typeof value !== "object") return false;
 
@@ -81,10 +91,10 @@ export function loadFreeTextHistory(): FreeTextHistoryEntry[] {
 
 export function recordFreeTextResult(input: FreeTextResultInput): FreeTextHistoryEntry[] {
   const entry = buildEntry(input);
-  const next = [entry, ...loadFreeTextHistory().filter((candidate) => candidate.id !== entry.id)].slice(
-    0,
-    FREE_TEXT_HISTORY_LIMIT,
-  );
+  const existing = loadFreeTextHistory();
+  const existingIds = new Set(existing.map((candidate) => candidate.id));
+  const id = nextFreeTextId(entry.id, existingIds);
+  const next = [{ ...entry, id }, ...existing].slice(0, FREE_TEXT_HISTORY_LIMIT);
   saveFreeTextHistory(next);
   return next;
 }

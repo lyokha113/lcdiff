@@ -133,6 +133,21 @@ describe("free text history", () => {
     expect(loadFreeTextHistory().map((entry) => entry.id)).toEqual(["newer", "older"]);
   });
 
+  it("assigns a suffixed id when the base id already exists", () => {
+    const first = recordFreeTextResult({ left: "ab", right: "cd", createdAt: 5000 });
+    const second = recordFreeTextResult({ left: "ef", right: "gh", createdAt: 5000 });
+
+    expect(first[0].id).toBe("free-text:5000:2:2");
+    expect(second.map((entry) => entry.id)).toEqual([
+      "free-text:5000:2:2:1",
+      "free-text:5000:2:2",
+    ]);
+    expect(loadFreeTextHistory().map((entry) => entry.id)).toEqual([
+      "free-text:5000:2:2:1",
+      "free-text:5000:2:2",
+    ]);
+  });
+
   it("clears only free text history storage", () => {
     localStorage.setItem("lcdiff.history", "keep");
     recordFreeTextResult({ left: "a", right: "b", createdAt: 4000 });
