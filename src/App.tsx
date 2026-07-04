@@ -655,6 +655,10 @@ export function App() {
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
+    if (modeRef.current === "text") {
+      setMessage("File opens are not available in Free text mode.");
+      return;
+    }
     modeRef.current = "single";
     setMode("single");
     setView("workspace");

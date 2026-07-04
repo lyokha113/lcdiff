@@ -562,6 +562,25 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
   });
 
+  it("ignores OS-launched files while Free text is active", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    invoke.mockClear();
+    act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } }));
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+  });
+
   it("opens multiple View sources and switches the active source tree", async () => {
     const user = userEvent.setup();
     chooseFile
