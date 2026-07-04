@@ -52,7 +52,9 @@ describe("ViewSourceTabs", () => {
 
   it("closes a source without selecting it", async () => {
     const props = setup();
-    await userEvent.click(screen.getByRole("button", { name: "Close /work/libs/beta.jar" }));
+    const closeButton = screen.getByRole("button", { name: "Close /work/libs/beta.jar" });
+    expect(closeButton.closest('[role="tab"]')).toBeNull();
+    await userEvent.click(closeButton);
     expect(props.onClose).toHaveBeenCalledWith("s2");
     expect(props.onSelect).not.toHaveBeenCalled();
   });

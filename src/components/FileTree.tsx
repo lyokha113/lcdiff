@@ -69,6 +69,7 @@ export function FileTree(props: FileTreeProps) {
     expandAllVersion = 0,
     collapseAllVersion = 0,
   } = props;
+  const effectiveTreeFilter = mode === "compare" ? treeFilter : "all";
   const tree = useMemo(() => buildTree(visiblePairs), [visiblePairs]);
   const pathsKey = useMemo(() => visiblePairs.map((p) => p.path).join("|"), [visiblePairs]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -81,9 +82,9 @@ export function FileTree(props: FileTreeProps) {
   useEffect(() => {
     if (expandAllVersion !== lastExpandAllVersion.current) {
       lastExpandAllVersion.current = expandAllVersion;
-      setExpanded(collectExpandablePaths(tree, nestedPairs, treeFilter));
+      setExpanded(collectExpandablePaths(tree, nestedPairs, effectiveTreeFilter));
     }
-  }, [expandAllVersion, nestedPairs, tree, treeFilter]);
+  }, [effectiveTreeFilter, expandAllVersion, nestedPairs, tree]);
   useEffect(() => {
     if (collapseAllVersion !== lastCollapseAllVersion.current) {
       lastCollapseAllVersion.current = collapseAllVersion;
@@ -122,7 +123,16 @@ export function FileTree(props: FileTreeProps) {
         </div>
       )}
       {tree.map((node) => (
-        <FileTreeNode {...props} key={node.path} node={node} depth={0} basePath="" expanded={expanded} onToggle={toggle} />
+        <FileTreeNode
+          {...props}
+          key={node.path}
+          node={node}
+          depth={0}
+          basePath=""
+          expanded={expanded}
+          onToggle={toggle}
+          treeFilter={effectiveTreeFilter}
+        />
       ))}
     </div>
   );

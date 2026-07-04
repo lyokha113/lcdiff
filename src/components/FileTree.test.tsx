@@ -178,4 +178,34 @@ describe("FileTree", () => {
     expect(screen.getAllByText("Changed.class").length).toBe(2);
     expect(screen.queryByText("Same.class")).not.toBeInTheDocument();
   });
+
+  it("ignores the compare tree filter for nested View children", () => {
+    const archivePairs: ComparePair[] = [
+      { path: "lib/inner.jar", status: "onlyLeft", left: { path: "lib/inner.jar", kind: "archive" } },
+    ];
+    const nestedPairs = {
+      "lib/inner.jar": [
+        { path: "Changed.class", status: "different" as const, left: { path: "Changed.class", kind: "class" as const } },
+        { path: "Same.class", status: "identical" as const, left: { path: "Same.class", kind: "class" as const } },
+      ],
+    };
+    render(
+      <FileTree
+        visiblePairs={archivePairs}
+        stagedEntries={{}}
+        mode="single"
+        treeFilter="diff"
+        nestedPairs={nestedPairs}
+        onInspect={() => {}}
+        onSelect={() => {}}
+        onCopy={() => {}}
+        onUnstage={() => {}}
+        onExpandArchive={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText("lib").closest("button")!);
+    fireEvent.click(screen.getByText("inner.jar").closest("button")!);
+    expect(screen.getByText("Changed.class")).toBeInTheDocument();
+    expect(screen.getByText("Same.class")).toBeInTheDocument();
+  });
 });

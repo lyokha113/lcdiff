@@ -322,6 +322,9 @@ export function App() {
   const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
   const shortcutDialogOpenRef = useRef(shortcutDialogOpen);
   const viewRef = useRef(view);
+  const modeRef = useRef(mode);
+  const activeViewSourceIdRef = useRef<string | undefined>(undefined);
+  const viewRequestGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
@@ -386,6 +389,9 @@ export function App() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-color-scheme: dark)");
     if (!query) return;
@@ -493,6 +499,9 @@ export function App() {
     () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
     [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
   );
+  useEffect(() => {
+    activeViewSourceIdRef.current = viewWorkspace.activeSourceId;
+  }, [viewWorkspace.activeSourceId]);
   const activeViewRootPairs = useMemo(
     () => activeViewSource?.nestedPairs[VIEW_ROOT_KEY] ?? [],
     [activeViewSource?.nestedPairs],
@@ -512,6 +521,24 @@ export function App() {
     [displayedPairs, mode, searchPaths, treeFilter],
   );
 
+  function isCurrentViewRequest(generation: number, sourceId?: string) {
+    return (
+      viewRequestGenerationRef.current === generation &&
+      modeRef.current === "single" &&
+      (!sourceId || activeViewSourceIdRef.current === sourceId)
+    );
+  }
+
+  function clearViewSearchState(cancelBackendSearch = false) {
+    searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
+    setSearching(false);
+    setSearchPaths(undefined);
+    setSearchResults([]);
+    setSelectedSearchResult(undefined);
+    if (cancelBackendSearch) void invoke("cancel_deep_search").catch(() => undefined);
+  }
+
   const refreshDiff = useCallback(async () => {
     try {
       const diff = await invoke<ArchiveDiff>("compute_diff");
@@ -523,8 +550,9 @@ export function App() {
     }
   }, []);
 
-  const loadViewPairs = useCallback(async (sourceId: string, nestedPath = VIEW_ROOT_KEY) => {
+  const loadViewPairs = useCallback(async (sourceId: string, nestedPath = VIEW_ROOT_KEY, generation?: number) => {
     const diff = await invoke<ArchiveDiff>("compute_view_nested_entries", { sourceId, nestedPath });
+    if (generation !== undefined && !isCurrentViewRequest(generation, sourceId)) return diff.pairs;
     setViewWorkspace((current) => ({
       ...current,
       sources: current.sources.map((source) =>
@@ -551,12 +579,15 @@ export function App() {
   }, [activeViewSource, loadViewPairs, mode]);
 
   const openViewPath = useCallback(async (path: string) => {
+    const generation = viewRequestGenerationRef.current + 1;
+    viewRequestGenerationRef.current = generation;
     try {
       const validatedPath = await invoke<string>("validate_path", { raw: path });
+      if (!isCurrentViewRequest(generation)) return undefined;
       const summary = await invoke<ViewSourceSummary>("open_view_source", { path: validatedPath });
+      if (!isCurrentViewRequest(generation)) return undefined;
       previewRequestId.current += 1;
-      searchStreamId.current += 1;
-      setSearching(false);
+      clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
       setPaths((current) => ({ ...current, left: summary.path }));
       setArchives({});
@@ -567,15 +598,15 @@ export function App() {
       setOpenTabs([]);
       setPreview({});
       setEditBuffer("");
-      setSearchPaths(undefined);
-      setSearchResults([]);
-      setSelectedSearchResult(undefined);
       setViewMode("source");
+      activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
-      await loadViewPairs(summary.id);
+      await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
+      if (!isCurrentViewRequest(generation, summary.id)) return undefined;
       setMessage(`Opened ${summary.path}`);
       return undefined;
     } catch (error) {
+      if (!isCurrentViewRequest(generation)) return undefined;
       const message = String(error);
       setPathErrors((current) => ({ ...current, left: message }));
       setMessage(message);
@@ -620,6 +651,8 @@ export function App() {
       setMessage("Save or clear unsaved changes before switching to text compare.");
       return;
     }
+    modeRef.current = "text";
+    viewRequestGenerationRef.current += 1;
     previewRequestId.current += 1;
     searchStreamId.current += 1;
     setSearching(false);
@@ -654,6 +687,7 @@ export function App() {
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
+    modeRef.current = "single";
     setMode("single");
     setView("workspace");
     void openViewPath(path);
@@ -910,6 +944,9 @@ export function App() {
   }
 
   function selectViewSource(sourceId: string) {
+    viewRequestGenerationRef.current += 1;
+    activeViewSourceIdRef.current = sourceId;
+    clearViewSearchState(cancelableSearchActiveRef.current);
     const source = viewWorkspace.sources.find((candidate) => candidate.id === sourceId);
     const tab = latestViewEntryTab(source);
     setViewWorkspace((current) => ({
@@ -965,11 +1002,14 @@ export function App() {
   }
 
   function closeViewSourceTab(sourceId: string) {
+    viewRequestGenerationRef.current += 1;
     void invoke("close_view_source", { sourceId }).catch(() => undefined);
     const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
     const closedActive = viewWorkspace.activeSourceId === sourceId;
     const sourceIndex = viewWorkspace.sources.findIndex((source) => source.id === sourceId);
     const nextSource = closedActive ? remainingSources[sourceIndex] ?? remainingSources[sourceIndex - 1] : activeViewSource;
+    activeViewSourceIdRef.current = nextSource?.id;
+    if (closedActive) clearViewSearchState(cancelableSearchActiveRef.current);
     const nextTab = closedActive ? latestViewEntryTab(nextSource) : activeViewEntryTab;
     setViewWorkspace((current) => ({
       ...closeViewSource(current, sourceId),
@@ -1015,7 +1055,9 @@ export function App() {
       focusViewTab(pair.path);
       return;
     }
+    const sourceId = source.id;
     const requestId = previewRequestId.current + 1;
+    const generation = viewRequestGenerationRef.current;
     previewRequestId.current = requestId;
     setSelected(pair);
     setActiveTab(pair.path);
@@ -1024,19 +1066,20 @@ export function App() {
       sourceId: source.id,
       entryPath: pair.path,
     });
-    if (previewRequestId.current !== requestId) return;
+    if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
     setPreview({ left: nextPreview });
     setEditBuffer(nextPreview.content);
     focusCounter.current += 1;
     const stamp = focusCounter.current;
-    setViewWorkspace((current) =>
-      upsertViewEntryTab(
+    setViewWorkspace((current) => {
+      if (current.activeSourceId !== sourceId) return current;
+      return upsertViewEntryTab(
         current,
-        source.id,
+        sourceId,
         { entryPath: pair.path, preview: nextPreview, viewMode: "source", lastFocus: stamp },
         MAX_DIFF_TABS,
-      ),
-    );
+      );
+    });
   }
 
   async function inspect(pair: ComparePair, force = false) {
@@ -1148,29 +1191,33 @@ export function App() {
     if (mode === "single") {
       const source = activeViewSource;
       if (!source) return;
+      const sourceId = source.id;
+      const generation = viewRequestGenerationRef.current;
       try {
         const nextPreview: EntryPreview = {
           path: pair.path,
           kind: "class",
           language: "plaintext",
           content: await invoke<string>("disassemble_view_entry", {
-            sourceId: source.id,
+            sourceId,
             entryPath: pair.path,
           }),
         };
-        if (previewRequestId.current !== requestId) return;
+        if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
         setPreview({ left: nextPreview });
         setViewMode("bytecode");
         focusCounter.current += 1;
-        setViewWorkspace((current) =>
-          upsertViewEntryTab(
+        setViewWorkspace((current) => {
+          if (current.activeSourceId !== sourceId) return current;
+          return upsertViewEntryTab(
             current,
-            source.id,
+            sourceId,
             { entryPath: pair.path, preview: nextPreview, viewMode: "bytecode", lastFocus: focusCounter.current },
             MAX_DIFF_TABS,
-          ),
-        );
+          );
+        });
       } catch (error) {
+        if (!isCurrentViewRequest(generation, sourceId)) return;
         setMessage(String(error));
       }
       return;
@@ -1200,11 +1247,15 @@ export function App() {
       openTextMode();
       return;
     }
+    modeRef.current = next;
+    if (next !== "single") viewRequestGenerationRef.current += 1;
     setMode(next);
     setView("workspace");
   }
 
   function openEntry(entry: HistoryEntry) {
+    modeRef.current = entry.mode;
+    viewRequestGenerationRef.current += 1;
     setMode(entry.mode);
     setView("workspace");
     if (entry.mode === "single") {
@@ -1230,6 +1281,9 @@ export function App() {
       setMessage(`Save or clear unsaved changes before switching to ${next === "single" ? "View" : "Compare"} mode.`);
       return;
     }
+    modeRef.current = next;
+    viewRequestGenerationRef.current += 1;
+    if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
       diffEditorRef.current?.setModel(null);
       diffEditorRef.current = undefined;
@@ -1566,16 +1620,18 @@ export function App() {
       };
 
       if (mode === "single") {
-        if (!activeViewSource) {
+        const sourceId = activeViewSource?.id;
+        const generation = viewRequestGenerationRef.current;
+        if (!sourceId) {
           setMessage("Open a source before searching View mode.");
           return;
         }
         for (const hit of await invoke<BackendSearchHit[]>("search_view_source", {
-          sourceId: activeViewSource.id,
+          sourceId,
           query,
           options,
         })) {
-          if (searchStreamId.current !== searchId) return;
+          if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
           appendHit(hit, "left", "T2");
         }
       } else {
@@ -1588,17 +1644,23 @@ export function App() {
         }
       }
       if (sourceTierEnabled) {
+        if (mode === "single") {
+          const sourceId = activeViewSource?.id;
+          if (!sourceId || !isCurrentViewRequest(viewRequestGenerationRef.current, sourceId)) return;
+        }
         setSearchPaths(new Set(matches));
         setSearchResults([...results]);
         try {
           if (mode === "single") {
-            if (!activeViewSource) return;
+            const sourceId = activeViewSource?.id;
+            const generation = viewRequestGenerationRef.current;
+            if (!sourceId) return;
             for (const hit of await invoke<BackendSearchHit[]>("deep_search_view_source", {
-              sourceId: activeViewSource.id,
+              sourceId,
               query,
               searchId,
             })) {
-              if (searchStreamId.current !== searchId) return;
+              if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
               appendHit(hit, "left", "T3");
             }
           } else {
@@ -1619,6 +1681,10 @@ export function App() {
         }
       }
       if (searchStreamId.current !== searchId) return;
+      if (mode === "single") {
+        const sourceId = activeViewSource?.id;
+        if (!sourceId || !isCurrentViewRequest(viewRequestGenerationRef.current, sourceId)) return;
+      }
       setSearchPaths(matches);
       setSearchResults(results);
       setMessage(`${sourceTierEnabled ? "Search with decompiled source" : "Search"} matched ${matches.size} entries.`);
@@ -1741,11 +1807,14 @@ export function App() {
   const loadedSourceCount = mode === "single"
     ? viewWorkspace.sources.length
     : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
+  const actionOpenTabs = mode === "single"
+    ? (activeViewSource?.entryTabs ?? []).map((tab) => tab.entryPath)
+    : openTabs.map((tab) => tab.path);
 
   const actionContext = useMemo<AppActionContext>(() => ({
     mode,
     activeTab,
-    openTabs: openTabs.map((tab) => tab.path),
+    openTabs: actionOpenTabs,
     selectedPath: selected?.path,
     selectedCanCopyLeft: mode === "compare" && !!selected?.right && selected.right.kind !== "directory",
     selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
@@ -1755,7 +1824,7 @@ export function App() {
     hunkMerge: activeTab !== "files" && hunkMerge,
     focusKind: classifyFocusTarget(document.activeElement),
     shortcutDialogOpen,
-  }), [activeTab, hunkMerge, loadedSourceCount, mode, openTabs, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
+  }), [actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
 
   const actionHandlers = useMemo<AppActionHandlers>(() => ({
     openLeftFile: () => void browse("left"),
@@ -2027,6 +2096,31 @@ export function App() {
               <div className="workspace-tabpanel" role="tabpanel">
                 {diffView}
               </div>
+            ) : mode === "single" ? (
+              <div className="view-workspace-split" role="tabpanel" aria-label="View source browser">
+                <div className="view-workspace-pane view-workspace-pane--tree">
+                  <FileTree
+                    visiblePairs={visiblePairs}
+                    selected={selected}
+                    stagedEntries={stagedEntries}
+                    mode={mode}
+                    treeFilter={treeFilter}
+                    nestedPairs={activeViewSource?.nestedPairs ?? {}}
+                    leftLabel={leftLabel}
+                    rightLabel={rightLabel}
+                    expandAllVersion={treeExpandAllVersion}
+                    collapseAllVersion={treeCollapseAllVersion}
+                    onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
+                    onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                    onCopy={(from, to, pair) => void copy(from, to, pair)}
+                    onUnstage={(entryPath) => void unstage(entryPath)}
+                    onExpandArchive={(fullPath) => void expandArchive(fullPath)}
+                  />
+                </div>
+                <div className="view-workspace-pane view-workspace-pane--content">
+                  {diffView}
+                </div>
+              </div>
             ) : (
               <>
                 <div className="workspace-tabpanel" role="tabpanel" hidden={activeTab !== "files"}>
@@ -2036,7 +2130,7 @@ export function App() {
                     stagedEntries={stagedEntries}
                     mode={mode}
                     treeFilter={treeFilter}
-                    nestedPairs={mode === "single" ? activeViewSource?.nestedPairs ?? {} : nestedPairs}
+                    nestedPairs={nestedPairs}
                     leftLabel={leftLabel}
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}

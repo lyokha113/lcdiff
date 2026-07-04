@@ -539,6 +539,61 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("tab", { name: /beta\.json/ })).not.toBeInTheDocument();
   });
 
+  it("keeps the active View tree visible beside inspected entry content", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(screen.getAllByText("alpha.json")).toHaveLength(2);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+
+  it("ignores a stale View entry read after switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    let resolveRead: ((preview: {
+      path: string;
+      kind: "text";
+      language: string;
+      content: string;
+    }) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_view_entry" && args?.sourceId === "view:/tmp/alpha.jar") {
+        return new Promise((resolve) => {
+          resolveRead = resolve as typeof resolveRead;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() => expect(resolveRead).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+    act(() => resolveRead?.({
+      path: "alpha.json",
+      kind: "text",
+      language: "json",
+      content: "stale alpha",
+    }));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("stale alpha")).not.toBeInTheDocument();
+  });
+
   it("hides compare-only controls in multi-source View mode", async () => {
     const user = userEvent.setup();
     chooseFile
@@ -607,6 +662,60 @@ describe("App file-merge wiring", () => {
     await waitFor(() => expect(screen.getAllByText("Alpha.class").length).toBeGreaterThan(1));
   });
 
+  it("clears View search filtering when switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+    await waitFor(() => expect(screen.getAllByText("alpha.json").length).toBeGreaterThan(1));
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+  });
+
+  it("ignores stale View search results after switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    let resolveSearch: ((hits: Array<{ entryPath: string; kind: "path" }>) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "search_view_source" && args?.sourceId === "view:/tmp/alpha.jar") {
+        return new Promise((resolve) => {
+          resolveSearch = resolve as typeof resolveSearch;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+    await waitFor(() => expect(resolveSearch).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+    act(() => resolveSearch?.([{ entryPath: "alpha.json", kind: "path" }]));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByText("alpha.json")).not.toBeInTheDocument();
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+  });
+
   it("runs decompiled source search against the active View source", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
@@ -627,6 +736,23 @@ describe("App file-merge wiring", () => {
       }),
     );
     expect(invoke.mock.calls.some(([cmd]) => cmd === "deep_search")).toBe(false);
+  });
+
+  it("switches View entry tabs with action hotkeys", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /alpha\.json/ })).toHaveAttribute("aria-selected", "true"));
+    await user.click(screen.getByText("Alpha.class"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Alpha\.class/ })).toHaveAttribute("aria-selected", "true"));
+
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true, ctrlKey: true });
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /alpha\.json/ })).toHaveAttribute("aria-selected", "true"));
   });
 
   it("shows the Source/Bytecode switch only on the active Diff tab", async () => {

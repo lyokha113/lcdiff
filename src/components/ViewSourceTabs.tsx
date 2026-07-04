@@ -24,22 +24,20 @@ export function ViewSourceTabs({ sources, activeSourceId, onSelect, onClose }: V
         {sources.map((source) => (
           <div
             key={source.id}
-            role="tab"
-            aria-selected={source.id === activeSourceId}
-            tabIndex={0}
             className={`view-source-tab${source.id === activeSourceId ? " active" : ""}`}
-            title={source.path}
-            onClick={() => onSelect(source.id)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onSelect(source.id);
-              }
-            }}
           >
-            <span className="view-source-tab__icon" aria-hidden="true">{sourceIcon(source)}</span>
-            <span className="view-source-tab__label">{source.name}</span>
-            <span className="view-source-tab__count">{source.entryCount}</span>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={source.id === activeSourceId}
+              className="view-source-tab__select"
+              title={source.path}
+              onClick={() => onSelect(source.id)}
+            >
+              <span className="view-source-tab__icon" aria-hidden="true">{sourceIcon(source)}</span>
+              <span className="view-source-tab__label">{source.name}</span>
+              <span className="view-source-tab__count">{source.entryCount}</span>
+            </button>
             <Button
               type="button"
               variant="ghost"
