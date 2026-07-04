@@ -180,6 +180,9 @@ try {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(page);
   await page.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Compare and merge sources" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Open one source" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Compare free text" }).waitFor({ timeout: 5_000 });
   await page.locator(".launch-card--recent").waitFor({ timeout: 5_000 });
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 5) {
     throw new Error("startup did not render exactly five collapsed history rows");
@@ -188,7 +191,7 @@ try {
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 6) {
     throw new Error("startup history did not expand to the stored list");
   }
-  await page.getByRole("button", { name: "Compare two sources" }).click();
+  await page.getByRole("button", { name: "Compare and merge sources" }).click();
   await page.locator("text=Nothing to compare yet").waitFor({ timeout: 5_000 });
   if (await page.locator(".source-slot__identity").count() !== 0) {
     throw new Error("source rail still renders visual Left/Right identity labels");
@@ -380,6 +383,20 @@ try {
   }
   await viewPage.close();
 
+  const textPage = await browser.newPage({ viewport: { width: 1024, height: 640 } });
+  await textPage.goto(url, { waitUntil: "domcontentloaded" });
+  await disableAnimations(textPage);
+  await textPage.getByRole("button", { name: "Compare free text" }).click();
+  await textPage.getByRole("main", { name: "Free text workspace" }).waitFor({ timeout: 5_000 });
+  await textPage.getByText("Confirm a comparison to create a temporary diff result.", { exact: true }).waitFor({ timeout: 5_000 });
+  if (await textPage.locator(".free-text-result-panel .monaco-diff-editor").count()) {
+    throw new Error("Free text rendered a diff result before the user confirmed comparison");
+  }
+  if (await textPage.getByRole("combobox", { name: "Tree filter" }).count()) {
+    throw new Error("Free text rendered the compare-only tree filter");
+  }
+  await textPage.close();
+
   var mockedPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const mockMessages = [];
   mockedPage.on("console", (message) => {
@@ -427,6 +444,29 @@ try {
           { path: "right-only.txt", kind: "text", uncompressedSize: 5 },
         ],
       },
+    };
+    const viewSources = {
+      "/fixtures/view.jar": {
+        id: "view:/fixtures/view.jar",
+        path: "/fixtures/view.jar",
+        name: "view.jar",
+        kind: "archive",
+        entryCount: 2,
+      },
+    };
+    const viewPairs = {
+      "view:/fixtures/view.jar": [
+        {
+          path: "ViewOnly.class",
+          status: "onlyLeft",
+          left: { path: "ViewOnly.class", kind: "class" },
+        },
+        {
+          path: "readme.txt",
+          status: "onlyLeft",
+          left: { path: "readme.txt", kind: "text" },
+        },
+      ],
     };
     const pairs = [
       {
@@ -501,6 +541,36 @@ try {
           opened[args.side] = archives[args.path];
           return archives[args.path];
         }
+        if (cmd === "open_view_source") {
+          const summary = viewSources[args.path];
+          if (!summary) throw new Error(`unexpected open_view_source fixture: ${JSON.stringify(args)}`);
+          return summary;
+        }
+        if (cmd === "list_view_sources") return [];
+        if (cmd === "close_view_source") return undefined;
+        if (cmd === "compute_view_nested_entries") {
+          return { pairs: viewPairs[args.sourceId] ?? [] };
+        }
+        if (cmd === "read_view_entry") {
+          if (args.entryPath === "ViewOnly.class") {
+            return {
+              path: args.entryPath,
+              kind: "class",
+              language: "java",
+              content: "class ViewOnly {}",
+            };
+          }
+          return {
+            path: args.entryPath,
+            kind: "text",
+            language: "plaintext",
+            content: `view content for ${args.entryPath}`,
+          };
+        }
+        if (cmd === "disassemble_view_entry") {
+          return `VIEW ASM BYTECODE for ${args.entryPath}`;
+        }
+        if (cmd === "search_view_source") return [{ entryPath: "readme.txt", kind: "path" }];
         if (cmd === "compute_diff") {
           return opened.left && opened.right ? { pairs } : { pairs: [] };
         }
@@ -588,7 +658,7 @@ try {
   await mockedPage.reload({ waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
   await mockedPage.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("button", { name: "Compare two sources" }).click();
+  await mockedPage.getByRole("button", { name: "Compare and merge sources" }).click();
 
   // Helpers for the new chip-based source UI. The path Input only renders while
   // the chip's Popover is open, so open the chip, act, then close (Escape).
@@ -905,7 +975,7 @@ try {
   await mockedPage.locator("text=00000000  fe ed fa ce").waitFor({ timeout: 5_000 });
 
   // Single-mode switch guard: blocked while staged.
-  await mockedPage.getByRole("combobox", { name: "Mode" }).click();
+  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
   await mockedPage.getByRole("option", { name: "View" }).click();
   await mockedPage.locator("text=Save or clear unsaved changes before switching to View mode.").waitFor({ timeout: 5_000 });
 
@@ -917,28 +987,49 @@ try {
   }
   await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
 
-  // Now the switch to Single succeeds; SourceChips renders only the left chip.
-  await mockedPage.getByRole("combobox", { name: "Mode" }).click();
+  // Now the switch to View succeeds; SourceChips renders only the left chip.
+  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
   await mockedPage.getByRole("option", { name: "View" }).click();
   await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
   if (
     await mockedPage.getByRole("group", { name: "Actions into left pane" }).count() ||
     await mockedPage.getByRole("group", { name: "Actions into right pane" }).count()
   ) {
-    throw new Error("Single mode still rendered compare-only actions");
+    throw new Error("View mode still rendered compare-only actions");
   }
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
-    throw new Error("Single mode still rendered the right source chip");
+    throw new Error("View mode still rendered the right source chip");
   }
   if (await mockedPage.getByRole("combobox", { name: "Tree filter" }).count()) {
-    throw new Error("Single mode still rendered the compare-only tree filter");
+    throw new Error("View mode still rendered the compare-only tree filter");
   }
+  await openLeftPopover();
+  await archiveInput().fill("/fixtures/view.jar");
+  await archiveInput().press("Enter");
+  await closePopover(leftSourceTrigger);
+  await mockedPage.getByRole("navigation", { name: "View sources" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("tablist", { name: "Open View sources" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("tab", { name: /view\.jar/ }).waitFor({ timeout: 5_000 });
+  const viewEntryRow = mockedPage.locator(".tree-file", { hasText: "ViewOnly.class" });
+  await viewEntryRow.waitFor({ timeout: 5_000 });
+  await viewEntryRow.click();
+  await mockedPage.getByRole("tab", { name: /ViewOnly\.class/ }).waitFor({ timeout: 5_000 });
+  await mockedPage.locator("text=class ViewOnly").waitFor({ timeout: 5_000 });
 
   // Back to Compare: right chip returns.
-  await mockedPage.getByRole("combobox", { name: "Mode" }).click();
-  await mockedPage.getByRole("option", { name: "Compare" }).click();
+  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
+  await mockedPage.getByRole("option", { name: "Compare and Merge" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
+  await openLeftPopover();
+  await archiveInput().fill("/fixtures/left.jar");
+  await archiveInput().press("Enter");
+  await closePopover(leftSourceTrigger);
+  await openRightPopover();
+  await archiveInput().fill("/fixtures/right.jar");
+  await archiveInput().press("Enter");
+  await closePopover(rightSourceTrigger);
+  await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
   const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });
