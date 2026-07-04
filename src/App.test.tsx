@@ -662,6 +662,30 @@ describe("App file-merge wiring", () => {
     expect(screen.getByTestId("editor")).toBeInTheDocument();
   });
 
+  it("clears inspected View preview state when switching to Compare and Merge", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("editor")).toHaveValue("view:/tmp/alpha.jar:alpha.json");
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
+    await user.click(await screen.findByRole("option", { name: "Compare and Merge" }));
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to compare yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+    expect(screen.queryByText("view:/tmp/alpha.jar:alpha.json")).not.toBeInTheDocument();
+  });
+
   it("ignores a stale View entry read after switching sources", async () => {
     const user = userEvent.setup();
     chooseFile

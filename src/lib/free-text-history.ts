@@ -22,6 +22,18 @@ function charLabel(count: number): string {
   return `${count} chars`;
 }
 
+function excerpt(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "Empty draft";
+  return normalized.length > 36 ? `${normalized.slice(0, 33).trimEnd()}...` : normalized;
+}
+
+function deltaLabel(leftLength: number, rightLength: number): string {
+  const delta = rightLength - leftLength;
+  if (delta === 0) return "same length";
+  return `${delta > 0 ? "+" : ""}${delta} chars`;
+}
+
 function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
   const leftLabel = charLabel(input.left.length);
   const rightLabel = charLabel(input.right.length);
@@ -31,8 +43,8 @@ function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
     left: input.left,
     right: input.right,
     createdAt: input.createdAt,
-    title: `${leftLabel[0].toUpperCase()}${leftLabel.slice(1)} vs ${rightLabel}`,
-    summary: `Left ${leftLabel}, right ${rightLabel}`,
+    title: `${excerpt(input.left)} -> ${excerpt(input.right)}`,
+    summary: `${leftLabel} left / ${rightLabel} right / ${deltaLabel(input.left.length, input.right.length)}`,
   };
 }
 

@@ -1273,6 +1273,24 @@ export function App() {
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
+    if (mode === "single" && next === "compare") {
+      diffEditorRef.current?.setModel(null);
+      diffEditorRef.current = undefined;
+      setPaths(emptyPaths);
+      setPathErrors({});
+      setArchives({});
+      setPairs([]);
+      setNestedPairs({});
+      setSelected(undefined);
+      setActiveTab("files");
+      setOpenTabs([]);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
+    }
     if (mode === "text") {
       setPaths(emptyPaths);
       setPathErrors({});

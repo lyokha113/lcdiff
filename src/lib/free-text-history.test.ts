@@ -28,8 +28,8 @@ describe("Free text history", () => {
       id: "free-text:1000:1:1",
       left: "a",
       right: "b",
-      title: "1 char vs 1 char",
-      summary: "Left 1 char, right 1 char",
+      title: "a -> b",
+      summary: "1 char left / 1 char right / same length",
     });
   });
 
@@ -42,10 +42,21 @@ describe("Free text history", () => {
         left: "left text",
         right: "right text",
         createdAt: 3000,
-        title: "9 chars vs 10 chars",
-        summary: "Left 9 chars, right 10 chars",
+        title: "left text -> right text",
+        summary: "9 chars left / 10 chars right / +1 chars",
       },
     ]);
+  });
+
+  it("uses readable snippets instead of length-only titles", () => {
+    const [entry] = recordFreeTextResult({
+      left: "first line\nwith extra    spacing and a very long continuation",
+      right: "",
+      createdAt: 3500,
+    });
+
+    expect(entry.title).toBe("first line with extra spacing and... -> Empty draft");
+    expect(entry.summary).toBe("61 chars left / empty right / -61 chars");
   });
 
   it("limits history to the newest confirmed results", () => {

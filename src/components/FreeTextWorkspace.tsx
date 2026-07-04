@@ -70,6 +70,13 @@ export function FreeTextWorkspace({
     onMessage("Free text history cleared.");
   }
 
+  function formatHistoryTime(createdAt: number) {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(createdAt));
+  }
+
   return (
     <div className="free-text-workspace">
       <section className="free-text-drafts" aria-label="Free text inputs">
@@ -112,8 +119,11 @@ export function FreeTextWorkspace({
               aria-pressed={entry.id === activeResultId}
               onClick={() => setActiveResultId(entry.id)}
             >
-              <span>{entry.title}</span>
-              <small>{entry.summary}</small>
+              <span className="free-text-history__title">{entry.title}</span>
+              <span className="free-text-history__meta">
+                <span>{entry.summary}</span>
+                <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+              </span>
             </button>
           ))}
         </nav>
