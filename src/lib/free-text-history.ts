@@ -38,12 +38,6 @@ const NAME_NOUNS = [
   "Trace",
 ] as const;
 
-function charLabel(count: number): string {
-  if (count === 0) return "empty";
-  if (count === 1) return "1 char";
-  return `${count} chars`;
-}
-
 function hashText(value: string): number {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -62,13 +56,11 @@ function randomName(input: FreeTextResultInput): string {
 
 function textSizeLabel(totalLength: number): string {
   if (totalLength < 120) return "Short text";
-  if (totalLength < 900) return "Mid text";
+  if (totalLength < 900) return "Medium text";
   return "Long text";
 }
 
 function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
-  const leftLabel = charLabel(input.left.length);
-  const rightLabel = charLabel(input.right.length);
   const sizeLabel = textSizeLabel(input.left.length + input.right.length);
 
   return {
@@ -77,7 +69,7 @@ function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
     right: input.right,
     createdAt: input.createdAt,
     title: randomName(input),
-    summary: `${sizeLabel} / ${leftLabel} left -> ${rightLabel} right`,
+    summary: sizeLabel,
   };
 }
 

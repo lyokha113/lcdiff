@@ -29,7 +29,7 @@ describe("Free text history", () => {
       left: "a",
       right: "b",
       title: "Blue Trace",
-      summary: "Short text / 1 char left -> 1 char right",
+      summary: "Short text",
     });
   });
 
@@ -43,7 +43,7 @@ describe("Free text history", () => {
         right: "right text",
         createdAt: 3000,
         title: "Grey Signal",
-        summary: "Short text / 9 chars left -> 10 chars right",
+        summary: "Short text",
       },
     ]);
   });
@@ -56,7 +56,17 @@ describe("Free text history", () => {
     });
 
     expect(entry.title).toBe("Grey Harbor");
-    expect(entry.summary).toBe("Short text / 61 chars left -> empty right");
+    expect(entry.summary).toBe("Short text");
+  });
+
+  it("classifies history descriptions as Short, Medium, or Long text", () => {
+    const short = recordFreeTextResult({ left: "short", right: "", createdAt: 3600 })[0];
+    const medium = recordFreeTextResult({ left: "m".repeat(120), right: "", createdAt: 3700 })[0];
+    const long = recordFreeTextResult({ left: "l".repeat(900), right: "", createdAt: 3800 })[0];
+
+    expect(short.summary).toBe("Short text");
+    expect(medium.summary).toBe("Medium text");
+    expect(long.summary).toBe("Long text");
   });
 
   it("limits history to the newest confirmed results", () => {
@@ -96,7 +106,7 @@ describe("Free text history", () => {
     ]));
 
     expect(loadFreeTextHistory()).toEqual([
-      { id: "ok", left: "", right: "r", createdAt: 2, title: "Jade Draft", summary: "Short text / empty left -> 1 char right" },
+      { id: "ok", left: "", right: "r", createdAt: 2, title: "Jade Draft", summary: "Short text" },
     ]);
   });
 
@@ -113,7 +123,7 @@ describe("Free text history", () => {
         right: "r",
         createdAt: 2,
         title: "Jade Draft",
-        summary: "Short text / empty left -> 1 char right",
+        summary: "Short text",
       },
     ]);
   });
@@ -148,7 +158,7 @@ describe("Free text history", () => {
         right: "value",
         createdAt: 2000,
         title: "Grey Ledger",
-        summary: "Short text / 5 chars left -> 5 chars right",
+        summary: "Short text",
       },
     ]);
   });

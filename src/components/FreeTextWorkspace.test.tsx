@@ -102,12 +102,12 @@ describe("Free text workspace", () => {
     unmount();
     renderWorkspace();
 
-    expect(screen.getByRole("button", { name: /Short text \/ 4 chars left -> 5 chars right/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Short text/ })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Clear free text history" }));
 
     expect(localStorage.getItem(FREE_TEXT_HISTORY_STORAGE_KEY)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Short text \/ 4 chars left -> 5 chars right/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Short text/ })).not.toBeInTheDocument();
     expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
   });
 
@@ -125,7 +125,7 @@ describe("Free text workspace", () => {
     await user.click(screen.getByRole("button", { name: "Compare free text" }));
     await user.click(screen.getByRole("button", { name: "Clear free text history" }));
 
-    expect(screen.queryByRole("button", { name: /Short text \/ 4 chars left -> 5 chars right/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Short text/ })).not.toBeInTheDocument();
     expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
 
     removeItemSpy.mockRestore();
@@ -144,7 +144,8 @@ describe("Free text workspace", () => {
     await user.type(screen.getByLabelText("Right free text input"), "newer right");
     await user.click(screen.getByRole("button", { name: "Compare free text" }));
 
-    await user.click(screen.getByRole("button", { name: /Short text \/ 3 chars left -> 11 chars right/ }));
+    const historyButtons = screen.getAllByRole("button", { name: /Short text/ });
+    await user.click(historyButtons[1]);
 
     expect(screen.getByTestId("diff-original")).toHaveTextContent("old");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("first right");
