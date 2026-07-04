@@ -25,6 +25,7 @@ let deepSearchError: Error | undefined;
 let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
+let dragDropHandler: ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) | undefined;
 const viewRootEntries: Record<string, string[]> = {
   "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json"],
   "view:/tmp/beta.jar": ["beta.json"],
@@ -163,7 +164,10 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    onDragDropEvent: vi.fn(async () => vi.fn()),
+    onDragDropEvent: vi.fn(async (handler: typeof dragDropHandler) => {
+      dragDropHandler = handler;
+      return vi.fn();
+    }),
     onCloseRequested: vi.fn(async () => vi.fn()),
     destroy: vi.fn(),
   }),
@@ -367,6 +371,18 @@ async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByText("Compare / Merge"));
 }
 
+async function switchMode(modeName: "View" | "Compare" | "Text") {
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = vi.fn();
+  try {
+    const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+    fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+    fireEvent.click(await screen.findByRole("option", { name: modeName }));
+  } finally {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+  }
+}
+
 async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
   let browseButton = screen.queryByRole("button", { name: /Browse file/i });
   if (!browseButton) {
@@ -400,6 +416,7 @@ describe("App file-merge wiring", () => {
     deferredAppActionListen = undefined;
     appActionHandler = undefined;
     osOpenPathsHandler = undefined;
+    dragDropHandler = undefined;
     listen.mockClear();
     Object.defineProperty(Element.prototype, "hasPointerCapture", {
       configurable: true,
@@ -461,6 +478,72 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByTestId("diff-original")).toHaveTextContent("left pasted text");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("right typed text");
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
+  });
+
+  it("closes Compare search and makes search inert when switching to Free text", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
+
+    await switchMode("Text");
+
+    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.getByText("Search is not available in Free text mode.")).toBeInTheDocument();
+  });
+
+  it("closes View search when switching to Free text", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
+
+    await switchMode("Text");
+
+    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
+  });
+
+  it("ignores file picker, native open, and drag/drop source opens in Free text mode", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    chooseFile.mockClear();
+    invoke.mockClear();
+
+    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
+      appActionHandler?.({ payload: { actionId: "file.openRightFile" } });
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/dropped.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(chooseFile).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
   });
 
   it("opens OS-launched files through the View workspace", async () => {

@@ -151,6 +151,41 @@ describe("action registry", () => {
     });
   });
 
+  it("blocks file open and search actions in text mode", async () => {
+    const actionHandlers = handlers();
+    const textContext = context({ mode: "text" });
+
+    expect(getActionState("file.openLeftFile", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "File sources are not available in Free text mode.",
+    });
+    expect(getActionState("file.openLeftDirectory", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "File sources are not available in Free text mode.",
+    });
+    expect(getActionState("file.openRightFile", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "Open right source is available only in Compare mode.",
+    });
+    expect(getActionState("file.openRightDirectory", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "Open right source is available only in Compare mode.",
+    });
+    expect(getActionState("search.toggle", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "Search is not available in Free text mode.",
+    });
+    expect(getActionState("search.runContextual", textContext)).toEqual({
+      enabled: false,
+      blockedReason: "Search is not available in Free text mode.",
+    });
+
+    await expect(dispatchAppAction("file.openLeftFile", textContext, actionHandlers)).resolves.toBe(false);
+    await expect(dispatchAppAction("search.toggle", textContext, actionHandlers)).resolves.toBe(false);
+    expect(actionHandlers.openLeftFile).not.toHaveBeenCalled();
+    expect(actionHandlers.toggleSearch).not.toHaveBeenCalled();
+  });
+
   it("blocks refresh with no loaded sources and enables it with loaded sources", () => {
     expect(getActionState("file.refresh", context())).toEqual({
       enabled: false,

@@ -60,9 +60,11 @@ export function MenuBar({
       <div className="command-spacer" />
 
       <div className="command-group command-group--tools" role="group" aria-label="Workspace tools">
-        <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
-          <Search />
-        </Button>
+        {mode !== "text" && (
+          <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
+            <Search />
+          </Button>
+        )}
         <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Preferences" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
           <Settings />
         </Button>

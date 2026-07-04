@@ -630,7 +630,9 @@ export function App() {
     viewRequestGenerationRef.current += 1;
     previewRequestId.current += 1;
     searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
     setSearching(false);
+    setSearchOpen(false);
     setMode("text");
     setView("workspace");
     setPaths(emptyPaths);
@@ -643,9 +645,11 @@ export function App() {
     setViewMode("source");
     setPreview({});
     setOpenTabs([]);
+    setQuery("");
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
+    void invoke("cancel_deep_search").catch(() => undefined);
     setMessage("Free text is ready. Edit both sides, then compare when you want a result.");
   }, [stagedTarget]);
 
@@ -682,6 +686,10 @@ export function App() {
     getCurrentWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
+        if (mode === "text") {
+          setMessage("File drops are not available in Free text mode.");
+          return;
+        }
         const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
         if (mode === "single") void openViewPath(event.payload.paths[0]);
         else void openPath(side, event.payload.paths[0]);
@@ -1776,8 +1784,20 @@ export function App() {
     refresh: refreshSources,
     save: () => stagedTarget && void save(stagedTarget),
     clearStaged: () => void clearStaged(),
-    toggleSearch: () => setSearchOpen((open) => !open),
-    runContextualSearch: () => void (searchContext === "files" ? runSearch() : findInCurrentDiff()),
+    toggleSearch: () => {
+      if (mode === "text") {
+        setMessage("Search is not available in Free text mode.");
+        return;
+      }
+      setSearchOpen((open) => !open);
+    },
+    runContextualSearch: () => {
+      if (mode === "text") {
+        setMessage("Search is not available in Free text mode.");
+        return;
+      }
+      void (searchContext === "files" ? runSearch() : findInCurrentDiff());
+    },
     togglePreferences: () => setDrawerOpen((open) => !open),
     toggleShortcutDialog: () => updateShortcutDialogOpen((open) => !open),
     focusFiles: () => setActiveTab("files"),
@@ -1800,6 +1820,7 @@ export function App() {
     findInCurrentDiff,
     focusRelativeTab,
     moveHunkTo,
+    mode,
     refreshSources,
     runSearch,
     save,
@@ -1951,7 +1972,9 @@ export function App() {
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
         onClearStaged={clearStaged}
-        onToggleSearch={() => setSearchOpen((o) => !o)}
+        onToggleSearch={() => {
+          if (mode !== "text") setSearchOpen((o) => !o);
+        }}
         onToggleDrawer={() => setDrawerOpen((o) => !o)}
       />
 
@@ -1968,7 +1991,7 @@ export function App() {
         />
       )}
 
-      {searchOpen && (
+      {mode !== "text" && searchOpen && (
         <aside className="search-surface" aria-label="Search workspace">
           <SearchBar
             open

@@ -131,6 +131,8 @@ export function FreeTextWorkspace({
                 renderSideBySide: true,
                 useInlineViewWhenSpaceIsLimited: false,
                 ignoreTrimWhitespace,
+                originalAriaLabel: "Left confirmed free text result",
+                modifiedAriaLabel: "Right confirmed free text result",
               }}
             />
           ) : (

@@ -71,7 +71,12 @@ function saveFreeTextHistory(entries: FreeTextHistoryEntry[]): void {
 }
 
 export function loadFreeTextHistory(): FreeTextHistoryEntry[] {
-  const raw = localStorage.getItem(FREE_TEXT_HISTORY_STORAGE_KEY);
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(FREE_TEXT_HISTORY_STORAGE_KEY);
+  } catch {
+    return [];
+  }
   if (!raw) return [];
 
   try {
@@ -106,5 +111,10 @@ export function recordFreeTextResult(input: FreeTextResultInput): FreeTextHistor
 }
 
 export function clearFreeTextHistory(): void {
-  localStorage.removeItem(FREE_TEXT_HISTORY_STORAGE_KEY);
+  try {
+    localStorage.removeItem(FREE_TEXT_HISTORY_STORAGE_KEY);
+  } catch {
+    // Best-effort persistence: storage failures must not block clearing the
+    // in-memory workspace state.
+  }
 }

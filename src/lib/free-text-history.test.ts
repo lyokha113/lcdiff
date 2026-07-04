@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearFreeTextHistory,
   FREE_TEXT_HISTORY_LIMIT,
@@ -9,6 +9,10 @@ import {
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("Free text history", () => {
@@ -59,6 +63,19 @@ describe("Free text history", () => {
     localStorage.setItem(FREE_TEXT_HISTORY_STORAGE_KEY, "{broken");
 
     expect(loadFreeTextHistory()).toEqual([]);
+  });
+
+  it("returns an empty Free text history when localStorage read fails", () => {
+    const getItemSpy = vi
+      .spyOn(Storage.prototype, "getItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+
+    expect(loadFreeTextHistory()).toEqual([]);
+    expect(getItemSpy).toHaveBeenCalledWith(FREE_TEXT_HISTORY_STORAGE_KEY);
+
+    getItemSpy.mockRestore();
   });
 
   it("filters malformed entries from valid JSON arrays", () => {
@@ -190,5 +207,18 @@ describe("Free text history", () => {
 
     expect(loadFreeTextHistory()).toEqual([]);
     expect(localStorage.getItem("lcdiff.history")).toBe("keep");
+  });
+
+  it("does not throw when Free text history removal fails", () => {
+    const removeItemSpy = vi
+      .spyOn(Storage.prototype, "removeItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+
+    expect(() => clearFreeTextHistory()).not.toThrow();
+    expect(removeItemSpy).toHaveBeenCalledWith(FREE_TEXT_HISTORY_STORAGE_KEY);
+
+    removeItemSpy.mockRestore();
   });
 });

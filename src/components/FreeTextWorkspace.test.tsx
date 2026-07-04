@@ -1,9 +1,14 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_UI_PREFERENCES } from "@/lib/preferences";
 import { FREE_TEXT_HISTORY_STORAGE_KEY } from "@/lib/free-text-history";
 import { FreeTextWorkspace } from "./FreeTextWorkspace";
+
+const monacoMockState = vi.hoisted(() => ({
+  diffOptions: undefined as Record<string, unknown> | undefined,
+}));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
@@ -18,27 +23,40 @@ vi.mock("@monaco-editor/react", () => ({
       onChange={(event) => onChange?.(event.target.value)}
     />
   ),
-  DiffEditor: ({ original, modified }: { original?: string; modified?: string }) => (
-    <div data-testid="diff-editor">
-      <pre data-testid="diff-original">{original}</pre>
-      <pre data-testid="diff-modified">{modified}</pre>
-    </div>
-  ),
+  DiffEditor: ({ original, modified, options }: {
+    original?: string;
+    modified?: string;
+    options?: Record<string, unknown>;
+  }) => {
+    monacoMockState.diffOptions = options;
+    return (
+      <div data-testid="diff-editor">
+        <pre data-testid="diff-original">{original}</pre>
+        <pre data-testid="diff-modified">{modified}</pre>
+      </div>
+    );
+  },
 }));
 
-function renderWorkspace() {
+function renderWorkspace(overrides: Partial<ComponentProps<typeof FreeTextWorkspace>> = {}) {
   return render(
     <FreeTextWorkspace
       preferences={DEFAULT_UI_PREFERENCES}
       effectiveColorPattern="dark"
       ignoreTrimWhitespace={false}
       onMessage={vi.fn()}
+      {...overrides}
     />,
   );
 }
 
 beforeEach(() => {
   localStorage.clear();
+  monacoMockState.diffOptions = undefined;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("Free text workspace", () => {
@@ -93,6 +111,26 @@ describe("Free text workspace", () => {
     expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
   });
 
+  it("keeps Free text clear UI-successful when persistence removal fails", async () => {
+    const user = userEvent.setup();
+    const removeItemSpy = vi
+      .spyOn(Storage.prototype, "removeItem")
+      .mockImplementation(() => {
+        throw new Error("storage unavailable");
+      });
+    renderWorkspace();
+
+    await user.type(screen.getByLabelText("Left free text input"), "left");
+    await user.type(screen.getByLabelText("Right free text input"), "right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getByRole("button", { name: "Clear free text history" }));
+
+    expect(screen.queryByRole("button", { name: /4 chars vs 5 chars/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
+
+    removeItemSpy.mockRestore();
+  });
+
   it("selects an older Free text history entry and shows its confirmed snapshot", async () => {
     const user = userEvent.setup();
     renderWorkspace();
@@ -110,5 +148,21 @@ describe("Free text workspace", () => {
 
     expect(screen.getByTestId("diff-original")).toHaveTextContent("old");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("first right");
+  });
+
+  it("passes accessible read-only options to the Free text result diff", async () => {
+    const user = userEvent.setup();
+    renderWorkspace({ ignoreTrimWhitespace: true });
+
+    await user.type(screen.getByLabelText("Left free text input"), "left");
+    await user.type(screen.getByLabelText("Right free text input"), "right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+
+    expect(monacoMockState.diffOptions).toMatchObject({
+      readOnly: true,
+      ignoreTrimWhitespace: true,
+      originalAriaLabel: "Left confirmed free text result",
+      modifiedAriaLabel: "Right confirmed free text result",
+    });
   });
 });
