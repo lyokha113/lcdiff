@@ -21,6 +21,12 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+quit_running_lcdiff() {
+  printf '==> Stopping any running LCDiff app\n'
+  pkill -f "LCDiff.AppImage" >/dev/null 2>&1 || true
+  pkill -f "lcdiff-desktop" >/dev/null 2>&1 || true
+}
+
 # --- locate the artifact -----------------------------------------------------
 ART="${1:-}"
 if [[ -z "$ART" ]]; then
@@ -33,12 +39,14 @@ fi
 
 case "$ART" in
   *.deb)
+    quit_running_lcdiff
     printf '==> Installing %s via apt (needs sudo)\n' "$ART"
     sudo apt-get update
     sudo apt-get install -y "$ART"
     printf '\nDone. Launch from the app menu or run: lcdiff\n'
     ;;
   *.AppImage)
+    quit_running_lcdiff
     PREFIX="${LCDIFF_PREFIX:-$HOME/.local}"
     BIN="$PREFIX/bin"
     APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"

@@ -10,6 +10,8 @@ const files = new Map([
   ["scripts/sign-macos-bundle.sh", readFileSync("scripts/sign-macos-bundle.sh", "utf8")],
   ["scripts/notarize-macos-app.sh", readFileSync("scripts/notarize-macos-app.sh", "utf8")],
   ["scripts/package-macos-dmg.sh", readFileSync("scripts/package-macos-dmg.sh", "utf8")],
+  ["scripts/install-macos.sh", readFileSync("scripts/install-macos.sh", "utf8")],
+  ["scripts/install-linux.sh", readFileSync("scripts/install-linux.sh", "utf8")],
 ]);
 
 const failures = [];
@@ -146,6 +148,13 @@ requireText("scripts/package-macos-dmg.sh", "ln -s /Applications \"$STAGING_DIR/
 requireText("scripts/package-macos-dmg.sh", "hdiutil create", "DMG creation");
 requireText("scripts/package-macos-dmg.sh", "-format UDZO", "compressed DMG format");
 requireText("scripts/package-macos-dmg.sh", "hdiutil verify \"$DMG\"", "DMG verification");
+
+requireText("scripts/install-macos.sh", "quit_running_lcdiff", "running app shutdown helper");
+requireText("scripts/install-macos.sh", "tell application \"LCDiff\" to quit", "friendly macOS app quit");
+requireText("scripts/install-macos.sh", "pkill -f \"lcdiff-desktop\"", "macOS stale process kill");
+requireText("scripts/install-linux.sh", "quit_running_lcdiff", "running app shutdown helper");
+requireText("scripts/install-linux.sh", "pkill -f \"LCDiff.AppImage\"", "Linux stale AppImage kill");
+requireText("scripts/install-linux.sh", "pkill -f \"lcdiff-desktop\"", "Linux stale desktop process kill");
 
 if (failures.length > 0) {
   for (const failure of failures) {

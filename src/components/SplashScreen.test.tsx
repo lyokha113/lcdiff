@@ -38,29 +38,30 @@ describe("SplashScreen", () => {
   it("presents a task-first startup hierarchy", () => {
     setup();
     expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare and merge sources" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
-    expect(screen.getAllByText("Compare and Merge").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("View").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Free text").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Open Compare mode" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open View mode" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Text mode" })).toBeInTheDocument();
+    expect(screen.queryByText("Desktop workspace")).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();
   });
 
-  it("renders both mode buttons", () => {
+  it("renders the three mode buttons", () => {
     setup();
-    expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare and merge sources" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open View mode" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Compare mode" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Text mode" })).toBeInTheDocument();
+    expect(screen.getByText("Text", { selector: ".launch-card__title" })).toBeInTheDocument();
+    expect(screen.getByText("View", { selector: ".launch-card__title" })).toBeInTheDocument();
+    expect(screen.getByText("Compare", { selector: ".launch-card__title" })).toBeInTheDocument();
   });
 
   it("calls onPickMode with the mode when a button is clicked", async () => {
     const props = setup();
-    await userEvent.click(screen.getByRole("button", { name: "Open one source" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open View mode" }));
     expect(props.onPickMode).toHaveBeenCalledWith("single");
-    await userEvent.click(screen.getByRole("button", { name: "Compare and merge sources" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Compare mode" }));
     expect(props.onPickMode).toHaveBeenCalledWith("compare");
-    await userEvent.click(screen.getByRole("button", { name: "Compare free text" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Text mode" }));
     expect(props.onPickMode).toHaveBeenCalledWith("text");
   });
 

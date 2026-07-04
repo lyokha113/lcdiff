@@ -343,8 +343,8 @@ function cmdOrCtrl(overrides: KeyboardEventInit = {}): KeyboardEventInit {
 
 async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  // Splash -> Compare and Merge workspace.
-  await user.click(screen.getByText("Compare and Merge"));
+  // Splash → Compare workspace.
+  await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
   await user.click(screen.getByLabelText("Toggle search"));
 
   // Open the left source via its repick popover → Browse file.
@@ -368,19 +368,14 @@ async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
 
 async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  await user.click(screen.getByText("Compare and Merge"));
+  await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 }
 
-async function switchMode(modeName: "View" | "Compare and Merge" | "Free text") {
-  const originalScrollIntoView = Element.prototype.scrollIntoView;
-  Element.prototype.scrollIntoView = vi.fn();
-  try {
-    const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
-    fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
-    fireEvent.click(await screen.findByRole("option", { name: modeName }));
-  } finally {
-    Element.prototype.scrollIntoView = originalScrollIntoView;
-  }
+async function switchMode(mode: "View" | "Compare" | "Text") {
+  const user = userEvent.setup();
+  const optionName = mode === "Text" ? "Free text" : mode === "Compare" ? "Compare and Merge" : mode;
+  await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
 }
 
 async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
@@ -445,7 +440,7 @@ describe("App file-merge wiring", () => {
   it("renders a landmark-based comparison workspace", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare and merge sources" }));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
@@ -456,7 +451,7 @@ describe("App file-merge wiring", () => {
   it("opens Free text with draft editors and no diff result until confirm", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
 
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
     expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
@@ -483,11 +478,11 @@ describe("App file-merge wiring", () => {
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare and merge sources" }));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await user.click(screen.getByLabelText("Toggle search"));
     expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
 
-    await switchMode("Free text");
+    await switchMode("Text");
 
     expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
@@ -502,11 +497,11 @@ describe("App file-merge wiring", () => {
   it("closes View search when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await user.click(screen.getByLabelText("Toggle search"));
     expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
 
-    await switchMode("Free text");
+    await switchMode("Text");
 
     expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
@@ -520,7 +515,7 @@ describe("App file-merge wiring", () => {
       value: {},
     });
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
     await waitFor(() => expect(appActionHandler).toBeDefined());
     await waitFor(() => expect(dragDropHandler).toBeDefined());
 
@@ -569,7 +564,7 @@ describe("App file-merge wiring", () => {
       value: {},
     });
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
     await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
 
     invoke.mockClear();
@@ -588,7 +583,7 @@ describe("App file-merge wiring", () => {
       .mockResolvedValueOnce("/tmp/beta.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/alpha.jar" }),
@@ -619,7 +614,7 @@ describe("App file-merge wiring", () => {
       .mockResolvedValueOnce("/tmp/beta.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(await screen.findByText("alpha.json"));
     await waitFor(() =>
@@ -653,7 +648,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(await screen.findByText("alpha.json"));
 
@@ -667,7 +662,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(await screen.findByText("alpha.json"));
 
@@ -707,7 +702,7 @@ describe("App file-merge wiring", () => {
     });
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await browseViewSource(user);
     await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
@@ -734,7 +729,7 @@ describe("App file-merge wiring", () => {
       .mockResolvedValueOnce("/tmp/beta.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await browseViewSource(user);
 
@@ -756,7 +751,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(await screen.findByText("Alpha.class"));
 
@@ -778,7 +773,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(screen.getByLabelText("Toggle search"));
     await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
@@ -802,7 +797,7 @@ describe("App file-merge wiring", () => {
       .mockResolvedValueOnce("/tmp/beta.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await browseViewSource(user);
     await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
@@ -832,7 +827,7 @@ describe("App file-merge wiring", () => {
     });
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await browseViewSource(user);
     await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
@@ -854,7 +849,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(screen.getByLabelText("Toggle search"));
     await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
@@ -876,7 +871,7 @@ describe("App file-merge wiring", () => {
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
     await browseViewSource(user);
     await user.click(await screen.findByText("alpha.json"));
     await waitFor(() => expect(screen.getByRole("tab", { name: /alpha\.json/ })).toHaveAttribute("aria-selected", "true"));
@@ -1036,7 +1031,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     const shell = await screen.findByRole("main");
     await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
@@ -1053,7 +1048,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1));
     await waitFor(() =>
@@ -1072,7 +1067,7 @@ describe("App file-merge wiring", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await user.click(screen.getByLabelText("Preferences"));
     await user.click(screen.getByRole("button", { name: "Editor" }));
 
@@ -1090,7 +1085,7 @@ describe("App file-merge wiring", () => {
     });
 
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_engine", { engine: "vineflower" }));
 
     await user.click(screen.getByLabelText("Preferences"));
@@ -1266,7 +1261,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+F toggles search open and closed", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
 
@@ -1302,10 +1297,10 @@ describe("App file-merge wiring", () => {
     );
   });
 
-  it("blocks the right-directory shortcut in Decompile/View mode with the Compare-only message", async () => {
+  it("blocks the right-directory shortcut in View mode with the Compare-only message", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("View"));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
 
     chooseFile.mockClear();
     fireEvent.keyDown(window, { key: "o", altKey: true, shiftKey: true, ...cmdOrCtrl() });
@@ -1449,7 +1444,7 @@ describe("App file-merge wiring", () => {
     render(<App />);
 
     fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
   });
@@ -1457,7 +1452,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+, toggles Preferences open", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument();
 
@@ -1473,7 +1468,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+S reports no staged changes when nothing is staged", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     fireEvent.keyDown(window, { key: "s", ...cmdOrCtrl() });
 
@@ -1550,7 +1545,7 @@ describe("App file-merge wiring", () => {
     const stop = vi.fn();
 
     const { unmount } = render(<App />);
-    await user.click(screen.getByText("Compare and Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await waitFor(() => expect(listen).toHaveBeenCalledWith("app-action", expect.any(Function)));
 
     unmount();

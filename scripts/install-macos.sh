@@ -20,6 +20,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS="/Applications"
 APP_NAME="LCDiff.app"
 
+quit_running_lcdiff() {
+  printf '==> Stopping any running LCDiff app\n'
+  osascript -e 'tell application "LCDiff" to quit' >/dev/null 2>&1 || true
+  sleep 1
+  pkill -f "lcdiff-desktop" >/dev/null 2>&1 || true
+}
+
 # --- locate the DMG ----------------------------------------------------------
 DMG="${1:-}"
 if [[ -z "$DMG" ]]; then
@@ -30,6 +37,7 @@ if [[ -z "$DMG" || ! -f "$DMG" ]]; then
   exit 1
 fi
 printf '==> Installing from %s\n' "$DMG"
+quit_running_lcdiff
 
 # --- mount, copy, unmount ----------------------------------------------------
 MNT="$(mktemp -d /tmp/lcdiff-dmg.XXXXXX)"

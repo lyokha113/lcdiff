@@ -1,5 +1,5 @@
 pkgname=lcdiff
-pkgver=0.3.2
+pkgver=0.3.4
 pkgrel=1
 pkgdesc="Inspect, compare, and merge JAR/ZIP archives and folders"
 arch=('x86_64')

@@ -180,9 +180,9 @@ try {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(page);
   await page.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
-  await page.getByRole("button", { name: "Compare and merge sources" }).waitFor({ timeout: 5_000 });
-  await page.getByRole("button", { name: "Open one source" }).waitFor({ timeout: 5_000 });
-  await page.getByRole("button", { name: "Compare free text" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Open Compare mode" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Open View mode" }).waitFor({ timeout: 5_000 });
+  await page.getByRole("button", { name: "Open Text mode" }).waitFor({ timeout: 5_000 });
   await page.locator(".launch-card--recent").waitFor({ timeout: 5_000 });
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 5) {
     throw new Error("startup did not render exactly five collapsed history rows");
@@ -191,7 +191,7 @@ try {
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 6) {
     throw new Error("startup history did not expand to the stored list");
   }
-  await page.getByRole("button", { name: "Compare and merge sources" }).click();
+  await page.getByRole("button", { name: "Open Compare mode" }).click();
   await page.locator("text=Nothing to compare yet").waitFor({ timeout: 5_000 });
   if (await page.locator(".source-slot__identity").count() !== 0) {
     throw new Error("source rail still renders visual Left/Right identity labels");
@@ -373,7 +373,7 @@ try {
   const viewPage = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   await viewPage.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(viewPage);
-  await viewPage.getByRole("button", { name: "Open one source" }).click();
+  await viewPage.getByRole("button", { name: "Open View mode" }).click();
   await viewPage.getByRole("region", { name: "Workspace canvas" }).waitFor({ timeout: 5_000 });
   if (
     await viewPage.getByRole("group", { name: "Actions into left pane" }).count() !== 0 ||
@@ -386,7 +386,7 @@ try {
   const textPage = await browser.newPage({ viewport: { width: 1024, height: 640 } });
   await textPage.goto(url, { waitUntil: "domcontentloaded" });
   await disableAnimations(textPage);
-  await textPage.getByRole("button", { name: "Compare free text" }).click();
+  await textPage.getByRole("button", { name: "Open Text mode" }).click();
   await textPage.getByRole("main", { name: "Free text workspace" }).waitFor({ timeout: 5_000 });
   await textPage.getByText("Confirm a comparison to create a temporary diff result.", { exact: true }).waitFor({ timeout: 5_000 });
   if (await textPage.locator(".free-text-result-panel .monaco-diff-editor").count()) {
@@ -658,7 +658,7 @@ try {
   await mockedPage.reload({ waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
   await mockedPage.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("button", { name: "Compare and merge sources" }).click();
+  await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
 
   // Helpers for the new chip-based source UI. The path Input only renders while
   // the chip's Popover is open, so open the chip, act, then close (Escape).

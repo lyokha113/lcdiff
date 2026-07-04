@@ -1469,15 +1469,12 @@ h1 {
 }
 
 .launch__descriptor,
-.launch__edition,
 .launch__footer {
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 0.68rem;
   letter-spacing: 0.03em;
 }
-
-.launch__edition { margin-left: auto; }
 
 .launch__hero {
   align-self: center;
@@ -1528,11 +1525,10 @@ h1 {
 
 .launch__grid {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-rows: minmax(12rem, 1fr);
-  grid-auto-flow: dense;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: minmax(13rem, 1fr);
   min-width: 0;
-  min-height: 12rem;
+  min-height: 13rem;
   border: 1px solid color-mix(in oklab, var(--line) 74%, transparent);
   border-radius: 1.35rem;
   overflow: hidden;
@@ -1554,22 +1550,27 @@ h1 {
 
 button.launch-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: end;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr;
+  align-items: start;
   gap: 1rem;
   padding: clamp(1.2rem, 2.2vw, 2rem);
   text-align: left;
 }
 
 .launch-card--text {
-  grid-column: span 4;
   background:
     radial-gradient(circle at 85% 16%, color-mix(in oklab, var(--status-meta-text) 18%, transparent), transparent 12rem),
     linear-gradient(145deg, color-mix(in oklab, var(--ink-2) 82%, transparent), color-mix(in oklab, var(--ink-1) 96%, black));
 }
 
+.launch-card--view {
+  background:
+    radial-gradient(circle at 14% 14%, color-mix(in oklab, var(--st-only) 15%, transparent), transparent 13rem),
+    linear-gradient(145deg, color-mix(in oklab, var(--ink-2) 72%, transparent), color-mix(in oklab, var(--ink-1) 94%, black));
+}
+
 .launch-card--compare {
-  grid-column: span 5;
   background:
     radial-gradient(circle at 15% 12%, color-mix(in oklab, var(--brass) 22%, transparent), transparent 16rem),
     linear-gradient(145deg, color-mix(in oklab, var(--ink-2) 88%, transparent), color-mix(in oklab, var(--ink-1) 94%, black));
@@ -1578,7 +1579,7 @@ button.launch-card {
 .launch-card--compare::before {
   content: "";
   position: absolute;
-  inset: 12% 10% 28%;
+  inset: 18% 10% 22%;
   opacity: 0.72;
   background:
     linear-gradient(90deg, transparent 49.8%, color-mix(in oklab, var(--brass) 28%, transparent) 50%, transparent 50.2%),
@@ -1586,7 +1587,7 @@ button.launch-card {
   mask-image: linear-gradient(to bottom, transparent, black 18%, black 72%, transparent);
 }
 
-.launch-card--view { grid-column: span 3; border-left: 1px solid var(--line); }
+.launch-card + .launch-card { border-left: 1px solid color-mix(in oklab, var(--line) 78%, transparent); }
 .launch-card--recent {
   border: 1px solid color-mix(in oklab, var(--line) 74%, transparent);
   border-radius: 0.85rem;
@@ -1608,10 +1609,10 @@ button.launch-card {
 }
 
 .launch-card__icon svg { width: 1.15rem; height: 1.15rem; }
-.launch-card__content { position: relative; z-index: 1; display: grid; gap: 0.45rem; min-width: 0; }
-.launch-card__title { font-size: clamp(1.05rem, 1.65vw, 1.65rem); font-weight: 610; letter-spacing: -0.035em; }
+.launch-card__content { position: relative; z-index: 1; display: grid; align-self: end; grid-column: 1 / -1; gap: 0.45rem; min-width: 0; }
+.launch-card__title { font-size: clamp(1.35rem, 2vw, 2rem); font-weight: 650; letter-spacing: -0.045em; }
 .launch-card__description { max-width: 34rem; color: var(--text-1); font-size: 0.78rem; line-height: 1.5; text-wrap: pretty; }
-.launch-card__arrow { position: relative; z-index: 1; width: 1.15rem; color: var(--text-2); transition: transform 0.28s ease, color 0.28s ease; }
+.launch-card__arrow { position: relative; z-index: 1; justify-self: end; width: 1.15rem; color: var(--text-2); transition: transform 0.28s ease, color 0.28s ease; }
 button.launch-card:hover { background-color: color-mix(in oklab, var(--ink-3) 44%, transparent); }
 button.launch-card:hover .launch-card__arrow { color: var(--brass); transform: translate(0.2rem, -0.2rem); }
 button.launch-card:focus-visible { z-index: 2; outline: 2px solid var(--brass); outline-offset: -3px; }
@@ -1659,9 +1660,9 @@ button.launch-card:focus-visible { z-index: 2; outline: 2px solid var(--brass); 
 
 @media (max-width: 760px) {
   .launch { padding: 1rem; }
-  .launch__descriptor, .launch__edition { display: none; }
+  .launch__descriptor { display: none; }
   .launch__grid { grid-template-columns: 1fr; grid-template-rows: auto; min-height: 0; }
-  .launch-card--text, .launch-card--compare, .launch-card--view { grid-column: 1; grid-row: auto; border-left: 0; border-bottom: 1px solid var(--line); }
+  .launch-card + .launch-card { border-left: 0; border-top: 1px solid var(--line); }
   button.launch-card { min-height: 10rem; }
   .launch-history button { grid-template-columns: 3.5rem minmax(0, 1fr) auto; }
   .launch-history button > svg { display: none; }

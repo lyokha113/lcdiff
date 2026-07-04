@@ -64,7 +64,6 @@ export function SplashScreen({
       <header className="launch__identity">
         <span className="launch__wordmark">LCDiff</span>
         <span className="launch__descriptor">Archive diff and merge</span>
-        <span className="launch__edition">Desktop workspace</span>
       </header>
 
       <section className="launch__hero" aria-labelledby="launch-title">
@@ -90,11 +89,11 @@ export function SplashScreen({
               type="button"
               className="launch-card launch-card--text"
               onClick={() => onPickMode("text")}
-              aria-label="Compare free text"
+              aria-label="Open Text mode"
             >
               <span className="launch-card__icon"><FileText aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">Free text</span>
+                <span className="launch-card__title">Text</span>
                 <span className="launch-card__description">
                   Paste or type drafts, then confirm when you want a diff result.
                 </span>
@@ -104,30 +103,30 @@ export function SplashScreen({
 
             <button
               type="button"
-              className="launch-card launch-card--compare"
-              onClick={() => onPickMode("compare")}
-              aria-label="Compare and merge sources"
+              className="launch-card launch-card--view"
+              onClick={() => onPickMode("single")}
+              aria-label="Open View mode"
             >
-              <span className="launch-card__icon"><GitCompareArrows aria-hidden="true" /></span>
+              <span className="launch-card__icon"><FileSearch aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">Compare and Merge</span>
-                <span className="launch-card__description">
-                  Open two JARs, ZIPs, folders, or text files. Inspect differences and stage exact changes.
-                </span>
+                <span className="launch-card__title">View</span>
+                <span className="launch-card__description">Open one JAR, ZIP, folder, or text file for source inspection.</span>
               </span>
               <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
             </button>
 
             <button
               type="button"
-              className="launch-card launch-card--view"
-              onClick={() => onPickMode("single")}
-              aria-label="Open one source"
+              className="launch-card launch-card--compare"
+              onClick={() => onPickMode("compare")}
+              aria-label="Open Compare mode"
             >
-              <span className="launch-card__icon"><FileSearch aria-hidden="true" /></span>
+              <span className="launch-card__icon"><GitCompareArrows aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">View</span>
-                <span className="launch-card__description">Browse one or more sources without merge controls.</span>
+                <span className="launch-card__title">Compare</span>
+                <span className="launch-card__description">
+                  Open two sources, inspect differences, stage changes, and save deliberately.
+                </span>
               </span>
               <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
             </button>
@@ -163,7 +162,7 @@ export function SplashScreen({
                       onClick={() => onOpenEntry(entry)}
                     >
                       <span className="launch-history__mode">
-                        {entry.mode === "compare" ? "Compare and Merge" : entry.mode === "text" ? "Free text" : "View"}
+                        {entry.mode === "compare" ? "Compare" : entry.mode === "text" ? "Text" : "View"}
                       </span>
                       <span className="launch-history__sources">
                         <span className="launch-history__name">{entry.paths.map(basename).join(" ↔ ")}</span>
