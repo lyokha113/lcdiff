@@ -28,8 +28,8 @@ describe("Free text history", () => {
       id: "free-text:1000:1:1",
       left: "a",
       right: "b",
-      title: "a -> b",
-      summary: "1 char left / 1 char right / same length",
+      title: "Same length edit",
+      summary: "1 char left -> 1 char right / same length",
     });
   });
 
@@ -42,21 +42,21 @@ describe("Free text history", () => {
         left: "left text",
         right: "right text",
         createdAt: 3000,
-        title: "left text -> right text",
-        summary: "9 chars left / 10 chars right / +1 chars",
+        title: "Grew by 1 char",
+        summary: "9 chars left -> 10 chars right / +1 char",
       },
     ]);
   });
 
-  it("uses readable snippets instead of length-only titles", () => {
+  it("uses timeline summaries instead of length-only titles", () => {
     const [entry] = recordFreeTextResult({
       left: "first line\nwith extra    spacing and a very long continuation",
       right: "",
       createdAt: 3500,
     });
 
-    expect(entry.title).toBe("first line with extra spacing and... -> Empty draft");
-    expect(entry.summary).toBe("61 chars left / empty right / -61 chars");
+    expect(entry.title).toBe("Shrank by 61 chars");
+    expect(entry.summary).toBe("61 chars left -> empty right / -61 chars");
   });
 
   it("limits history to the newest confirmed results", () => {
@@ -96,7 +96,7 @@ describe("Free text history", () => {
     ]));
 
     expect(loadFreeTextHistory()).toEqual([
-      { id: "ok", left: "", right: "r", createdAt: 2, title: "Empty vs 1 char", summary: "Left empty, right 1 char" },
+      { id: "ok", left: "", right: "r", createdAt: 2, title: "Grew by 1 char", summary: "empty left -> 1 char right / +1 char" },
     ]);
   });
 
@@ -112,8 +112,8 @@ describe("Free text history", () => {
         left: "",
         right: "r",
         createdAt: 2,
-        title: "Empty vs 1 char",
-        summary: "Left empty, right 1 char",
+        title: "Grew by 1 char",
+        summary: "empty left -> 1 char right / +1 char",
       },
     ]);
   });
@@ -147,8 +147,8 @@ describe("Free text history", () => {
         left: "newer",
         right: "value",
         createdAt: 2000,
-        title: "Newer",
-        summary: "Newer",
+        title: "Same length edit",
+        summary: "5 chars left -> 5 chars right / same length",
       },
     ]);
   });

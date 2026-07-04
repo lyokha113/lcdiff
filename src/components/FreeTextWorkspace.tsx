@@ -119,10 +119,13 @@ export function FreeTextWorkspace({
               aria-pressed={entry.id === activeResultId}
               onClick={() => setActiveResultId(entry.id)}
             >
-              <span className="free-text-history__title">{entry.title}</span>
-              <span className="free-text-history__meta">
-                <span>{entry.summary}</span>
-                <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+              <span className="free-text-history__marker" aria-hidden="true" />
+              <span className="free-text-history__content">
+                <span className="free-text-history__time-row">
+                  <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
+                  <span>{entry.title}</span>
+                </span>
+                <span className="free-text-history__summary">{entry.summary}</span>
               </span>
             </button>
           ))}

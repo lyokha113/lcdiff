@@ -361,9 +361,10 @@ main.app-shell {
 .free-text-history__item {
   position: relative;
   display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
   width: 100%;
-  gap: 0.38rem;
-  padding: 0.72rem 0.82rem 0.72rem 1rem;
+  gap: 0.7rem;
+  padding: 0.76rem 0.9rem 0.76rem 0.75rem;
   border: 0;
   border-bottom: 1px solid var(--line-soft);
   background: transparent;
@@ -374,44 +375,66 @@ main.app-shell {
 .free-text-history__item::before {
   content: "";
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: transparent;
+  inset: 0 auto 0 1.22rem;
+  width: 1px;
+  background: color-mix(in oklab, var(--line) 72%, transparent);
 }
 .free-text-history__item:hover,
 .free-text-history__item.active {
   background:
-    linear-gradient(90deg, color-mix(in oklab, var(--brass) 14%, transparent), transparent 72%),
+    linear-gradient(90deg, color-mix(in oklab, var(--brass) 10%, transparent), transparent 72%),
     color-mix(in oklab, var(--ink-2) 62%, transparent);
 }
-.free-text-history__item.active::before {
-  background: var(--brass);
+.free-text-history__marker {
+  position: relative;
+  z-index: 1;
+  width: 0.58rem;
+  height: 0.58rem;
+  align-self: start;
+  justify-self: center;
+  margin-top: 0.22rem;
+  border: 2px solid color-mix(in oklab, var(--text-2) 72%, transparent);
+  border-radius: 999px;
+  background: var(--ink-1);
 }
-.free-text-history__title {
+.free-text-history__item.active .free-text-history__marker {
+  border-color: var(--brass);
+  background: var(--brass);
+  box-shadow: 0 0 0 0.25rem color-mix(in oklab, var(--brass) 16%, transparent);
+}
+.free-text-history__content {
+  display: grid;
+  min-width: 0;
+  gap: 0.28rem;
+}
+.free-text-history__time-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: baseline;
+}
+.free-text-history__time-row time {
+  color: var(--text-0);
+  font-size: 0.92rem;
+  font-weight: 760;
+  font-variant-numeric: tabular-nums;
+}
+.free-text-history__time-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.88rem;
-  font-weight: 720;
+  color: var(--text-1);
+  font-size: 0.76rem;
+  font-weight: 650;
   letter-spacing: 0;
 }
-.free-text-history__meta {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  align-items: center;
-  color: var(--text-1);
-  font-size: 0.72rem;
-  line-height: 1.25;
-}
-.free-text-history__meta span {
+.free-text-history__summary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.free-text-history__meta time {
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 .free-text-empty {
   display: grid;

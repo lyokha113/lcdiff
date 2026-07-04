@@ -22,16 +22,20 @@ function charLabel(count: number): string {
   return `${count} chars`;
 }
 
-function excerpt(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (!normalized) return "Empty draft";
-  return normalized.length > 36 ? `${normalized.slice(0, 33).trimEnd()}...` : normalized;
-}
-
 function deltaLabel(leftLength: number, rightLength: number): string {
   const delta = rightLength - leftLength;
   if (delta === 0) return "same length";
-  return `${delta > 0 ? "+" : ""}${delta} chars`;
+  const absolute = Math.abs(delta);
+  const unit = absolute === 1 ? "char" : "chars";
+  return `${delta > 0 ? "+" : "-"}${absolute} ${unit}`;
+}
+
+function summaryTitle(leftLength: number, rightLength: number): string {
+  const delta = rightLength - leftLength;
+  if (delta === 0) return "Same length edit";
+  const absolute = Math.abs(delta);
+  const unit = absolute === 1 ? "char" : "chars";
+  return delta > 0 ? `Grew by ${absolute} ${unit}` : `Shrank by ${absolute} ${unit}`;
 }
 
 function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
@@ -43,8 +47,8 @@ function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
     left: input.left,
     right: input.right,
     createdAt: input.createdAt,
-    title: `${excerpt(input.left)} -> ${excerpt(input.right)}`,
-    summary: `${leftLabel} left / ${rightLabel} right / ${deltaLabel(input.left.length, input.right.length)}`,
+    title: summaryTitle(input.left.length, input.right.length),
+    summary: `${leftLabel} left -> ${rightLabel} right / ${deltaLabel(input.left.length, input.right.length)}`,
   };
 }
 
@@ -102,7 +106,8 @@ export function loadFreeTextHistory(): FreeTextHistoryEntry[] {
     for (const entry of validEntries) {
       if (seenIds.has(entry.id)) continue;
       seenIds.add(entry.id);
-      normalized.push(entry);
+      const rebuilt = buildEntry(entry);
+      normalized.push({ ...entry, title: rebuilt.title, summary: rebuilt.summary });
       if (normalized.length === FREE_TEXT_HISTORY_LIMIT) break;
     }
 
