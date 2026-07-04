@@ -26,7 +26,7 @@ export function openViewSource(state: ViewWorkspaceState, source: ViewSource): V
   const idx = state.sources.findIndex((candidate) => candidate.id === source.id);
   const sources = state.sources.slice();
   if (idx === -1) sources.push(source);
-  else sources[idx] = { ...source, entryTabs: sources[idx].entryTabs };
+  else sources[idx] = source;
   return {
     ...state,
     sources,

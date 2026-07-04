@@ -53,6 +53,24 @@ describe("View workspace state", () => {
     expect(next.activeSourceId).toBe("s1");
   });
 
+  it("drops stale entry tabs when reopening the same View source", () => {
+    const state = {
+      sources: [
+        { ...source("s1", "/a.jar"), entryTabs: [tab("A.class", 1)] },
+        { ...source("s2", "/b.jar"), entryTabs: [tab("B.class", 2)] },
+      ],
+      activeSourceId: "s1",
+      activeEntryPath: "A.class",
+    };
+
+    const next = openViewSource(state, source("s1", "/a.jar"));
+
+    expect(next.sources[0].entryTabs).toEqual([]);
+    expect(next.sources[1].entryTabs.map((entry) => entry.entryPath)).toEqual(["B.class"]);
+    expect(next.activeSourceId).toBe("s1");
+    expect(next.activeEntryPath).toBeUndefined();
+  });
+
   it("keeps entry tabs isolated by source", () => {
     const state = {
       sources: [
