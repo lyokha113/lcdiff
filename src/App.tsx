@@ -19,7 +19,11 @@ import {
   type Side,
   type StagedEntry,
   type TreeFilter,
+  type ViewEntryTab,
   type ViewMode,
+  type ViewSource,
+  type ViewSourceSummary,
+  type ViewWorkspaceState,
 } from "@/lib/types";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -43,6 +47,7 @@ import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
+import { FreeTextWorkspace } from "@/components/FreeTextWorkspace";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
 import {
@@ -62,6 +67,7 @@ import {
 import { searchContextForActiveTab, searchResultKey } from "@/lib/search";
 import { moveHunk, type Hunk } from "@/lib/textMerge";
 import { WorkspaceTabs } from "@/components/WorkspaceTabs";
+import { ViewSourceTabs } from "@/components/ViewSourceTabs";
 import { FileTree } from "@/components/FileTree";
 import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
@@ -81,6 +87,13 @@ import {
   type AppActionHandlers,
 } from "@/lib/actions";
 import { classifyFocusTarget, currentPlatform, matchShortcut } from "@/lib/shortcuts";
+import {
+  closeViewSource,
+  createViewSource,
+  focusViewEntryTab,
+  openViewSource,
+  upsertViewEntryTab,
+} from "@/lib/view-workspace";
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -89,7 +102,7 @@ function isTauriRuntime() {
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
-const FREE_TEXT_PATH = "Free text";
+const VIEW_ROOT_KEY = "";
 
 const SIDE_PREFIX_RE = /^(left|right):/;
 const stripSidePrefix = (key: string) => key.replace(SIDE_PREFIX_RE, "");
@@ -108,27 +121,27 @@ type OsOpenPathsPayload = {
   paths: string[];
 };
 
-const freeTextPair: ComparePair = {
-  path: FREE_TEXT_PATH,
-  status: "different",
-  left: { path: FREE_TEXT_PATH, kind: "text" },
-  right: { path: FREE_TEXT_PATH, kind: "text" },
-};
-
-function freeTextSummary(side: Side): ArchiveSummary {
+function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
   return {
-    path: side === "left" ? "Left text" : "Right text",
-    metadata: { sourceKind: "text", signed: false, multiRelease: false, zip64: false },
-    entries: [{ path: FREE_TEXT_PATH, kind: "text", uncompressedSize: 0 }],
+    path: tab.entryPath,
+    status: "onlyLeft",
+    left: { path: tab.entryPath, kind: tab.preview.kind },
   };
 }
 
-function freeTextPreview(side: Side, content: string): EntryPreview {
+function latestViewEntryTab(source: ViewSource | undefined) {
+  return source?.entryTabs.reduce<ViewEntryTab | undefined>(
+    (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
+    undefined,
+  );
+}
+
+function summaryAsArchive(source: ViewSource | undefined): ArchiveSummary | undefined {
+  if (!source) return undefined;
   return {
-    path: FREE_TEXT_PATH,
-    kind: "text",
-    language: "plaintext",
-    content,
+    path: source.path,
+    metadata: { sourceKind: source.kind, signed: false, multiRelease: false, zip64: false },
+    entries: [],
   };
 }
 
@@ -227,6 +240,7 @@ export function App() {
   const [archives, setArchives] = useState<Partial<Record<Side, ArchiveSummary>>>({});
   const [pairs, setPairs] = useState<ComparePair[]>([]);
   const [nestedPairs, setNestedPairs] = useState<Record<string, ComparePair[]>>({});
+  const [viewWorkspace, setViewWorkspace] = useState<ViewWorkspaceState>({ sources: [] });
   const [selected, setSelected] = useState<ComparePair>();
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
@@ -254,7 +268,6 @@ export function App() {
   const [stagedTarget, setStagedTarget] = useState<Side>();
   const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
   const [editBuffer, setEditBuffer] = useState<string>("");
-  const [freeText, setFreeText] = useState<Record<Side, string>>({ left: "", right: "" });
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
@@ -284,6 +297,9 @@ export function App() {
   const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
   const shortcutDialogOpenRef = useRef(shortcutDialogOpen);
   const viewRef = useRef(view);
+  const modeRef = useRef(mode);
+  const activeViewSourceIdRef = useRef<string | undefined>(undefined);
+  const viewRequestGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
@@ -348,6 +364,9 @@ export function App() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   useEffect(() => {
     const query = window.matchMedia?.("(prefers-color-scheme: dark)");
     if (!query) return;
@@ -447,28 +466,53 @@ export function App() {
     shortcutDialogOpenRef.current = resolved;
     setShortcutDialogOpen(resolved);
   }, []);
+  const activeViewSource = useMemo(
+    () => viewWorkspace.sources.find((source) => source.id === viewWorkspace.activeSourceId),
+    [viewWorkspace.activeSourceId, viewWorkspace.sources],
+  );
+  const activeViewEntryTab = useMemo(
+    () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
+    [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
+  );
+  useEffect(() => {
+    activeViewSourceIdRef.current = viewWorkspace.activeSourceId;
+  }, [viewWorkspace.activeSourceId]);
+  const activeViewRootPairs = useMemo(
+    () => activeViewSource?.nestedPairs[VIEW_ROOT_KEY] ?? [],
+    [activeViewSource?.nestedPairs],
+  );
   const displayedPairs = useMemo<ComparePair[]>(
-    () =>
-      mode === "compare"
-        ? pairs
-        : (archives.left?.entries ?? []).map((entry) => ({
-            path: entry.path,
-            status: "onlyLeft" as const,
-            left: entry,
-            right: undefined,
-          })),
-    [archives.left?.entries, mode, pairs],
+    () => (mode === "compare" ? pairs : activeViewRootPairs),
+    [activeViewRootPairs, mode, pairs],
   );
   const visiblePairs = useMemo(
     () =>
       displayedPairs.filter(
         (pair) =>
           !isDirectoryPair(pair) &&
-          pairPassesTreeFilter(pair, treeFilter) &&
+          (mode !== "compare" || pairPassesTreeFilter(pair, treeFilter)) &&
           (!searchPaths || searchPaths.has(pair.path)),
       ),
-    [displayedPairs, searchPaths, treeFilter],
+    [displayedPairs, mode, searchPaths, treeFilter],
   );
+
+  function isCurrentViewRequest(generation: number, sourceId?: string) {
+    return (
+      viewRequestGenerationRef.current === generation &&
+      modeRef.current === "single" &&
+      (!sourceId || activeViewSourceIdRef.current === sourceId)
+    );
+  }
+
+  function clearViewSearchState(cancelBackendSearch = false) {
+    searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
+    setSearching(false);
+    setSearchPaths(undefined);
+    setSearchResults([]);
+    setSelectedSearchResult(undefined);
+    if (cancelBackendSearch) void invoke("cancel_deep_search").catch(() => undefined);
+  }
 
   const refreshDiff = useCallback(async () => {
     try {
@@ -481,14 +525,69 @@ export function App() {
     }
   }, []);
 
+  const loadViewPairs = useCallback(async (sourceId: string, nestedPath = VIEW_ROOT_KEY, generation?: number) => {
+    const diff = await invoke<ArchiveDiff>("compute_view_nested_entries", { sourceId, nestedPath });
+    if (generation !== undefined && !isCurrentViewRequest(generation, sourceId)) return diff.pairs;
+    setViewWorkspace((current) => ({
+      ...current,
+      sources: current.sources.map((source) =>
+        source.id === sourceId
+          ? { ...source, nestedPairs: { ...source.nestedPairs, [nestedPath]: diff.pairs } }
+          : source,
+      ),
+    }));
+    return diff.pairs;
+  }, []);
+
   const expandArchive = useCallback(async (fullPath: string) => {
     try {
+      if (mode === "single") {
+        if (!activeViewSource) return;
+        await loadViewPairs(activeViewSource.id, fullPath);
+        return;
+      }
       const diff = await invoke<ArchiveDiff>("compute_nested_diff", { nestedPath: fullPath });
       setNestedPairs((prev) => ({ ...prev, [fullPath]: diff.pairs }));
     } catch (error) {
       setMessage(String(error));
     }
-  }, []);
+  }, [activeViewSource, loadViewPairs, mode]);
+
+  const openViewPath = useCallback(async (path: string) => {
+    const generation = viewRequestGenerationRef.current + 1;
+    viewRequestGenerationRef.current = generation;
+    try {
+      const validatedPath = await invoke<string>("validate_path", { raw: path });
+      if (!isCurrentViewRequest(generation)) return undefined;
+      const summary = await invoke<ViewSourceSummary>("open_view_source", { path: validatedPath });
+      if (!isCurrentViewRequest(generation)) return undefined;
+      previewRequestId.current += 1;
+      clearViewSearchState(false);
+      setPathErrors((current) => ({ ...current, left: undefined }));
+      setPaths((current) => ({ ...current, left: summary.path }));
+      setArchives({});
+      setPairs([]);
+      setNestedPairs({});
+      setSelected(undefined);
+      setActiveTab("files");
+      setOpenTabs([]);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+      activeViewSourceIdRef.current = summary.id;
+      setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
+      await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
+      if (!isCurrentViewRequest(generation, summary.id)) return undefined;
+      setMessage(`Opened ${summary.path}`);
+      return undefined;
+    } catch (error) {
+      if (!isCurrentViewRequest(generation)) return undefined;
+      const message = String(error);
+      setPathErrors((current) => ({ ...current, left: message }));
+      setMessage(message);
+      return message;
+    }
+  }, [loadViewPairs]);
 
   const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
     try {
@@ -524,47 +623,47 @@ export function App() {
 
   const openTextMode = useCallback(() => {
     if (stagedTarget) {
-      setMessage("Save or clear unsaved changes before switching to text compare.");
+      setMessage("Save or clear unsaved changes before switching to Free text.");
       return;
     }
+    modeRef.current = "text";
+    viewRequestGenerationRef.current += 1;
     previewRequestId.current += 1;
     searchStreamId.current += 1;
+    cancelableSearchActiveRef.current = false;
     setSearching(false);
+    setSearchOpen(false);
     setMode("text");
     setView("workspace");
     setPaths(emptyPaths);
     setPathErrors({});
-    setArchives({ left: freeTextSummary("left"), right: freeTextSummary("right") });
-    setPairs([freeTextPair]);
+    setArchives({});
+    setPairs([]);
     setNestedPairs({});
-    setSelected(freeTextPair);
-    setActiveTab(FREE_TEXT_PATH);
+    setSelected(undefined);
+    setActiveTab("files");
     setViewMode("source");
-    const nextPreview = {
-      left: freeTextPreview("left", freeText.left),
-      right: freeTextPreview("right", freeText.right),
-    };
-    setPreview(nextPreview);
-    focusCounter.current += 1;
-    setOpenTabs([{
-      path: FREE_TEXT_PATH,
-      pair: freeTextPair,
-      preview: nextPreview,
-      viewMode: "source",
-      lastFocus: focusCounter.current,
-    }]);
+    setPreview({});
+    setOpenTabs([]);
+    setQuery("");
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
-    setMessage("Text compare is ready. Paste or type directly in either pane.");
-  }, [freeText.left, freeText.right, stagedTarget]);
+    void invoke("cancel_deep_search").catch(() => undefined);
+    setMessage("Free text is ready. Edit both sides, then compare when you want a result.");
+  }, [stagedTarget]);
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
+    if (modeRef.current === "text") {
+      setMessage("File opens are not available in Free text mode.");
+      return;
+    }
+    modeRef.current = "single";
     setMode("single");
     setView("workspace");
-    void openPath("left", path, true);
-  }, [openPath]);
+    void openViewPath(path);
+  }, [openViewPath]);
 
   useEffect(() => {
     openTabsCountRef.current = openTabs.length;
@@ -574,14 +673,16 @@ export function App() {
     if (view !== "workspace") return;
     if (mode === "text") return;
     if (archives.left?.metadata.sourceKind === "text" || archives.right?.metadata.sourceKind === "text") return;
+    if (mode === "single" && activeViewSource) {
+      setHistory(recordSession("single", [activeViewSource.path], Date.now()));
+      return;
+    }
     const left = archives.left?.path;
     const right = archives.right?.path;
-    if (mode === "single" && left) {
-      setHistory(recordSession("single", [left], Date.now()));
-    } else if (mode === "compare" && left && right) {
+    if (mode === "compare" && left && right) {
       setHistory(recordSession("compare", [left, right], Date.now()));
     }
-  }, [view, mode, archives.left?.path, archives.right?.path]);
+  }, [view, mode, activeViewSource, archives.left?.path, archives.right?.path]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -589,14 +690,19 @@ export function App() {
     getCurrentWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
+        if (mode === "text") {
+          setMessage("File drops are not available in Free text mode.");
+          return;
+        }
         const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
-        void openPath(side, event.payload.paths[0]);
+        if (mode === "single") void openViewPath(event.payload.paths[0]);
+        else void openPath(side, event.payload.paths[0]);
       })
       .then((stop) => {
         unlisten = stop;
       });
     return () => unlisten?.();
-  }, [mode, openPath]);
+  }, [mode, openPath, openViewPath]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -762,7 +868,10 @@ export function App() {
           { name: "JAR or ZIP archive", extensions: ["jar", "zip", "war", "ear"] },
         ],
       });
-      if (path) await openPath(side, path);
+      if (path) {
+        if (mode === "single") await openViewPath(path);
+        else await openPath(side, path);
+      }
     } catch (error) {
       setMessage(`Open file picker failed: ${String(error)}`);
     }
@@ -774,13 +883,20 @@ export function App() {
         multiple: false,
         directory: true,
       });
-      if (path) await openPath(side, path);
+      if (path) {
+        if (mode === "single") await openViewPath(path);
+        else await openPath(side, path);
+      }
     } catch (error) {
       setMessage(`Open directory picker failed: ${String(error)}`);
     }
   }
 
   function refreshSources() {
+    if (mode === "single") {
+      if (activeViewSource) void openViewPath(activeViewSource.path);
+      return;
+    }
     const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
     for (const side of sides) {
       if (archives[side]?.metadata.sourceKind === "text") continue;
@@ -789,7 +905,112 @@ export function App() {
     }
   }
 
+  function focusViewTab(path: string) {
+    if (!activeViewSource) return;
+    const tab = activeViewSource.entryTabs.find((candidate) => candidate.entryPath === path);
+    if (!tab) return;
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setSelected(viewPairFromPreview(tab));
+    setPreview({ left: tab.preview });
+    setEditBuffer(tab.preview.content);
+    setViewMode(tab.viewMode);
+    setActiveTab(path);
+    setViewWorkspace((current) => focusViewEntryTab(current, activeViewSource.id, path, stamp));
+  }
+
+  function selectViewSource(sourceId: string) {
+    viewRequestGenerationRef.current += 1;
+    activeViewSourceIdRef.current = sourceId;
+    clearViewSearchState(cancelableSearchActiveRef.current);
+    const source = viewWorkspace.sources.find((candidate) => candidate.id === sourceId);
+    const tab = latestViewEntryTab(source);
+    setViewWorkspace((current) => ({
+      ...current,
+      activeSourceId: sourceId,
+      activeEntryPath: tab?.entryPath,
+    }));
+    setActiveTab(tab?.entryPath ?? "files");
+    if (tab) {
+      setSelected(viewPairFromPreview(tab));
+      setPreview({ left: tab.preview });
+      setEditBuffer(tab.preview.content);
+      setViewMode(tab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+    setSelectedSearchResult(undefined);
+  }
+
+  function closeViewEntryTab(path: string) {
+    if (!activeViewSource) return;
+    const remainingTabs = activeViewSource.entryTabs.filter((tab) => tab.entryPath !== path);
+    const nextTab =
+      activeTab === path
+        ? remainingTabs.reduce<ViewEntryTab | undefined>(
+            (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
+            undefined,
+          )
+        : activeViewEntryTab;
+    setViewWorkspace((current) => ({
+      ...current,
+      activeEntryPath: nextTab?.entryPath,
+      sources: current.sources.map((source) =>
+        source.id === activeViewSource.id ? { ...source, entryTabs: remainingTabs } : source,
+      ),
+    }));
+    if (activeTab !== path) return;
+    setActiveTab(nextTab?.entryPath ?? "files");
+    if (nextTab) {
+      setSelected(viewPairFromPreview(nextTab));
+      setPreview({ left: nextTab.preview });
+      setEditBuffer(nextTab.preview.content);
+      setViewMode(nextTab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+  }
+
+  function closeViewSourceTab(sourceId: string) {
+    viewRequestGenerationRef.current += 1;
+    void invoke("close_view_source", { sourceId }).catch(() => undefined);
+    const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
+    const closedActive = viewWorkspace.activeSourceId === sourceId;
+    const sourceIndex = viewWorkspace.sources.findIndex((source) => source.id === sourceId);
+    const nextSource = closedActive ? remainingSources[sourceIndex] ?? remainingSources[sourceIndex - 1] : activeViewSource;
+    activeViewSourceIdRef.current = nextSource?.id;
+    if (closedActive) clearViewSearchState(cancelableSearchActiveRef.current);
+    const nextTab = closedActive ? latestViewEntryTab(nextSource) : activeViewEntryTab;
+    setViewWorkspace((current) => ({
+      ...closeViewSource(current, sourceId),
+      activeEntryPath: nextTab?.entryPath,
+    }));
+    if (!closedActive) return;
+    setActiveTab(nextTab?.entryPath ?? "files");
+    if (nextTab) {
+      setSelected(viewPairFromPreview(nextTab));
+      setPreview({ left: nextTab.preview });
+      setEditBuffer(nextTab.preview.content);
+      setViewMode(nextTab.viewMode);
+    } else {
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+    }
+  }
+
   function focusTab(path: string) {
+    if (mode === "single") {
+      focusViewTab(path);
+      return;
+    }
     const tab = openTabs.find((t) => t.path === path);
     if (!tab) return;
     focusCounter.current += 1;
@@ -802,7 +1023,46 @@ export function App() {
     setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
   }
 
+  async function inspectViewEntry(pair: ComparePair, force = false) {
+    const source = activeViewSource;
+    if (!source) return;
+    const existing = source.entryTabs.find((tab) => tab.entryPath === pair.path);
+    if (existing && !force) {
+      focusViewTab(pair.path);
+      return;
+    }
+    const sourceId = source.id;
+    const requestId = previewRequestId.current + 1;
+    const generation = viewRequestGenerationRef.current;
+    previewRequestId.current = requestId;
+    setSelected(pair);
+    setActiveTab(pair.path);
+    setViewMode("source");
+    const nextPreview = await invoke<EntryPreview>("read_view_entry", {
+      sourceId: source.id,
+      entryPath: pair.path,
+    });
+    if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
+    setPreview({ left: nextPreview });
+    setEditBuffer(nextPreview.content);
+    focusCounter.current += 1;
+    const stamp = focusCounter.current;
+    setViewWorkspace((current) => {
+      if (current.activeSourceId !== sourceId) return current;
+      return upsertViewEntryTab(
+        current,
+        sourceId,
+        { entryPath: pair.path, preview: nextPreview, viewMode: "source", lastFocus: stamp },
+        MAX_DIFF_TABS,
+      );
+    });
+  }
+
   async function inspect(pair: ComparePair, force = false) {
+    if (mode === "single") {
+      await inspectViewEntry(pair, force);
+      return;
+    }
     const existing = openTabs.find((t) => t.path === pair.path);
     if (existing && !force) {
       focusTab(pair.path);
@@ -851,6 +1111,10 @@ export function App() {
   }
 
   function closeTab(path: string) {
+    if (mode === "single") {
+      closeViewEntryTab(path);
+      return;
+    }
     if (activeTab === path) {
       const next = pickNeighbor(openTabs, path);
       if (next === "files") {
@@ -863,6 +1127,19 @@ export function App() {
   }
 
   function focusRelativeTab(direction: 1 | -1) {
+    if (mode === "single") {
+      const tabs = activeViewSource?.entryTabs ?? [];
+      if (tabs.length === 0) return;
+      if (activeTab === "files") {
+        const target = direction > 0 ? tabs[0] : tabs.at(-1);
+        if (target) focusViewTab(target.entryPath);
+        return;
+      }
+      const index = tabs.findIndex((tab) => tab.entryPath === activeTab);
+      const nextIndex = index < 0 ? 0 : (index + direction + tabs.length) % tabs.length;
+      focusViewTab(tabs[nextIndex].entryPath);
+      return;
+    }
     if (openTabs.length === 0) return;
     if (activeTab === "files") {
       const target = direction > 0 ? openTabs[0] : openTabs.at(-1);
@@ -887,6 +1164,40 @@ export function App() {
     }
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
+    if (mode === "single") {
+      const source = activeViewSource;
+      if (!source) return;
+      const sourceId = source.id;
+      const generation = viewRequestGenerationRef.current;
+      try {
+        const nextPreview: EntryPreview = {
+          path: pair.path,
+          kind: "class",
+          language: "plaintext",
+          content: await invoke<string>("disassemble_view_entry", {
+            sourceId,
+            entryPath: pair.path,
+          }),
+        };
+        if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
+        setPreview({ left: nextPreview });
+        setViewMode("bytecode");
+        focusCounter.current += 1;
+        setViewWorkspace((current) => {
+          if (current.activeSourceId !== sourceId) return current;
+          return upsertViewEntryTab(
+            current,
+            sourceId,
+            { entryPath: pair.path, preview: nextPreview, viewMode: "bytecode", lastFocus: focusCounter.current },
+            MAX_DIFF_TABS,
+          );
+        });
+      } catch (error) {
+        if (!isCurrentViewRequest(generation, sourceId)) return;
+        setMessage(String(error));
+      }
+      return;
+    }
     const next: Partial<Record<Side, EntryPreview>> = {};
     try {
       for (const side of ["left", "right"] as const) {
@@ -912,15 +1223,19 @@ export function App() {
       openTextMode();
       return;
     }
+    modeRef.current = next;
+    if (next !== "single") viewRequestGenerationRef.current += 1;
     setMode(next);
     setView("workspace");
   }
 
   function openEntry(entry: HistoryEntry) {
+    modeRef.current = entry.mode;
+    viewRequestGenerationRef.current += 1;
     setMode(entry.mode);
     setView("workspace");
     if (entry.mode === "single") {
-      void openPath("left", entry.paths[0], true);
+      void openViewPath(entry.paths[0]);
     } else {
       void openPath("left", entry.paths[0], true).then(() =>
         openPath("right", entry.paths[1], true),
@@ -942,9 +1257,39 @@ export function App() {
       setMessage(`Save or clear unsaved changes before switching to ${next === "single" ? "View" : "Compare"} mode.`);
       return;
     }
+    modeRef.current = next;
+    viewRequestGenerationRef.current += 1;
+    if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
       diffEditorRef.current?.setModel(null);
       diffEditorRef.current = undefined;
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setOpenTabs([]);
+      setActiveTab("files");
+      setViewMode("source");
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
+    }
+    if (mode === "single" && next === "compare") {
+      diffEditorRef.current?.setModel(null);
+      diffEditorRef.current = undefined;
+      setPaths(emptyPaths);
+      setPathErrors({});
+      setArchives({});
+      setPairs([]);
+      setNestedPairs({});
+      setSelected(undefined);
+      setActiveTab("files");
+      setOpenTabs([]);
+      setPreview({});
+      setEditBuffer("");
+      setViewMode("source");
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
     }
     if (mode === "text") {
       setPaths(emptyPaths);
@@ -965,10 +1310,6 @@ export function App() {
 
   async function copy(from: Side, to: Side, pair = selected) {
     if (!pair) return;
-    if (pair.path === FREE_TEXT_PATH) {
-      setMessage("Free text compare is edited directly in the diff editor.");
-      return;
-    }
     try {
       await invoke("stage_copy", { from, to, entryPath: pair.path });
       setStagedTarget(to);
@@ -1110,20 +1451,6 @@ export function App() {
 
   async function stageFileSide(side: Side, content: string) {
     if (!selected) return;
-    if (mode === "text" && selected.path === FREE_TEXT_PATH) {
-      const nextSidePreview = freeTextPreview(side, content);
-      setFreeText((current) => ({ ...current, [side]: content }));
-      setPreview((current) => {
-        const next = { ...current, [side]: nextSidePreview };
-        setOpenTabs((tabs) =>
-          tabs.map((tab) =>
-            tab.path === FREE_TEXT_PATH ? { ...tab, preview: next } : tab,
-          ),
-        );
-        return next;
-      });
-      return;
-    }
     const key = `${side}:${selected.path}`;
     const original = (side === "left" ? preview.left?.content : preview.right?.content) ?? "";
     if (content === original) {
@@ -1256,38 +1583,69 @@ export function App() {
       const matches = new Set<string>();
       const results: SearchResult[] = [];
       const options = { includePath: true, includeText: true, includeConstants: true };
-      for (const side of searchSides()) {
-        if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-        for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
-          if (searchStreamId.current !== searchId) return;
-          matches.add(hit.entryPath);
-          results.push({
-            side,
-            tier: "T2",
-            path: hit.entryPath,
-            kind: hit.kind,
-            line: hit.line,
-            preview: hit.preview,
-          });
+      const appendHit = (hit: BackendSearchHit, side: Side, tier: "T2" | "T3") => {
+        matches.add(hit.entryPath);
+        results.push({
+          side,
+          tier,
+          path: hit.entryPath,
+          kind: hit.kind,
+          line: hit.line,
+          preview: hit.preview,
+        });
+      };
+
+      if (mode === "single") {
+        const sourceId = activeViewSource?.id;
+        const generation = viewRequestGenerationRef.current;
+        if (!sourceId) {
+          setMessage("Open a source before searching View mode.");
+          return;
+        }
+        for (const hit of await invoke<BackendSearchHit[]>("search_view_source", {
+          sourceId,
+          query,
+          options,
+        })) {
+          if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
+          appendHit(hit, "left", "T2");
+        }
+      } else {
+        for (const side of searchSides()) {
+          if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
+          for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
+            if (searchStreamId.current !== searchId) return;
+            appendHit(hit, side, "T2");
+          }
         }
       }
       if (sourceTierEnabled) {
+        if (mode === "single") {
+          const sourceId = activeViewSource?.id;
+          if (!sourceId || !isCurrentViewRequest(viewRequestGenerationRef.current, sourceId)) return;
+        }
         setSearchPaths(new Set(matches));
         setSearchResults([...results]);
         try {
-          for (const side of searchSides()) {
-            if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-            for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
-              if (searchStreamId.current !== searchId) return;
-              matches.add(hit.entryPath);
-              results.push({
-                side,
-                tier: "T3",
-                path: hit.entryPath,
-                kind: hit.kind,
-                line: hit.line,
-                preview: hit.preview,
-              });
+          if (mode === "single") {
+            const sourceId = activeViewSource?.id;
+            const generation = viewRequestGenerationRef.current;
+            if (!sourceId) return;
+            for (const hit of await invoke<BackendSearchHit[]>("deep_search_view_source", {
+              sourceId,
+              query,
+              searchId,
+            })) {
+              if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
+              appendHit(hit, "left", "T3");
+            }
+          } else {
+            for (const side of searchSides()) {
+              if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
+              for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+                if (searchStreamId.current !== searchId) return;
+                appendHit(hit, side, "T3");
+              }
             }
           }
         } catch (error) {
@@ -1299,6 +1657,10 @@ export function App() {
         }
       }
       if (searchStreamId.current !== searchId) return;
+      if (mode === "single") {
+        const sourceId = activeViewSource?.id;
+        if (!sourceId || !isCurrentViewRequest(viewRequestGenerationRef.current, sourceId)) return;
+      }
       setSearchPaths(matches);
       setSearchResults(results);
       setMessage(`${sourceTierEnabled ? "Search with decompiled source" : "Search"} matched ${matches.size} entries.`);
@@ -1381,7 +1743,6 @@ export function App() {
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
-  const isTextMode = mode === "text";
   const backupEnabled = preferences.misc.save.backupEnabled;
   const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
   const activeColorPattern = effectiveColorPattern(
@@ -1401,37 +1762,41 @@ export function App() {
       EDIT_EXTENSIONS.includes(p.path.split(".").pop()?.toLowerCase() ?? ""));
   const isTextMerge =
     mode === "compare" && sideEditableText(preview.left) && sideEditableText(preview.right);
-  const isDiffEditable =
-    isTextMerge || (isTextMode && sideEditableText(preview.left) && sideEditableText(preview.right));
+  const isDiffEditable = isTextMerge;
 
-  const isEditableEntry =
-    mode === "single" &&
-    viewMode === "source" &&
-    !!preview.left &&
-    preview.left.kind !== "class" &&
-    (preview.left.kind === "text" ||
-      EDIT_EXTENSIONS.includes(preview.left.path.split(".").pop()?.toLowerCase() ?? ""));
+  const isEditableEntry = false;
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
-  const leftLabel = isTextMode ? "Left text" : baseName(archives.left?.path ?? paths.left) ?? "Left";
-  const rightLabel = isTextMode ? "Right text" : baseName(archives.right?.path ?? paths.right) ?? "Right";
+  const leftLabel = mode === "single"
+      ? activeViewSource?.name ?? "Source"
+      : baseName(archives.left?.path ?? paths.left) ?? "Left";
+  const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
   const hunkMerge = isTextMerge;
+  const sourceChipArchives = mode === "single"
+    ? { left: summaryAsArchive(activeViewSource) }
+    : archives;
+  const loadedSourceCount = mode === "single"
+    ? viewWorkspace.sources.length
+    : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
+  const actionOpenTabs = mode === "single"
+    ? (activeViewSource?.entryTabs ?? []).map((tab) => tab.entryPath)
+    : openTabs.map((tab) => tab.path);
 
   const actionContext = useMemo<AppActionContext>(() => ({
     mode,
     activeTab,
-    openTabs: openTabs.map((tab) => tab.path),
+    openTabs: actionOpenTabs,
     selectedPath: selected?.path,
     selectedCanCopyLeft: mode === "compare" && !!selected?.right && selected.right.kind !== "directory",
     selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
     stagedTarget,
     stagedCount: Object.keys(stagedEntries).length,
-    loadedSourceCount: Number(Boolean(archives.left)) + Number(Boolean(archives.right)),
+    loadedSourceCount,
     hunkMerge: activeTab !== "files" && hunkMerge,
     focusKind: classifyFocusTarget(document.activeElement),
     shortcutDialogOpen,
-  }), [activeTab, archives.left, archives.right, hunkMerge, mode, openTabs, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
+  }), [actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
 
   const actionHandlers = useMemo<AppActionHandlers>(() => ({
     openLeftFile: () => void browse("left"),
@@ -1441,8 +1806,20 @@ export function App() {
     refresh: refreshSources,
     save: () => stagedTarget && void save(stagedTarget),
     clearStaged: () => void clearStaged(),
-    toggleSearch: () => setSearchOpen((open) => !open),
-    runContextualSearch: () => void (searchContext === "files" ? runSearch() : findInCurrentDiff()),
+    toggleSearch: () => {
+      if (mode === "text") {
+        setMessage("Search is not available in Free text mode.");
+        return;
+      }
+      setSearchOpen((open) => !open);
+    },
+    runContextualSearch: () => {
+      if (mode === "text") {
+        setMessage("Search is not available in Free text mode.");
+        return;
+      }
+      void (searchContext === "files" ? runSearch() : findInCurrentDiff());
+    },
     togglePreferences: () => setDrawerOpen((open) => !open),
     toggleShortcutDialog: () => updateShortcutDialogOpen((open) => !open),
     focusFiles: () => setActiveTab("files"),
@@ -1465,6 +1842,7 @@ export function App() {
     findInCurrentDiff,
     focusRelativeTab,
     moveHunkTo,
+    mode,
     refreshSources,
     runSearch,
     save,
@@ -1596,7 +1974,7 @@ export function App() {
     <main
       className="app-shell"
       ref={appShellRef}
-      aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Text comparison workspace" : "Source workspace"}
+      aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Free text workspace" : "Source workspace"}
     >
       <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
       <MenuBar
@@ -1607,31 +1985,35 @@ export function App() {
         searchOpen={searchOpen}
         drawerOpen={drawerOpen}
         canRefresh={Boolean(
-          (archives.left && archives.left.metadata.sourceKind !== "text") ||
-          (archives.right && archives.right.metadata.sourceKind !== "text"),
+          mode === "single"
+            ? activeViewSource
+            : (archives.left && archives.left.metadata.sourceKind !== "text") ||
+              (archives.right && archives.right.metadata.sourceKind !== "text"),
         )}
         onChangeMode={changeMode}
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
         onClearStaged={clearStaged}
-        onToggleSearch={() => setSearchOpen((o) => !o)}
+        onToggleSearch={() => {
+          if (mode !== "text") setSearchOpen((o) => !o);
+        }}
         onToggleDrawer={() => setDrawerOpen((o) => !o)}
       />
 
       {mode !== "text" && (
         <SourceChips
           mode={mode}
-          archives={archives}
+          archives={sourceChipArchives}
           paths={paths}
           pathErrors={pathErrors}
           onPathChange={(side, value) => setPaths((current) => ({ ...current, [side]: value }))}
-          onOpenPath={(side, path) => void openPath(side, path)}
+          onOpenPath={(side, path) => void (mode === "single" ? openViewPath(path) : openPath(side, path))}
           onBrowse={(side) => void browse(side)}
           onBrowseFolder={(side) => void browseFolder(side)}
         />
       )}
 
-      {searchOpen && (
+      {mode !== "text" && searchOpen && (
         <aside className="search-surface" aria-label="Search workspace">
           <SearchBar
             open
@@ -1656,12 +2038,27 @@ export function App() {
       {dropHint && <p className="platform-hint">{dropHint}</p>}
       <div className="work-area">
         <section className="workspace">
+          {mode === "single" && (
+            <ViewSourceTabs
+              sources={viewWorkspace.sources}
+              activeSourceId={viewWorkspace.activeSourceId}
+              onSelect={selectViewSource}
+              onClose={closeViewSourceTab}
+            />
+          )}
           {mode !== "text" && (
             <WorkspaceTabs
               fileCount={visiblePairs.length}
               activeId={activeTab}
               mode={mode}
-              tabs={openTabs.map((t) => ({ path: t.path, status: t.pair.status }))}
+              tabs={
+                mode === "single"
+                  ? (activeViewSource?.entryTabs ?? []).map((tab) => ({
+                      path: tab.entryPath,
+                      status: "onlyLeft" as const,
+                    }))
+                  : openTabs.map((t) => ({ path: t.path, status: t.pair.status }))
+              }
               treeFilter={treeFilter}
               viewMode={viewMode}
               canShowSource={!!selected}
@@ -1684,7 +2081,37 @@ export function App() {
           >
             {mode === "text" ? (
               <div className="workspace-tabpanel" role="tabpanel">
-                {diffView}
+                <FreeTextWorkspace
+                  preferences={preferences}
+                  effectiveColorPattern={activeColorPattern}
+                  ignoreTrimWhitespace={ignoreTrimWhitespace}
+                  onMessage={setMessage}
+                />
+              </div>
+            ) : mode === "single" ? (
+              <div className="view-workspace-split" role="tabpanel" aria-label="View source browser">
+                <div className="view-workspace-pane view-workspace-pane--tree">
+                  <FileTree
+                    visiblePairs={visiblePairs}
+                    selected={selected}
+                    stagedEntries={stagedEntries}
+                    mode={mode}
+                    treeFilter={treeFilter}
+                    nestedPairs={activeViewSource?.nestedPairs ?? {}}
+                    leftLabel={leftLabel}
+                    rightLabel={rightLabel}
+                    expandAllVersion={treeExpandAllVersion}
+                    collapseAllVersion={treeCollapseAllVersion}
+                    onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
+                    onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                    onCopy={(from, to, pair) => void copy(from, to, pair)}
+                    onUnstage={(entryPath) => void unstage(entryPath)}
+                    onExpandArchive={(fullPath) => void expandArchive(fullPath)}
+                  />
+                </div>
+                <div className="view-workspace-pane view-workspace-pane--content">
+                  {diffView}
+                </div>
               </div>
             ) : (
               <>

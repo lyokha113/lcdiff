@@ -25,11 +25,28 @@ let deepSearchError: Error | undefined;
 let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
+let dragDropHandler: ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) | undefined;
+const viewRootEntries: Record<string, string[]> = {
+  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json"],
+  "view:/tmp/beta.jar": ["beta.json"],
+  "view:/tmp/from-finder.jar": ["finder.json"],
+};
 function fileSummary(side: "left" | "right") {
   return {
     path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
     metadata: { sourceKind: summarySourceKind, signed: false, multiRelease: false, zip64: false },
     entries: [FILE_ENTRY],
+  };
+}
+
+function viewSummary(path: string) {
+  const name = path.split("/").pop() ?? path;
+  return {
+    id: `view:${path}`,
+    path,
+    name,
+    kind: "archive" as const,
+    entryCount: viewRootEntries[`view:${path}`]?.length ?? 1,
   };
 }
 
@@ -53,6 +70,10 @@ function entryPreview(side: "left" | "right") {
   };
 }
 
+function entryKind(path: string) {
+  return path.endsWith(".class") ? "class" as const : "text" as const;
+}
+
 const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "platform_hints":
@@ -68,10 +89,41 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
       return (args?.raw as string) ?? "/tmp/config.json";
     case "open_archive":
       return fileSummary(args?.side as "left" | "right");
+    case "open_view_source":
+      return viewSummary(args?.path as string);
+    case "list_view_sources":
+      return [];
     case "compute_diff":
       return onePairDiff;
+    case "compute_view_nested_entries": {
+      const sourceId = args?.sourceId as string;
+      const paths = viewRootEntries[sourceId] ?? ["config.json"];
+      return {
+        pairs: paths.map((path) => ({
+          path,
+          status: "onlyLeft" as const,
+          left: { path, kind: entryKind(path) },
+        })),
+      };
+    }
     case "read_entry":
       return entryPreview(args?.side as "left" | "right");
+    case "read_view_entry": {
+      const entryPath = args?.entryPath as string;
+      return {
+        path: entryPath,
+        kind: entryKind(entryPath),
+        language: entryPath.endsWith(".class") ? "java" : "json",
+        content: `${args?.sourceId}:${entryPath}`,
+      };
+    }
+    case "disassemble_view_entry":
+      return `bytecode:${args?.sourceId}:${args?.entryPath}`;
+    case "search_view_source":
+      return [
+        { entryPath: "alpha.json", kind: "path" as const },
+        { entryPath: "Alpha.class", kind: "constantPool" as const, preview: "Alpha" },
+      ];
     case "search":
       return [
         { entryPath: "config.json", kind: "path" as const },
@@ -81,11 +133,16 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
       if (deepSearchBlock) await deepSearchBlock.promise;
       if (deepSearchError) throw deepSearchError;
       return [{ entryPath: "config.json", kind: "source" as const, line: 3, preview: "class Config" }];
+    case "deep_search_view_source":
+      if (deepSearchBlock) await deepSearchBlock.promise;
+      if (deepSearchError) throw deepSearchError;
+      return [{ entryPath: "Alpha.class", kind: "source" as const, line: 3, preview: "class Alpha" }];
     case "cancel_deep_search":
       return undefined;
     case "stage_write":
     case "prefetch_siblings":
     case "clear_staged":
+    case "close_view_source":
       return undefined;
     case "commit_merge":
       return {
@@ -107,7 +164,10 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    onDragDropEvent: vi.fn(async () => vi.fn()),
+    onDragDropEvent: vi.fn(async (handler: typeof dragDropHandler) => {
+      dragDropHandler = handler;
+      return vi.fn();
+    }),
     onCloseRequested: vi.fn(async () => vi.fn()),
     destroy: vi.fn(),
   }),
@@ -234,8 +294,18 @@ vi.mock("@/lib/monaco", () => ({}));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
-  // Single editor (single mode) — never reached here, stub it out.
-  default: () => <div data-testid="editor" />,
+  default: (props: {
+    value?: string;
+    onChange?: (value: string | undefined) => void;
+    options?: { ariaLabel?: string };
+  }) => (
+    <textarea
+      data-testid="editor"
+      aria-label={props.options?.ariaLabel}
+      value={props.value}
+      onChange={(event) => props.onChange?.(event.target.value)}
+    />
+  ),
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: (props: {
@@ -273,8 +343,8 @@ function cmdOrCtrl(overrides: KeyboardEventInit = {}): KeyboardEventInit {
 
 async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  // Splash → Compare / Merge workspace.
-  await user.click(screen.getByText("Compare / Merge"));
+  // Splash → Compare workspace.
+  await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
   await user.click(screen.getByLabelText("Toggle search"));
 
   // Open the left source via its repick popover → Browse file.
@@ -298,14 +368,31 @@ async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
 
 async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  await user.click(screen.getByText("Compare / Merge"));
+  await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+}
+
+async function switchMode(mode: "View" | "Compare" | "Text") {
+  const user = userEvent.setup();
+  const optionName = mode === "Text" ? "Free text" : mode === "Compare" ? "Compare and Merge" : mode;
+  await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
+
+async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
+  let browseButton = screen.queryByRole("button", { name: /Browse file/i });
+  if (!browseButton) {
+    await user.click(screen.getByLabelText("Change left source"));
+    browseButton = await screen.findByRole("button", { name: /Browse file/i });
+  }
+  await user.click(browseButton);
 }
 
 describe("App file-merge wiring", () => {
   beforeEach(() => {
     invoke.mockClear();
     invoke.mockImplementation(defaultInvoke);
-    chooseFile.mockClear();
+    chooseFile.mockReset();
+    chooseFile.mockImplementation(async () => "/tmp/config.json");
     setOriginal.mockClear();
     setModified.mockClear();
     revealOriginal.mockClear();
@@ -324,6 +411,7 @@ describe("App file-merge wiring", () => {
     deferredAppActionListen = undefined;
     appActionHandler = undefined;
     osOpenPathsHandler = undefined;
+    dragDropHandler = undefined;
     listen.mockClear();
     Object.defineProperty(Element.prototype, "hasPointerCapture", {
       configurable: true,
@@ -352,7 +440,7 @@ describe("App file-merge wiring", () => {
   it("renders a landmark-based comparison workspace", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
@@ -360,37 +448,100 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
-  it("opens editable Text mode without source pickers, tree controls, merge controls, or staging", async () => {
+  it("opens Free text with draft editors and no diff result until confirm", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
 
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Left File/Folder" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Open files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Diff block navigation" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/LEFT: Left free text/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/RIGHT: Right free text/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("diff-editor")).toBeInTheDocument();
-    expect(diffEditorProps.options?.readOnly).toBe(false);
-    expect(diffEditorProps.options?.originalEditable).toBe(true);
-    await waitFor(() => expect(blurOriginalEditor).toBeDefined());
-    await waitFor(() => expect(blurModifiedEditor).toBeDefined());
+    expect(screen.queryByText("Pending changes")).not.toBeInTheDocument();
+    expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
 
-    buffers.left = "left pasted text";
-    buffers.right = "right typed text";
-    act(() => blurOriginalEditor?.());
-    act(() => blurModifiedEditor?.());
+    await user.type(screen.getByLabelText("Left free text input"), "left pasted text");
+    await user.type(screen.getByLabelText("Right free text input"), "right typed text");
 
-    await waitFor(() => expect(screen.getByTestId("diff-original")).toHaveTextContent("left pasted text"));
+    expect(screen.queryByTestId("diff-original")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+
+    expect(await screen.findByTestId("diff-original")).toHaveTextContent("left pasted text");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("right typed text");
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });
 
-  it("opens OS-launched files in View mode on the left side", async () => {
+  it("closes Compare search and makes search inert when switching to Free text", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
+
+    await switchMode("Text");
+
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
+
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.getByText("Search is not available in Free text mode.")).toBeInTheDocument();
+  });
+
+  it("closes View search when switching to Free text", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
+
+    await switchMode("Text");
+
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
+  });
+
+  it("ignores file picker, native open, and drag/drop source opens in Free text mode", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    chooseFile.mockClear();
+    invoke.mockClear();
+
+    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
+      appActionHandler?.({ payload: { actionId: "file.openRightFile" } });
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/dropped.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(chooseFile).not.toHaveBeenCalled();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+  });
+
+  it("opens OS-launched files through the View workspace", async () => {
     (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     render(<App />);
 
@@ -398,11 +549,338 @@ describe("App file-merge wiring", () => {
     act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } }));
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/from-finder.jar", side: "left" }),
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/from-finder.jar" }),
     );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
+  });
+
+  it("ignores OS-launched files while Free text is active", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    invoke.mockClear();
+    act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } }));
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+  });
+
+  it("opens multiple View sources and switches the active source tree", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/alpha.jar" }),
+    );
+    expect(await screen.findByText("alpha.json")).toBeInTheDocument();
+
+    await browseViewSource(user);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_view_source", { path: "/tmp/beta.jar" }),
+    );
+
+    expect(screen.getByRole("navigation", { name: "View sources" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByText("alpha.json")).not.toBeInTheDocument();
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("alpha.json")).toBeInTheDocument();
+    expect(screen.queryByText("beta.json")).not.toBeInTheDocument();
+  });
+
+  it("opens View entry tabs per source using read_view_entry", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "alpha.json",
+      }),
+    );
+    expect(screen.getByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+
+    await browseViewSource(user);
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByText("beta.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/beta.jar",
+        entryPath: "beta.json",
+      }),
+    );
+    expect(screen.getByRole("tab", { name: /beta\.json/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    expect(screen.getByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /beta\.json/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the active View tree visible beside inspected entry content", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(screen.getAllByText("alpha.json")).toHaveLength(2);
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+
+  it("clears inspected View preview state when switching to Compare and Merge", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("editor")).toHaveValue("view:/tmp/alpha.jar:alpha.json");
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
+    await user.click(await screen.findByRole("option", { name: "Compare and Merge" }));
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to compare yet")).toBeInTheDocument();
+    expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+    expect(screen.queryByText("view:/tmp/alpha.jar:alpha.json")).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale View entry read after switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    let resolveRead: ((preview: {
+      path: string;
+      kind: "text";
+      language: string;
+      content: string;
+    }) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_view_entry" && args?.sourceId === "view:/tmp/alpha.jar") {
+        return new Promise((resolve) => {
+          resolveRead = resolve as typeof resolveRead;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() => expect(resolveRead).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+    act(() => resolveRead?.({
+      path: "alpha.json",
+      kind: "text",
+      language: "json",
+      content: "stale alpha",
+    }));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByRole("tab", { name: /alpha\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("stale alpha")).not.toBeInTheDocument();
+  });
+
+  it("hides compare-only controls in multi-source View mode", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+
+    expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Copy file to right")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save to archive/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show pending changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear staged" })).not.toBeInTheDocument();
+  });
+
+  it("enables bytecode for class entries in View mode", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("Alpha.class"));
+
+    const bytecodeButton = await screen.findByRole("button", { name: "Show bytecode" });
+    expect(bytecodeButton).toBeEnabled();
+    await user.click(bytecodeButton);
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("disassemble_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "Alpha.class",
+      }),
+    );
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+
+  it("runs Files search against the active View source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("search_view_source", {
+        sourceId: "view:/tmp/alpha.jar",
+        query: "alpha",
+        options: { includePath: true, includeText: true, includeConstants: true },
+      }),
+    );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "search")).toBe(false);
+    await waitFor(() => expect(screen.getAllByText("Alpha.class").length).toBeGreaterThan(1));
+  });
+
+  it("clears View search filtering when switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+    await waitFor(() => expect(screen.getAllByText("alpha.json").length).toBeGreaterThan(1));
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+  });
+
+  it("ignores stale View search results after switching sources", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    let resolveSearch: ((hits: Array<{ entryPath: string; kind: "path" }>) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "search_view_source" && args?.sourceId === "view:/tmp/alpha.jar") {
+        return new Promise((resolve) => {
+          resolveSearch = resolve as typeof resolveSearch;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await browseViewSource(user);
+    await user.click(screen.getByRole("tab", { name: /alpha\.jar/ }));
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+    await waitFor(() => expect(resolveSearch).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /beta\.jar/ }));
+    act(() => resolveSearch?.([{ entryPath: "alpha.json", kind: "path" }]));
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByText("alpha.json")).not.toBeInTheDocument();
+    expect(screen.getByText("beta.json")).toBeInTheDocument();
+  });
+
+  it("runs decompiled source search against the active View source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByLabelText("Include decompiled source search"));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("deep_search_view_source", {
+        sourceId: "view:/tmp/alpha.jar",
+        query: "alpha",
+        searchId: expect.any(Number),
+      }),
+    );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "deep_search")).toBe(false);
+  });
+
+  it("switches View entry tabs with action hotkeys", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /alpha\.json/ })).toHaveAttribute("aria-selected", "true"));
+    await user.click(screen.getByText("Alpha.class"));
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Alpha\.class/ })).toHaveAttribute("aria-selected", "true"));
+
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true, ctrlKey: true });
+
+    await waitFor(() => expect(screen.getByRole("tab", { name: /alpha\.json/ })).toHaveAttribute("aria-selected", "true"));
   });
 
   it("shows the Source/Bytecode switch only on the active Diff tab", async () => {
@@ -430,7 +908,7 @@ describe("App file-merge wiring", () => {
     const originalScrollIntoView = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = vi.fn();
     try {
-      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
       fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
       fireEvent.click(await screen.findByRole("option", { name: "View" }));
     } finally {
@@ -439,6 +917,26 @@ describe("App file-merge wiring", () => {
 
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+  });
+
+  it("clears stale Compare tabs when switching to View mode", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(screen.getByRole("tab", { name: /config\.json/ })).toHaveAttribute("aria-selected", "true");
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
+      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+      fireEvent.click(await screen.findByRole("option", { name: "View" }));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
   });
 
   it("wires diff navigator state from Monaco line changes and reveals the next block", async () => {
@@ -533,7 +1031,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     const shell = await screen.findByRole("main");
     await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
@@ -550,7 +1048,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1));
     await waitFor(() =>
@@ -569,7 +1067,7 @@ describe("App file-merge wiring", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await user.click(screen.getByLabelText("Preferences"));
     await user.click(screen.getByRole("button", { name: "Editor" }));
 
@@ -587,7 +1085,7 @@ describe("App file-merge wiring", () => {
     });
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_engine", { engine: "vineflower" }));
 
     await user.click(screen.getByLabelText("Preferences"));
@@ -763,7 +1261,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+F toggles search open and closed", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
 
@@ -799,10 +1297,10 @@ describe("App file-merge wiring", () => {
     );
   });
 
-  it("blocks the right-directory shortcut in Decompile/View mode with the Compare-only message", async () => {
+  it("blocks the right-directory shortcut in View mode with the Compare-only message", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Decompile"));
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
 
     chooseFile.mockClear();
     fireEvent.keyDown(window, { key: "o", altKey: true, shiftKey: true, ...cmdOrCtrl() });
@@ -946,7 +1444,7 @@ describe("App file-merge wiring", () => {
     render(<App />);
 
     fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
   });
@@ -954,7 +1452,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+, toggles Preferences open", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument();
 
@@ -970,7 +1468,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+S reports no staged changes when nothing is staged", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 
     fireEvent.keyDown(window, { key: "s", ...cmdOrCtrl() });
 
@@ -1047,7 +1545,7 @@ describe("App file-merge wiring", () => {
     const stop = vi.fn();
 
     const { unmount } = render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await waitFor(() => expect(listen).toHaveBeenCalledWith("app-action", expect.any(Function)));
 
     unmount();

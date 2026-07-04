@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env,
     path::PathBuf,
     sync::{
@@ -9,8 +10,8 @@ use std::{
 
 use lcdiff_core::{
     Archive, ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions,
-    CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan,
-    NestedArchiveCache, compare, edit, search_constant_pool,
+    CommitResult, DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, Error as CoreError,
+    MergePlan, NestedArchiveCache, compare, edit, search_constant_pool,
     validate_path as validate_archive_path,
 };
 use serde::{Deserialize, Serialize};
@@ -156,8 +157,9 @@ impl Side {
 struct AppState {
     left: Option<Archive>,
     right: Option<Archive>,
-    left_nested: NestedArchiveCache,
-    right_nested: NestedArchiveCache,
+    left_nested: Arc<Mutex<NestedArchiveCache>>,
+    right_nested: Arc<Mutex<NestedArchiveCache>>,
+    view_sources: BTreeMap<String, ViewSourceState>,
     left_plan: MergePlan,
     right_plan: MergePlan,
     engine: DecompileEngine,
@@ -183,8 +185,13 @@ impl AppState {
         Self {
             left: None,
             right: None,
-            left_nested: NestedArchiveCache::new().expect("temp dir for nested cache"),
-            right_nested: NestedArchiveCache::new().expect("temp dir for nested cache"),
+            left_nested: Arc::new(Mutex::new(
+                NestedArchiveCache::new().expect("temp dir for nested cache"),
+            )),
+            right_nested: Arc::new(Mutex::new(
+                NestedArchiveCache::new().expect("temp dir for nested cache"),
+            )),
+            view_sources: BTreeMap::new(),
             left_plan: MergePlan::new(),
             right_plan: MergePlan::new(),
             engine: DEFAULT_DECOMPILE_ENGINE,
@@ -203,6 +210,100 @@ impl AppState {
 
     fn take_pending_open_paths(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending_open_paths)
+    }
+
+    fn canonical_view_source_path(path: &std::path::Path) -> Result<PathBuf, String> {
+        std::fs::canonicalize(path).map_err(|error| {
+            format!(
+                "failed to canonicalize view source path {}: {error}",
+                path.display()
+            )
+        })
+    }
+
+    fn format_view_source_id(path: &std::path::Path) -> String {
+        format!("view:{}", path.display())
+    }
+
+    fn open_view_archive(path: String) -> Result<Archive, String> {
+        let validated = validate_archive_path(&path).map_err(|error| error.to_string())?;
+        let canonical = Self::canonical_view_source_path(&validated)?;
+        Archive::open_validated(canonical).map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    fn open_view_source(&mut self, path: String) -> Result<ViewSourceSummary, String> {
+        let archive = Self::open_view_archive(path)?;
+        self.insert_view_source(archive)
+    }
+
+    fn insert_view_source(&mut self, archive: Archive) -> Result<ViewSourceSummary, String> {
+        let source_id = Self::format_view_source_id(archive.path());
+        let summary = ViewSourceSummary {
+            id: source_id.clone(),
+            path: archive.path().display().to_string(),
+            name: archive
+                .path()
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| archive.path().display().to_string()),
+            kind: archive.metadata().source_kind,
+            entry_count: archive.entries().count(),
+        };
+        self.view_sources.insert(
+            source_id,
+            ViewSourceState {
+                archive,
+                nested: Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|error| error.to_string())?,
+                )),
+            },
+        );
+        Ok(summary)
+    }
+
+    fn list_view_sources(&self) -> Vec<ViewSourceSummary> {
+        self.view_sources
+            .iter()
+            .map(|(id, source)| ViewSourceSummary {
+                id: id.clone(),
+                path: source.archive.path().display().to_string(),
+                name: source
+                    .archive
+                    .path()
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| source.archive.path().display().to_string()),
+                kind: source.archive.metadata().source_kind,
+                entry_count: source.archive.entries().count(),
+            })
+            .collect()
+    }
+
+    fn view_source_snapshot(&self, source_id: &str) -> Result<ViewSourceSnapshot, String> {
+        let source = self
+            .view_sources
+            .get(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))?;
+        Ok(ViewSourceSnapshot {
+            archive: source.archive.clone(),
+            nested: Arc::clone(&source.nested),
+        })
+    }
+
+    #[cfg(test)]
+    fn view_source_archive(&self, source_id: &str) -> Result<&Archive, String> {
+        self.view_sources
+            .get(source_id)
+            .map(|source| &source.archive)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
+    }
+
+    fn close_view_source(&mut self, source_id: &str) -> Result<(), String> {
+        self.view_sources
+            .remove(source_id)
+            .map(|_| ())
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))
     }
 
     #[cfg(test)]
@@ -256,10 +357,14 @@ impl AppState {
         *archive_mut(self, side) = Some(archive);
         match side {
             Side::Left => {
-                self.left_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+                self.left_nested = Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|e| e.to_string())?,
+                ))
             }
             Side::Right => {
-                self.right_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+                self.right_nested = Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|e| e.to_string())?,
+                ))
             }
         }
         Ok(summary)
@@ -324,10 +429,14 @@ impl AppState {
         // the stale extractions so a re-expand reflects the committed contents.
         match target_side {
             Side::Left => {
-                self.left_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+                self.left_nested = Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|e| e.to_string())?,
+                ))
             }
             Side::Right => {
-                self.right_nested = NestedArchiveCache::new().map_err(|e| e.to_string())?
+                self.right_nested = Arc::new(Mutex::new(
+                    NestedArchiveCache::new().map_err(|e| e.to_string())?,
+                ))
             }
         }
         Ok(result)
@@ -363,6 +472,33 @@ struct ArchiveSummary {
     path: String,
     metadata: ArchiveMetadata,
     entries: Vec<ArchiveEntry>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ViewSourceSummary {
+    id: String,
+    path: String,
+    name: String,
+    kind: ArchiveSourceKind,
+    entry_count: usize,
+}
+
+struct ViewSourceState {
+    archive: Archive,
+    nested: Arc<Mutex<NestedArchiveCache>>,
+}
+
+#[derive(Clone)]
+struct ViewSourceSnapshot {
+    archive: Archive,
+    nested: Arc<Mutex<NestedArchiveCache>>,
+}
+
+#[derive(Clone)]
+struct SideSnapshot {
+    archive: Archive,
+    nested: Arc<Mutex<NestedArchiveCache>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -483,26 +619,54 @@ async fn compute_nested_diff(
     nested_path: String,
     state: State<'_, SharedState>,
 ) -> Result<ArchiveDiff, String> {
-    let left = nested_side_archive(&state, Side::Left, &nested_path);
-    let right = nested_side_archive(&state, Side::Right, &nested_path);
+    let (left, right) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        (
+            side_snapshot(&state, Side::Left),
+            side_snapshot(&state, Side::Right),
+        )
+    };
+    let left = resolve_optional_side_nested_archive(left, nested_path.clone()).await?;
+    let right = resolve_optional_side_nested_archive(right, nested_path).await?;
+    tauri::async_runtime::spawn_blocking(move || compute_nested_diff_from_archives(left, right))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn compute_nested_diff_from_archives(
+    left: Option<Archive>,
+    right: Option<Archive>,
+) -> Result<ArchiveDiff, String> {
     match (left, right) {
         (None, None) => Err("nested archive is not present on either side".to_owned()),
-        (Some(left), Some(right)) => {
-            tauri::async_runtime::spawn_blocking(move || Ok(compare(&left, &right)))
-                .await
-                .map_err(|error| error.to_string())?
-        }
+        (Some(left), Some(right)) => Ok(compare(&left, &right)),
         (Some(only), None) => Ok(one_sided_diff(&only, Side::Left)),
         (None, Some(only)) => Ok(one_sided_diff(&only, Side::Right)),
     }
 }
 
-fn nested_side_archive(state: &SharedState, side: Side, nested_path: &str) -> Option<Archive> {
-    let mut state = state.lock().ok()?;
-    let root = archive(&state, side)?.clone();
-    nested_cache_mut(&mut state, side)
-        .resolve_archive(&root, nested_path)
-        .ok()
+#[tauri::command]
+async fn open_view_source(
+    path: String,
+    state: State<'_, SharedState>,
+) -> Result<ViewSourceSummary, String> {
+    let archive = tauri::async_runtime::spawn_blocking(move || AppState::open_view_archive(path))
+        .await
+        .map_err(|error| error.to_string())??;
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .insert_view_source(archive)
+}
+
+#[tauri::command]
+fn list_view_sources(state: State<'_, SharedState>) -> Result<Vec<ViewSourceSummary>, String> {
+    let state = state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?;
+    Ok(state.list_view_sources())
 }
 
 fn one_sided_diff(archive: &Archive, side: Side) -> ArchiveDiff {
@@ -536,20 +700,72 @@ async fn read_entry(
     entry_path: String,
     state: State<'_, SharedState>,
 ) -> Result<EntryPreview, String> {
-    let (archive, leaf, engine, sidecar) = {
-        let mut state = state
+    let (source, engine, sidecar) = {
+        let state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
         let engine = state.engine;
         let sidecar = Arc::clone(&state.sidecar);
-        let (archive, leaf) = resolve_side_entry(&mut state, side, &entry_path)?;
-        (archive, leaf, engine, sidecar)
+        let source = side_snapshot(&state, side).ok_or("archive is not loaded")?;
+        (source, engine, sidecar)
     };
     tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_side_entry(&source, &entry_path)?;
         read_entry_preview(&archive, engine, &sidecar, leaf)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn read_view_entry(
+    source_id: String,
+    entry_path: String,
+    state: State<'_, SharedState>,
+) -> Result<EntryPreview, String> {
+    let (source, engine, sidecar) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let engine = state.engine;
+        let sidecar = Arc::clone(&state.sidecar);
+        let source = state.view_source_snapshot(&source_id)?;
+        (source, engine, sidecar)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_view_entry(&source, &entry_path)?;
+        read_entry_preview(&archive, engine, &sidecar, leaf)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn compute_view_nested_entries(
+    source_id: String,
+    nested_path: String,
+    state: State<'_, SharedState>,
+) -> Result<ArchiveDiff, String> {
+    let source = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.view_source_snapshot(&source_id)?
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let archive = resolve_view_nested_archive(&source, &nested_path)?;
+        Ok(one_sided_diff(&archive, Side::Left))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn close_view_source(source_id: String, state: State<'_, SharedState>) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .close_view_source(&source_id)
 }
 
 fn read_entry_preview(
@@ -630,20 +846,47 @@ async fn disassemble(
     entry_path: String,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
-    let (archive_path, source_path, sidecar) = {
-        let mut state = state
+    let (source, sidecar) = {
+        let state = state
             .lock()
             .map_err(|_| "state lock is poisoned".to_owned())?;
         let sidecar = Arc::clone(&state.sidecar);
-        let (archive, leaf) = resolve_side_entry(&mut state, side, &entry_path)?;
-        let source_path = class_source_path(&archive, &leaf)?;
-        (archive.path().display().to_string(), source_path, sidecar)
+        let source = side_snapshot(&state, side).ok_or("archive is not loaded")?;
+        (source, sidecar)
     };
     tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_side_entry(&source, &entry_path)?;
+        let source_path = class_source_path(&archive, &leaf)?;
         sidecar
             .lock()
             .map_err(|_| "sidecar lock is poisoned".to_owned())?
-            .disassemble(archive_path, source_path)
+            .disassemble(archive.path().display().to_string(), source_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn disassemble_view_entry(
+    source_id: String,
+    entry_path: String,
+    state: State<'_, SharedState>,
+) -> Result<String, String> {
+    let (source, sidecar) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let sidecar = Arc::clone(&state.sidecar);
+        let source = state.view_source_snapshot(&source_id)?;
+        (source, sidecar)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_view_entry(&source, &entry_path)?;
+        let source_path = class_source_path(&archive, &leaf)?;
+        sidecar
+            .lock()
+            .map_err(|_| "sidecar lock is poisoned".to_owned())?
+            .disassemble(archive.path().display().to_string(), source_path)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -741,6 +984,24 @@ async fn search(
         archive(&state, side)
             .ok_or("archive is not loaded")?
             .clone()
+    };
+    tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query, options))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_view_source(
+    source_id: String,
+    query: String,
+    options: SearchOptions,
+    state: State<'_, SharedState>,
+) -> Result<Vec<SearchHit>, String> {
+    let archive = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.view_source_snapshot(&source_id)?.archive
     };
     tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query, options))
         .await
@@ -959,6 +1220,77 @@ async fn deep_search(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn deep_search_view_source(
+    source_id: String,
+    query: String,
+    search_id: u64,
+    window: Window,
+    state: State<'_, SharedState>,
+) -> Result<Vec<SearchHit>, String> {
+    let query = normalize_search_query(&query)?;
+    let (archive, engine, sidecar, generation, generation_id) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let archive = state.view_source_snapshot(&source_id)?.archive;
+        let engine = state.engine;
+        let sidecar = Arc::clone(&state.deep_search_sidecar);
+        let generation = Arc::clone(&state.deep_search_generation);
+        let generation_id = generation.fetch_add(1, Ordering::SeqCst) + 1;
+        (archive, engine, sidecar, generation, generation_id)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let class_paths = archive
+            .entries()
+            .filter(|entry| entry.kind == EntryKind::Class)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let total = class_paths.len();
+        let query = query.to_ascii_lowercase();
+        let archive_path = archive.path().display().to_string();
+        let mut matches = Vec::new();
+        for (completed, entry_path) in class_paths.into_iter().enumerate() {
+            if generation.load(Ordering::SeqCst) != generation_id {
+                return Err("deep search cancelled".to_owned());
+            }
+            if let Some(source_path) = archive.source_path(&entry_path) {
+                let source = sidecar
+                    .lock()
+                    .map_err(|_| "sidecar lock is poisoned".to_owned())?
+                    .decompile(engine, archive_path.clone(), source_path.to_owned());
+                if let Some(hit) = deep_search_hit(&entry_path, source, &query) {
+                    matches.push(hit.clone());
+                    window
+                        .emit(
+                            "search-result",
+                            DeepSearchMatch {
+                                search_id,
+                                side: Side::Left,
+                                hit,
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            window
+                .emit(
+                    "search-progress",
+                    SearchProgress {
+                        search_id,
+                        completed: completed + 1,
+                        total,
+                        entry_path,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(matches)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn deep_search_hit(
     entry_path: &str,
     source: Result<String, String>,
@@ -1058,24 +1390,91 @@ fn archive_mut(state: &mut AppState, side: Side) -> &mut Option<Archive> {
     }
 }
 
-fn nested_cache_mut(state: &mut AppState, side: Side) -> &mut NestedArchiveCache {
+fn nested_cache(state: &AppState, side: Side) -> &Arc<Mutex<NestedArchiveCache>> {
     match side {
-        Side::Left => &mut state.left_nested,
-        Side::Right => &mut state.right_nested,
+        Side::Left => &state.left_nested,
+        Side::Right => &state.right_nested,
     }
 }
 
-/// Resolve a (possibly nested) entry path for `side` to its innermost archive
-/// (a clone) plus the leaf entry path. Clones the root first so the cache
-/// borrow does not conflict with the archive borrow.
+fn side_snapshot(state: &AppState, side: Side) -> Option<SideSnapshot> {
+    Some(SideSnapshot {
+        archive: archive(state, side)?.clone(),
+        nested: Arc::clone(nested_cache(state, side)),
+    })
+}
+
+/// Resolve a (possibly nested) entry path for a compare-side snapshot to its
+/// innermost archive plus the leaf entry path.
 fn resolve_side_entry(
-    state: &mut AppState,
-    side: Side,
+    source: &SideSnapshot,
     entry_path: &str,
 ) -> Result<(Archive, String), String> {
-    let root = archive(state, side).ok_or("archive is not loaded")?.clone();
-    nested_cache_mut(state, side)
-        .resolve(&root, entry_path)
+    source
+        .nested
+        .lock()
+        .map_err(|_| "nested compare source cache lock is poisoned".to_owned())?
+        .resolve(&source.archive, entry_path)
+        .map_err(|error| error.to_string())
+}
+
+fn resolve_side_nested_archive(
+    source: &SideSnapshot,
+    nested_path: &str,
+) -> Result<Archive, CoreError> {
+    source
+        .nested
+        .lock()
+        .map_err(|_| {
+            CoreError::Io(std::io::Error::other(
+                "nested compare source cache lock is poisoned",
+            ))
+        })?
+        .resolve_archive(&source.archive, nested_path)
+}
+
+async fn resolve_optional_side_nested_archive(
+    source: Option<SideSnapshot>,
+    nested_path: String,
+) -> Result<Option<Archive>, String> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        resolve_side_nested_archive(&source, &nested_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    match result {
+        Ok(archive) => Ok(Some(archive)),
+        Err(CoreError::EntryNotFound(_)) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn resolve_view_entry(
+    source: &ViewSourceSnapshot,
+    entry_path: &str,
+) -> Result<(Archive, String), String> {
+    if let Some((root, leaf)) = entry_path.rsplit_once("!/") {
+        let archive = resolve_view_nested_archive(source, root)?;
+        return Ok((archive, leaf.to_owned()));
+    }
+    Ok((source.archive.clone(), entry_path.to_owned()))
+}
+
+fn resolve_view_nested_archive(
+    source: &ViewSourceSnapshot,
+    nested_path: &str,
+) -> Result<Archive, String> {
+    if nested_path.is_empty() {
+        return Ok(source.archive.clone());
+    }
+    source
+        .nested
+        .lock()
+        .map_err(|_| "nested view source cache lock is poisoned".to_owned())?
+        .resolve_archive(&source.archive, nested_path)
         .map_err(|error| error.to_string())
 }
 
@@ -1385,16 +1784,24 @@ fn main() {
             open_archive,
             compute_diff,
             compute_nested_diff,
+            open_view_source,
+            list_view_sources,
             read_entry,
+            read_view_entry,
+            compute_view_nested_entries,
+            close_view_source,
             set_engine,
             disassemble,
+            disassemble_view_entry,
             stage_copy,
             stage_write,
             commit_merge,
             clear_staged,
             unstage,
             search,
+            search_view_source,
             deep_search,
+            deep_search_view_source,
             cancel_deep_search,
             prefetch_siblings,
             pending_open_paths
@@ -1422,20 +1829,27 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs::File, io::Write, path::Path};
+    use std::{
+        collections::HashSet,
+        fs::File,
+        io::Write,
+        path::{Path, PathBuf},
+    };
 
     use tempfile::tempdir;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::{
         AppActionPayload, AppState, MENU_ACTIONS, SearchHit, SearchHitKind, SearchOptions, Side,
-        SidecarClient, class_source_path, close_window_placement, deep_search_hit,
-        is_prefetch_sibling, language_for_path, platform_hints_from, read_entry_preview,
-        search_archive, validate_path,
+        SidecarClient, ViewSourceSummary, class_source_path, close_window_placement,
+        compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling, language_for_path,
+        one_sided_diff, platform_hints_from, read_entry_preview,
+        resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
+        search_archive, side_snapshot, validate_path,
     };
     #[cfg(not(target_os = "macos"))]
     use super::{build_app_menu, install_app_menu};
-    use lcdiff_core::{Archive, DecompileEngine};
+    use lcdiff_core::{Archive, ArchiveSourceKind, DecompileEngine};
     #[cfg(not(target_os = "macos"))]
     use tauri::Manager;
 
@@ -1702,6 +2116,277 @@ mod tests {
         let state = AppState::default();
 
         assert_eq!(state.engine, DecompileEngine::Vineflower);
+    }
+
+    #[test]
+    fn view_sources_open_read_and_close_independently() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let first_path = dir.path().join("first.jar");
+        let second_path = dir.path().join("second.jar");
+        write_zip(&first_path, &[("a.txt", b"first")]);
+        write_zip(&second_path, &[("a.txt", b"second")]);
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(first_path.display().to_string())
+            .expect("open first view source");
+        let second = state
+            .open_view_source(second_path.display().to_string())
+            .expect("open second view source");
+
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.name, "first.jar");
+        assert_eq!(first.kind, ArchiveSourceKind::Archive);
+        assert_eq!(first.entry_count, 1);
+        assert_eq!(state.view_sources.len(), 2);
+
+        let first_entry = state
+            .view_source_archive(&first.id)
+            .expect("first source")
+            .read_entry("a.txt")
+            .expect("read first");
+        let second_entry = state
+            .view_source_archive(&second.id)
+            .expect("second source")
+            .read_entry("a.txt")
+            .expect("read second");
+
+        assert_eq!(first_entry, b"first");
+        assert_eq!(second_entry, b"second");
+
+        state.close_view_source(&first.id).expect("close first");
+        assert!(state.view_source_archive(&first.id).is_err());
+        assert!(state.view_source_archive(&second.id).is_ok());
+    }
+
+    #[test]
+    fn view_source_ids_are_stable_for_canonical_paths() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let archive_path = dir.path().join("app.jar");
+        write_zip(&archive_path, &[("a.txt", b"content")]);
+        let alias_path = archive_alias_path(&archive_path);
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("first open");
+        let second = state
+            .open_view_source(alias_path.display().to_string())
+            .expect("second open");
+
+        assert_ne!(
+            archive_path.display().to_string(),
+            alias_path.display().to_string()
+        );
+        assert_eq!(first.id, second.id);
+        assert_eq!(state.view_sources.len(), 1);
+    }
+
+    #[test]
+    fn list_view_sources_returns_current_summaries_only() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let first_path = dir.path().join("first.jar");
+        let second_path = dir.path().join("second.jar");
+        write_zip(&first_path, &[("a.txt", b"first")]);
+        write_zip(&second_path, &[("b.txt", b"second")]);
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(first_path.display().to_string())
+            .expect("open first");
+        let second = state
+            .open_view_source(second_path.display().to_string())
+            .expect("open second");
+
+        let listed = state.list_view_sources();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, first.id);
+        assert_eq!(listed[0].name, "first.jar");
+        assert_eq!(listed[0].kind, ArchiveSourceKind::Archive);
+        assert_eq!(listed[0].entry_count, 1);
+        assert_eq!(listed[1].id, second.id);
+        assert_eq!(listed[1].name, "second.jar");
+
+        state.close_view_source(&first.id).expect("close first");
+
+        let listed = state.list_view_sources();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, second.id);
+    }
+
+    #[test]
+    fn view_source_summary_serializes_final_contract() {
+        let summary = ViewSourceSummary {
+            id: "view:/tmp/app.jar".to_owned(),
+            path: "/tmp/app.jar".to_owned(),
+            name: "app.jar".to_owned(),
+            kind: ArchiveSourceKind::Archive,
+            entry_count: 7,
+        };
+
+        assert_eq!(
+            serde_json::to_value(summary).unwrap(),
+            serde_json::json!({
+                "id": "view:/tmp/app.jar",
+                "path": "/tmp/app.jar",
+                "name": "app.jar",
+                "kind": "archive",
+                "entryCount": 7
+            })
+        );
+    }
+
+    #[test]
+    fn view_source_nested_entry_reads_from_inner_archive() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("open nested view source");
+        let snapshot = state
+            .view_source_snapshot(&source.id)
+            .expect("nested source snapshot");
+
+        let (archive, leaf) = resolve_view_entry(&snapshot, "lib/inner.jar!/docs/file.txt")
+            .expect("resolve view entry");
+        let preview = read_entry_preview(
+            &archive,
+            DecompileEngine::Cfr,
+            &std::sync::Mutex::new(SidecarClient::default()),
+            leaf,
+        )
+        .expect("read nested preview");
+
+        assert_eq!(preview.path, "docs/file.txt");
+        assert_eq!(preview.content, "nested-content");
+    }
+
+    #[test]
+    fn view_source_nested_diff_lists_inner_entries() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("open nested view source");
+        let snapshot = state
+            .view_source_snapshot(&source.id)
+            .expect("nested source snapshot");
+
+        let archive = resolve_view_nested_archive(&snapshot, "lib/inner.jar")
+            .expect("resolve nested archive");
+        let diff = one_sided_diff(&archive, Side::Left);
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "docs/file.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
+    }
+
+    #[test]
+    fn view_source_root_diff_lists_root_entries() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let archive_path = dir.path().join("root.jar");
+        write_zip(&archive_path, &[("root.txt", b"root-content")]);
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("open view source");
+        let snapshot = state
+            .view_source_snapshot(&source.id)
+            .expect("view source snapshot");
+
+        let archive = resolve_view_nested_archive(&snapshot, "").expect("resolve root archive");
+        let diff = one_sided_diff(&archive, Side::Left);
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "root.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
+    }
+
+    #[test]
+    fn view_source_close_and_reopen_rebuilds_nested_cache() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let outer_path = create_nested_view_archive(dir.path());
+
+        let mut state = AppState::new(None);
+        let first = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("first open");
+        let first_snapshot = state
+            .view_source_snapshot(&first.id)
+            .expect("first snapshot");
+        let (_, first_leaf) = resolve_view_entry(&first_snapshot, "lib/inner.jar!/docs/file.txt")
+            .expect("resolve first nested entry");
+        assert_eq!(first_leaf, "docs/file.txt");
+
+        state
+            .close_view_source(&first.id)
+            .expect("close first source");
+        assert!(state.view_sources.is_empty());
+
+        let second = state
+            .open_view_source(outer_path.display().to_string())
+            .expect("reopen source");
+        let second_snapshot = state
+            .view_source_snapshot(&second.id)
+            .expect("second snapshot");
+        let (archive, leaf) = resolve_view_entry(&second_snapshot, "lib/inner.jar!/docs/file.txt")
+            .expect("resolve second nested entry");
+        let preview = read_entry_preview(
+            &archive,
+            DecompileEngine::Cfr,
+            &std::sync::Mutex::new(SidecarClient::default()),
+            leaf,
+        )
+        .expect("read nested preview after reopen");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(state.view_sources.len(), 1);
+        assert_eq!(preview.content, "nested-content");
+    }
+
+    #[test]
+    fn compute_nested_diff_returns_one_sided_when_nested_archive_missing_on_other_side() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let left_path = create_nested_view_archive(dir.path());
+        let right_path = dir.path().join("right.jar");
+        create_zip(&right_path, &[("plain.txt", b"right-only")]);
+
+        let mut state = AppState::default();
+        state
+            .load_archive(left_path.to_str().unwrap(), Side::Left)
+            .expect("load left");
+        state
+            .load_archive(right_path.to_str().unwrap(), Side::Right)
+            .expect("load right");
+
+        let left = side_snapshot(&state, Side::Left).expect("left snapshot");
+        let right = side_snapshot(&state, Side::Right).expect("right snapshot");
+
+        let left_archive = tauri::async_runtime::block_on(resolve_optional_side_nested_archive(
+            Some(left),
+            "lib/inner.jar".to_owned(),
+        ))
+        .expect("left nested archive");
+        let right_archive = tauri::async_runtime::block_on(resolve_optional_side_nested_archive(
+            Some(right),
+            "lib/inner.jar".to_owned(),
+        ))
+        .expect("right nested archive should be optional");
+
+        let diff = compute_nested_diff_from_archives(left_archive, right_archive)
+            .expect("one-sided nested diff");
+
+        assert_eq!(diff.pairs.len(), 1);
+        assert_eq!(diff.pairs[0].path, "docs/file.txt");
+        assert!(diff.pairs[0].left.is_some());
+        assert!(diff.pairs[0].right.is_none());
     }
 
     #[test]
@@ -2166,6 +2851,40 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        create_zip(path, entries);
+    }
+
+    fn archive_alias_path(path: &Path) -> PathBuf {
+        let alias_path = path.with_file_name("app-alias.jar");
+        #[cfg(unix)]
+        {
+            if std::os::unix::fs::symlink(path, &alias_path).is_ok() {
+                return alias_path;
+            }
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_file(path, &alias_path).is_ok() {
+                return alias_path;
+            }
+        }
+        path.parent()
+            .unwrap()
+            .join(".")
+            .join(path.file_name().unwrap())
+    }
+
+    fn create_nested_view_archive(dir: &Path) -> PathBuf {
+        let inner_path = dir.join("inner.jar");
+        create_zip(&inner_path, &[("docs/file.txt", b"nested-content")]);
+        let inner_bytes = std::fs::read(&inner_path).expect("read inner jar");
+
+        let outer_path = dir.join("outer.jar");
+        create_zip(&outer_path, &[("lib/inner.jar", &inner_bytes)]);
+        outer_path
     }
 
     fn class_with_utf8(value: &str) -> Vec<u8> {

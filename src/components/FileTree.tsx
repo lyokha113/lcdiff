@@ -69,6 +69,7 @@ export function FileTree(props: FileTreeProps) {
     expandAllVersion = 0,
     collapseAllVersion = 0,
   } = props;
+  const effectiveTreeFilter = mode === "compare" ? treeFilter : "all";
   const tree = useMemo(() => buildTree(visiblePairs), [visiblePairs]);
   const pathsKey = useMemo(() => visiblePairs.map((p) => p.path).join("|"), [visiblePairs]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -81,9 +82,9 @@ export function FileTree(props: FileTreeProps) {
   useEffect(() => {
     if (expandAllVersion !== lastExpandAllVersion.current) {
       lastExpandAllVersion.current = expandAllVersion;
-      setExpanded(collectExpandablePaths(tree, nestedPairs, treeFilter));
+      setExpanded(collectExpandablePaths(tree, nestedPairs, effectiveTreeFilter));
     }
-  }, [expandAllVersion, nestedPairs, tree, treeFilter]);
+  }, [effectiveTreeFilter, expandAllVersion, nestedPairs, tree]);
   useEffect(() => {
     if (collapseAllVersion !== lastCollapseAllVersion.current) {
       lastCollapseAllVersion.current = collapseAllVersion;
@@ -122,7 +123,16 @@ export function FileTree(props: FileTreeProps) {
         </div>
       )}
       {tree.map((node) => (
-        <FileTreeNode {...props} key={node.path} node={node} depth={0} basePath="" expanded={expanded} onToggle={toggle} />
+        <FileTreeNode
+          {...props}
+          key={node.path}
+          node={node}
+          depth={0}
+          basePath=""
+          expanded={expanded}
+          onToggle={toggle}
+          treeFilter={effectiveTreeFilter}
+        />
       ))}
     </div>
   );
@@ -211,7 +221,8 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
   const fullPair: ComparePair = basePath ? { ...pair, path: fullPath } : pair;
   const { selected, stagedEntries, treeFilter, nestedPairs, onInspect, onSelect, onCopy, onUnstage, onExpandArchive } = props;
   const pres = statusPresentation(pair.status);
-  const staged = stagedEntries[fullPath];
+  const canStage = mode === "compare";
+  const staged = canStage ? stagedEntries[fullPath] : undefined;
   const stagedBadge = staged && (
     <Badge variant={staged.kind === "edit" ? "default" : "secondary"}>
       {staged.kind === "edit" ? "edited" : "copy"} → {staged.side}
@@ -260,18 +271,20 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
               )}
             </button>
           </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem disabled={mode === "single" || !pair.right} onSelect={() => onCopy("right", "left", fullPair)}>
-              Copy to left
-            </ContextMenuItem>
-            <ContextMenuItem disabled={mode === "single" || !pair.left} onSelect={() => onCopy("left", "right", fullPair)}>
-              Copy to right
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
-              Unstage
-            </ContextMenuItem>
-          </ContextMenuContent>
+          {canStage && (
+            <ContextMenuContent>
+              <ContextMenuItem disabled={!pair.right} onSelect={() => onCopy("right", "left", fullPair)}>
+                Copy to left
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!pair.left} onSelect={() => onCopy("left", "right", fullPair)}>
+                Copy to right
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
+                Unstage
+              </ContextMenuItem>
+            </ContextMenuContent>
+          )}
         </ContextMenu>
         {open && children === undefined && (
           <div className="tree-row" style={{ paddingLeft: `${(depth + 1) * 14 + 8}px` }}>Loading…</div>
@@ -315,18 +328,20 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
           )}
         </button>
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem disabled={mode === "single" || !pair.right || pair.right.kind === "directory"} onSelect={() => onCopy("right", "left", fullPair)}>
-          Copy to left
-        </ContextMenuItem>
-        <ContextMenuItem disabled={mode === "single" || !pair.left || pair.left.kind === "directory"} onSelect={() => onCopy("left", "right", fullPair)}>
-          Copy to right
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
-          Unstage
-        </ContextMenuItem>
-      </ContextMenuContent>
+      {canStage && (
+        <ContextMenuContent>
+          <ContextMenuItem disabled={!pair.right || pair.right.kind === "directory"} onSelect={() => onCopy("right", "left", fullPair)}>
+            Copy to left
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!pair.left || pair.left.kind === "directory"} onSelect={() => onCopy("left", "right", fullPair)}>
+            Copy to right
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
+            Unstage
+          </ContextMenuItem>
+        </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }

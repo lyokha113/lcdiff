@@ -146,9 +146,15 @@ export function getActionState(actionId: AppActionId, context: AppActionContext)
   }
 
   switch (actionId) {
+    case "file.openLeftFile":
+    case "file.openLeftDirectory":
+      return context.mode === "text" ? blocked("File sources are not available in Free text mode.") : enabled();
     case "file.openRightFile":
     case "file.openRightDirectory":
       return context.mode !== "compare" ? blocked("Open right source is available only in Compare mode.") : enabled();
+    case "search.toggle":
+    case "search.runContextual":
+      return context.mode === "text" ? blocked("Search is not available in Free text mode.") : enabled();
     case "file.refresh":
       return context.loadedSourceCount > 0 ? enabled() : blocked("Open a source before refreshing.");
     case "file.save":

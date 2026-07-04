@@ -99,6 +99,31 @@ describe("FileTree", () => {
     fireEvent.click(screen.getByText("example").closest("button")!);
     expect(screen.getAllByText("App.class").length).toBe(1);
   });
+
+  it("hides copy and unstage context actions in View mode", () => {
+    setup({
+      mode: "single",
+      visiblePairs: [{ path: "App.class", status: "onlyLeft", left: { path: "App.class", kind: "class" } }],
+      stagedEntries: { "App.class": { side: "right", kind: "copy" } },
+    });
+
+    fireEvent.contextMenu(screen.getByText("App.class").closest("button")!);
+
+    expect(screen.queryByText("Copy to left")).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy to right")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unstage")).not.toBeInTheDocument();
+  });
+
+  it("hides staging badges in View mode", () => {
+    setup({
+      mode: "single",
+      visiblePairs: [{ path: "App.class", status: "onlyLeft", left: { path: "App.class", kind: "class" } }],
+      stagedEntries: { "App.class": { side: "right", kind: "copy" } },
+    });
+
+    expect(screen.queryByText(/copy/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/right/)).not.toBeInTheDocument();
+  });
   it("renders a nested archive entry as an expandable row that fetches on click", () => {
     const archivePairs: ComparePair[] = [
       { path: "lib/inner.jar", status: "different", left: { path: "lib/inner.jar", kind: "archive" }, right: { path: "lib/inner.jar", kind: "archive" } },
@@ -152,5 +177,35 @@ describe("FileTree", () => {
     fireEvent.click(screen.getAllByText("inner.jar")[0].closest("button")!);
     expect(screen.getAllByText("Changed.class").length).toBe(2);
     expect(screen.queryByText("Same.class")).not.toBeInTheDocument();
+  });
+
+  it("ignores the compare tree filter for nested View children", () => {
+    const archivePairs: ComparePair[] = [
+      { path: "lib/inner.jar", status: "onlyLeft", left: { path: "lib/inner.jar", kind: "archive" } },
+    ];
+    const nestedPairs = {
+      "lib/inner.jar": [
+        { path: "Changed.class", status: "different" as const, left: { path: "Changed.class", kind: "class" as const } },
+        { path: "Same.class", status: "identical" as const, left: { path: "Same.class", kind: "class" as const } },
+      ],
+    };
+    render(
+      <FileTree
+        visiblePairs={archivePairs}
+        stagedEntries={{}}
+        mode="single"
+        treeFilter="diff"
+        nestedPairs={nestedPairs}
+        onInspect={() => {}}
+        onSelect={() => {}}
+        onCopy={() => {}}
+        onUnstage={() => {}}
+        onExpandArchive={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText("lib").closest("button")!);
+    fireEvent.click(screen.getByText("inner.jar").closest("button")!);
+    expect(screen.getByText("Changed.class")).toBeInTheDocument();
+    expect(screen.getByText("Same.class")).toBeInTheDocument();
   });
 });
