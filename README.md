@@ -84,25 +84,26 @@ builds may show a SmartScreen warning until code signing is configured.
 
 ## Use It
 
-### 1. Open Something Suspicious
+### 1. View One Or More Sources
 
 Drop in a `.jar`, `.zip`, or folder. Use Browse if drag-and-drop is having a
 Wayland day.
 
 Opening a supported archive or text file from Finder, Explorer, or a file
-manager launches LCDiff directly into **Single** mode and loads that source.
+manager launches LCDiff directly into **View** mode and loads that source.
 
-In **Single** mode, LCDiff is an archive inspector:
+In **View** mode, LCDiff is a multi-source inspector:
 
-- browse entries without loading the whole archive into the UI;
+- open multiple folders, JARs, ZIPs, WARs, or EARs as source tabs;
+- browse the active source tree on the left;
+- open entries as tabs on the right;
 - preview Java source, bytecode, text, binary metadata, and hex;
-- switch decompiler engine between Vineflower, CFR, JD-Core, and JD-Core v0;
 - inspect folders with the same mental model as archives.
 
-### 2. Compare Two Things That Claim To Be The Same
+### 2. Compare And Merge Two Things That Claim To Be The Same
 
-Switch to **Compare**, load a left and right source, then let the tree tell the
-truth.
+Switch to **Compare and Merge**, load a left and right source, then let the tree
+tell the truth.
 
 - Added, removed, and changed entries are grouped by status.
 - Matching files open as source or bytecode diffs.
@@ -111,9 +112,10 @@ truth.
 
 ### 3. Compare Free Text Without Making Files
 
-Switch to **Text** when you just want to paste or type two snippets directly
-into a clean two-pane diff editor. Text mode skips file pickers, archive trees,
-merge staging, and hunk controls.
+Switch to **Free text** when you want to paste or type two snippets without
+making files. Edit the left and right drafts, then click Compare to create a
+readonly diff result. Confirmed results stay in local temporary history so you
+can reopen them during the session or after restarting the app.
 
 ### 4. Search Like You Mean It
 

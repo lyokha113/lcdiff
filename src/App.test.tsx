@@ -343,8 +343,8 @@ function cmdOrCtrl(overrides: KeyboardEventInit = {}): KeyboardEventInit {
 
 async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  // Splash → Compare / Merge workspace.
-  await user.click(screen.getByText("Compare / Merge"));
+  // Splash -> Compare and Merge workspace.
+  await user.click(screen.getByText("Compare and Merge"));
   await user.click(screen.getByLabelText("Toggle search"));
 
   // Open the left source via its repick popover → Browse file.
@@ -368,14 +368,14 @@ async function driveIntoFileCompare(user: ReturnType<typeof userEvent.setup>) {
 
 async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   render(<App />);
-  await user.click(screen.getByText("Compare / Merge"));
+  await user.click(screen.getByText("Compare and Merge"));
 }
 
-async function switchMode(modeName: "View" | "Compare" | "Text") {
+async function switchMode(modeName: "View" | "Compare and Merge" | "Free text") {
   const originalScrollIntoView = Element.prototype.scrollIntoView;
   Element.prototype.scrollIntoView = vi.fn();
   try {
-    const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+    const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
     fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
     fireEvent.click(await screen.findByRole("option", { name: modeName }));
   } finally {
@@ -445,7 +445,7 @@ describe("App file-merge wiring", () => {
   it("renders a landmark-based comparison workspace", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+    await user.click(screen.getByRole("button", { name: "Compare and merge sources" }));
 
     expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
@@ -459,7 +459,7 @@ describe("App file-merge wiring", () => {
     await user.click(screen.getByRole("button", { name: "Compare free text" }));
 
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Left File/Folder" })).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Open files" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
@@ -483,13 +483,13 @@ describe("App file-merge wiring", () => {
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole("button", { name: "Compare two sources" }));
+    await user.click(screen.getByRole("button", { name: "Compare and merge sources" }));
     await user.click(screen.getByLabelText("Toggle search"));
     expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
 
-    await switchMode("Text");
+    await switchMode("Free text");
 
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
 
@@ -506,9 +506,9 @@ describe("App file-merge wiring", () => {
     await user.click(screen.getByLabelText("Toggle search"));
     expect(screen.getByRole("complementary", { name: "Search workspace" })).toBeInTheDocument();
 
-    await switchMode("Text");
+    await switchMode("Free text");
 
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Search workspace" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
   });
@@ -543,7 +543,7 @@ describe("App file-merge wiring", () => {
     expect(chooseFile).not.toHaveBeenCalled();
     expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
   });
 
   it("opens OS-launched files through the View workspace", async () => {
@@ -578,7 +578,7 @@ describe("App file-merge wiring", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Text comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
   });
 
   it("opens multiple View sources and switches the active source tree", async () => {
@@ -889,7 +889,7 @@ describe("App file-merge wiring", () => {
     const originalScrollIntoView = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = vi.fn();
     try {
-      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
       fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
       fireEvent.click(await screen.findByRole("option", { name: "View" }));
     } finally {
@@ -909,7 +909,7 @@ describe("App file-merge wiring", () => {
     const originalScrollIntoView = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = vi.fn();
     try {
-      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
       fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
       fireEvent.click(await screen.findByRole("option", { name: "View" }));
     } finally {
@@ -1012,7 +1012,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     const shell = await screen.findByRole("main");
     await waitFor(() => expect(shell.dataset.colorPattern).toBe("light"));
@@ -1029,7 +1029,7 @@ describe("App file-merge wiring", () => {
     }));
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "set_engine")).toHaveLength(1));
     await waitFor(() =>
@@ -1048,7 +1048,7 @@ describe("App file-merge wiring", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
     await user.click(screen.getByLabelText("Preferences"));
     await user.click(screen.getByRole("button", { name: "Editor" }));
 
@@ -1066,7 +1066,7 @@ describe("App file-merge wiring", () => {
     });
 
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_engine", { engine: "vineflower" }));
 
     await user.click(screen.getByLabelText("Preferences"));
@@ -1242,7 +1242,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+F toggles search open and closed", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
 
@@ -1281,7 +1281,7 @@ describe("App file-merge wiring", () => {
   it("blocks the right-directory shortcut in Decompile/View mode with the Compare-only message", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Decompile"));
+    await user.click(screen.getByText("View"));
 
     chooseFile.mockClear();
     fireEvent.keyDown(window, { key: "o", altKey: true, shiftKey: true, ...cmdOrCtrl() });
@@ -1425,7 +1425,7 @@ describe("App file-merge wiring", () => {
     render(<App />);
 
     fireEvent.keyDown(window, { key: "f", ...cmdOrCtrl() });
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     expect(screen.queryByPlaceholderText(/Search paths, text, constants/)).not.toBeInTheDocument();
   });
@@ -1433,7 +1433,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+, toggles Preferences open", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     expect(screen.queryByLabelText("Preference categories")).not.toBeInTheDocument();
 
@@ -1449,7 +1449,7 @@ describe("App file-merge wiring", () => {
   it("Cmd/Ctrl+S reports no staged changes when nothing is staged", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
 
     fireEvent.keyDown(window, { key: "s", ...cmdOrCtrl() });
 
@@ -1526,7 +1526,7 @@ describe("App file-merge wiring", () => {
     const stop = vi.fn();
 
     const { unmount } = render(<App />);
-    await user.click(screen.getByText("Compare / Merge"));
+    await user.click(screen.getByText("Compare and Merge"));
     await waitFor(() => expect(listen).toHaveBeenCalledWith("app-action", expect.any(Function)));
 
     unmount();

@@ -104,6 +104,12 @@ if (
 ) {
   failures.push("src/App.tsx: Files tab and per-entry diff tabs must live in activeTab state rendered via WorkspaceTabs");
 }
+if (!app.includes("viewWorkspace") || !app.includes("open_view_source")) {
+  failures.push("src/App.tsx: View mode must use dedicated multi-source workspace state and open_view_source");
+}
+if (!frontend.includes("FreeTextWorkspace") || !frontend.includes("recordFreeTextResult")) {
+  failures.push("frontend: Free text must render FreeTextWorkspace and persist confirmed results");
+}
 if (!app.includes("setActiveTab(pair.path);")) {
   failures.push("src/App.tsx: opening an entry must switch the workspace to its diff tab");
 }
@@ -144,7 +150,7 @@ if (!app.includes('function isTauriRuntime()') || !app.includes('"__TAURI_INTERN
 const dropHelper =
   /function\s+dropSideForPosition\s*\(\s*mode:\s*Mode,\s*x:\s*number,\s*width:\s*number\s*\):\s*Side\s*{[\s\S]*?if\s*\(\s*mode\s*===\s*"single"\s*\)\s*return\s*"left";[\s\S]*?x\s*<\s*width\s*\/\s*2\s*\?\s*"left"\s*:\s*"right";[\s\S]*?}/;
 if (!dropHelper.test(app)) {
-  failures.push("src/App.tsx: file-drop side selection must force Single mode drops to left");
+  failures.push("src/App.tsx: file-drop side selection must force View mode drops to left");
 }
 
 if (!app.includes("dropSideForPosition(mode, event.payload.position.x, window.innerWidth)")) {
@@ -161,7 +167,7 @@ if (!app.includes("}, [mode, openPath, openViewPath]);")) {
 }
 
 if (!app.includes('if (mode === "single") void openViewPath(event.payload.paths[0]);')) {
-  failures.push("src/App.tsx: Single/View drag-drop must open through open_view_source state");
+  failures.push("src/App.tsx: View drag-drop must open through open_view_source state");
 }
 
 if (
@@ -222,7 +228,7 @@ if (
   !searchSidesBody.includes('if (mode === "single") return ["left"];') ||
   !searchSidesBody.includes('return ["left", "right"];')
 ) {
-  failures.push("src/App.tsx: Single mode search must only target left and Compare mode search must target both sides");
+  failures.push("src/App.tsx: View mode search must only target the active View source and Compare mode search must target both sides");
 }
 
 const searchListenerBody = app.match(/listen<\{ searchId: number; completed: number; total: number; entryPath: string \}>\("search-progress"([\s\S]*?)\n    return \(\) =>/)?.[1] ?? "";
@@ -318,7 +324,7 @@ if (
 
 const copyActionGuards = frontend.match(/mode === "single"/g)?.length ?? 0;
 if (copyActionGuards < 5) {
-  failures.push("frontend: Single mode must disable all merge copy actions");
+  failures.push("frontend: View mode must disable all merge copy actions");
 }
 
 if (!frontend.includes("disabled={!stagedTarget}")) {

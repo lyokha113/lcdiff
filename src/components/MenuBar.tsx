@@ -36,11 +36,11 @@ export function MenuBar({
 
       <div className="command-group command-group--mode" role="group" aria-label="Workspace mode">
         <Select value={mode} onValueChange={(value) => onChangeMode(value as Mode)}>
-          <SelectTrigger aria-label="Mode"><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label="Workspace mode"><SelectValue /></SelectTrigger>
           <SelectContent><SelectGroup>
             <SelectItem value="single">View</SelectItem>
-            <SelectItem value="compare">Compare</SelectItem>
-            <SelectItem value="text">Text</SelectItem>
+            <SelectItem value="compare">Compare and Merge</SelectItem>
+            <SelectItem value="text">Free text</SelectItem>
           </SelectGroup></SelectContent>
         </Select>
         <Tooltip>
@@ -52,7 +52,7 @@ export function MenuBar({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{mode === "compare" ? "Reload both sources from disk" : mode === "text" ? "Free text has no disk sources" : "Reload the source from disk"}</p>
+            <p>{mode === "compare" ? "Reload both compare sources from disk" : mode === "text" ? "Free text has no disk sources" : "Reload opened View sources from disk"}</p>
           </TooltipContent>
         </Tooltip>
       </div>

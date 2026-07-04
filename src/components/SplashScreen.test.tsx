@@ -38,16 +38,19 @@ describe("SplashScreen", () => {
   it("presents a task-first startup hierarchy", () => {
     setup();
     expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare and merge sources" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
+    expect(screen.getAllByText("Compare and Merge").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("View").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Free text").length).toBeGreaterThan(0);
     expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();
   });
 
   it("renders both mode buttons", () => {
     setup();
     expect(screen.getByRole("button", { name: "Open one source" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compare two sources" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compare and merge sources" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Compare free text" })).toBeInTheDocument();
   });
 
@@ -55,7 +58,7 @@ describe("SplashScreen", () => {
     const props = setup();
     await userEvent.click(screen.getByRole("button", { name: "Open one source" }));
     expect(props.onPickMode).toHaveBeenCalledWith("single");
-    await userEvent.click(screen.getByRole("button", { name: "Compare two sources" }));
+    await userEvent.click(screen.getByRole("button", { name: "Compare and merge sources" }));
     expect(props.onPickMode).toHaveBeenCalledWith("compare");
     await userEvent.click(screen.getByRole("button", { name: "Compare free text" }));
     expect(props.onPickMode).toHaveBeenCalledWith("text");

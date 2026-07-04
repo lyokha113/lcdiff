@@ -74,12 +74,18 @@ context overlays: search, preferences, pending changes, confirmations
 `SourceChips`, `WorkspaceTabs`, `FileTree`, `DiffView`, `SearchBar`,
 `SearchResultsPanel`, `ConfigDrawer`, and `StatusBar` render state and emit typed
 intent callbacks. Search opens on demand and closes after result selection, so
-the contextual surface cannot block the Files navigator. View mode removes
-right-side and merge-only controls instead of disabling them. Text mode is a
-separate frontend-only workspace for ad hoc paste/type comparison; it renders
-the Monaco diff editor directly and skips source pickers, file trees, tree
-expansion, diff tabs, merge staging, save, reload, history, hunk controls, and
-diff-block navigation.
+the contextual surface cannot block the Files navigator.
+
+View mode is a multi-source inspector with source tabs, a single-column tree
+for the active source, and per-source entry tabs. It uses View-specific state
+and backend source handles instead of the Compare left/right slots. Compare-only
+tree filters, merge staging, and save controls do not render in View.
+
+Free text mode is a frontend workspace for ad hoc paste/type comparison. It
+keeps editable left/right draft buffers separate from readonly confirmed diff
+results. A result is created only when the user confirms comparison, and
+confirmed results are stored in local temporary history with a fixed limit and
+clear action.
 
 GSAP and `@gsap/react` are restricted to the startup composition. Normal
 workspace interactions use transform/opacity CSS transitions, and reduced

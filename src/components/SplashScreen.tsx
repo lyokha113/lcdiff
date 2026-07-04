@@ -94,9 +94,9 @@ export function SplashScreen({
             >
               <span className="launch-card__icon"><FileText aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">Text</span>
+                <span className="launch-card__title">Free text</span>
                 <span className="launch-card__description">
-                  Paste or type snippets directly into a clean two-pane diff.
+                  Paste or type drafts, then confirm when you want a diff result.
                 </span>
               </span>
               <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
@@ -106,11 +106,11 @@ export function SplashScreen({
               type="button"
               className="launch-card launch-card--compare"
               onClick={() => onPickMode("compare")}
-              aria-label="Compare two sources"
+              aria-label="Compare and merge sources"
             >
               <span className="launch-card__icon"><GitCompareArrows aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">Compare / Merge</span>
+                <span className="launch-card__title">Compare and Merge</span>
                 <span className="launch-card__description">
                   Open two JARs, ZIPs, folders, or text files. Inspect differences and stage exact changes.
                 </span>
@@ -126,8 +126,8 @@ export function SplashScreen({
             >
               <span className="launch-card__icon"><FileSearch aria-hidden="true" /></span>
               <span className="launch-card__content">
-                <span className="launch-card__title">Decompile</span>
-                <span className="launch-card__description">Browse one source without merge controls.</span>
+                <span className="launch-card__title">View</span>
+                <span className="launch-card__description">Browse one or more sources without merge controls.</span>
               </span>
               <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
             </button>
@@ -163,7 +163,7 @@ export function SplashScreen({
                       onClick={() => onOpenEntry(entry)}
                     >
                       <span className="launch-history__mode">
-                        {entry.mode === "compare" ? "Compare" : entry.mode === "text" ? "Text" : "View"}
+                        {entry.mode === "compare" ? "Compare and Merge" : entry.mode === "text" ? "Free text" : "View"}
                       </span>
                       <span className="launch-history__sources">
                         <span className="launch-history__name">{entry.paths.map(basename).join(" ↔ ")}</span>

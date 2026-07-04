@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,6 +23,27 @@ describe("MenuBar", () => {
     expect(screen.getByRole("banner", { name: "Workspace commands" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Workspace mode" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
+  });
+
+  it("labels the three workspace modes clearly", async () => {
+    setup();
+
+    const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
+    expect(modeSelect).toHaveTextContent("Compare and Merge");
+
+    const originalElementScrollIntoView = Element.prototype.scrollIntoView;
+    const originalHtmlElementScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    try {
+      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+      expect(await screen.findByRole("option", { name: "View" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "Compare and Merge" })).toBeInTheDocument();
+      expect(screen.getByRole("option", { name: "Free text" })).toBeInTheDocument();
+    } finally {
+      Element.prototype.scrollIntoView = originalElementScrollIntoView;
+      HTMLElement.prototype.scrollIntoView = originalHtmlElementScrollIntoView;
+    }
   });
 
   it("hides merge and staging controls in View mode", () => {

@@ -1956,7 +1956,7 @@ export function App() {
     <main
       className="app-shell"
       ref={appShellRef}
-      aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Text comparison workspace" : "Source workspace"}
+      aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Free text workspace" : "Source workspace"}
     >
       <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
       <MenuBar
