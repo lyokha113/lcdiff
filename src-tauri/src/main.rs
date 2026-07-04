@@ -866,6 +866,32 @@ async fn disassemble(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+async fn disassemble_view_entry(
+    source_id: String,
+    entry_path: String,
+    state: State<'_, SharedState>,
+) -> Result<String, String> {
+    let (source, sidecar) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let sidecar = Arc::clone(&state.sidecar);
+        let source = state.view_source_snapshot(&source_id)?;
+        (source, sidecar)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let (archive, leaf) = resolve_view_entry(&source, &entry_path)?;
+        let source_path = class_source_path(&archive, &leaf)?;
+        sidecar
+            .lock()
+            .map_err(|_| "sidecar lock is poisoned".to_owned())?
+            .disassemble(archive.path().display().to_string(), source_path)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn class_source_path(archive: &Archive, entry_path: &str) -> Result<String, String> {
     let entry = archive.entry(entry_path).ok_or("entry is not indexed")?;
     if entry.kind != EntryKind::Class {
@@ -958,6 +984,24 @@ async fn search(
         archive(&state, side)
             .ok_or("archive is not loaded")?
             .clone()
+    };
+    tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query, options))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn search_view_source(
+    source_id: String,
+    query: String,
+    options: SearchOptions,
+    state: State<'_, SharedState>,
+) -> Result<Vec<SearchHit>, String> {
+    let archive = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.view_source_snapshot(&source_id)?.archive
     };
     tauri::async_runtime::spawn_blocking(move || search_archive(&archive, &query, options))
         .await
@@ -1152,6 +1196,77 @@ async fn deep_search(
                             DeepSearchMatch {
                                 search_id,
                                 side,
+                                hit,
+                            },
+                        )
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            window
+                .emit(
+                    "search-progress",
+                    SearchProgress {
+                        search_id,
+                        completed: completed + 1,
+                        total,
+                        entry_path,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(matches)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn deep_search_view_source(
+    source_id: String,
+    query: String,
+    search_id: u64,
+    window: Window,
+    state: State<'_, SharedState>,
+) -> Result<Vec<SearchHit>, String> {
+    let query = normalize_search_query(&query)?;
+    let (archive, engine, sidecar, generation, generation_id) = {
+        let state = state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        let archive = state.view_source_snapshot(&source_id)?.archive;
+        let engine = state.engine;
+        let sidecar = Arc::clone(&state.deep_search_sidecar);
+        let generation = Arc::clone(&state.deep_search_generation);
+        let generation_id = generation.fetch_add(1, Ordering::SeqCst) + 1;
+        (archive, engine, sidecar, generation, generation_id)
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let class_paths = archive
+            .entries()
+            .filter(|entry| entry.kind == EntryKind::Class)
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>();
+        let total = class_paths.len();
+        let query = query.to_ascii_lowercase();
+        let archive_path = archive.path().display().to_string();
+        let mut matches = Vec::new();
+        for (completed, entry_path) in class_paths.into_iter().enumerate() {
+            if generation.load(Ordering::SeqCst) != generation_id {
+                return Err("deep search cancelled".to_owned());
+            }
+            if let Some(source_path) = archive.source_path(&entry_path) {
+                let source = sidecar
+                    .lock()
+                    .map_err(|_| "sidecar lock is poisoned".to_owned())?
+                    .decompile(engine, archive_path.clone(), source_path.to_owned());
+                if let Some(hit) = deep_search_hit(&entry_path, source, &query) {
+                    matches.push(hit.clone());
+                    window
+                        .emit(
+                            "search-result",
+                            DeepSearchMatch {
+                                search_id,
+                                side: Side::Left,
                                 hit,
                             },
                         )
@@ -1677,13 +1792,16 @@ fn main() {
             close_view_source,
             set_engine,
             disassemble,
+            disassemble_view_entry,
             stage_copy,
             stage_write,
             commit_merge,
             clear_staged,
             unstage,
             search,
+            search_view_source,
             deep_search,
+            deep_search_view_source,
             cancel_deep_search,
             prefetch_siblings,
             pending_open_paths

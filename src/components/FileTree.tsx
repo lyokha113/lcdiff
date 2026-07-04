@@ -211,7 +211,8 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
   const fullPair: ComparePair = basePath ? { ...pair, path: fullPath } : pair;
   const { selected, stagedEntries, treeFilter, nestedPairs, onInspect, onSelect, onCopy, onUnstage, onExpandArchive } = props;
   const pres = statusPresentation(pair.status);
-  const staged = stagedEntries[fullPath];
+  const canStage = mode === "compare";
+  const staged = canStage ? stagedEntries[fullPath] : undefined;
   const stagedBadge = staged && (
     <Badge variant={staged.kind === "edit" ? "default" : "secondary"}>
       {staged.kind === "edit" ? "edited" : "copy"} → {staged.side}
@@ -260,18 +261,20 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
               )}
             </button>
           </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem disabled={mode === "single" || !pair.right} onSelect={() => onCopy("right", "left", fullPair)}>
-              Copy to left
-            </ContextMenuItem>
-            <ContextMenuItem disabled={mode === "single" || !pair.left} onSelect={() => onCopy("left", "right", fullPair)}>
-              Copy to right
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
-              Unstage
-            </ContextMenuItem>
-          </ContextMenuContent>
+          {canStage && (
+            <ContextMenuContent>
+              <ContextMenuItem disabled={!pair.right} onSelect={() => onCopy("right", "left", fullPair)}>
+                Copy to left
+              </ContextMenuItem>
+              <ContextMenuItem disabled={!pair.left} onSelect={() => onCopy("left", "right", fullPair)}>
+                Copy to right
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
+                Unstage
+              </ContextMenuItem>
+            </ContextMenuContent>
+          )}
         </ContextMenu>
         {open && children === undefined && (
           <div className="tree-row" style={{ paddingLeft: `${(depth + 1) * 14 + 8}px` }}>Loading…</div>
@@ -315,18 +318,20 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
           )}
         </button>
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem disabled={mode === "single" || !pair.right || pair.right.kind === "directory"} onSelect={() => onCopy("right", "left", fullPair)}>
-          Copy to left
-        </ContextMenuItem>
-        <ContextMenuItem disabled={mode === "single" || !pair.left || pair.left.kind === "directory"} onSelect={() => onCopy("left", "right", fullPair)}>
-          Copy to right
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
-          Unstage
-        </ContextMenuItem>
-      </ContextMenuContent>
+      {canStage && (
+        <ContextMenuContent>
+          <ContextMenuItem disabled={!pair.right || pair.right.kind === "directory"} onSelect={() => onCopy("right", "left", fullPair)}>
+            Copy to left
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!pair.left || pair.left.kind === "directory"} onSelect={() => onCopy("left", "right", fullPair)}>
+            Copy to right
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!staged} onSelect={() => onUnstage(fullPath)}>
+            Unstage
+          </ContextMenuItem>
+        </ContextMenuContent>
+      )}
     </ContextMenu>
   );
 }

@@ -32,7 +32,7 @@ function tab(path: string, lastFocus: number): ViewEntryTab {
   };
 }
 
-describe("view workspace state", () => {
+describe("View workspace state", () => {
   it("opens sources and makes the newest source active", () => {
     const first = openViewSource({ sources: [], activeSourceId: undefined }, source("s1", "/a.jar"));
     const second = openViewSource(first, source("s2", "/b.jar"));

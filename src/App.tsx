@@ -1145,6 +1145,36 @@ export function App() {
     }
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
+    if (mode === "single") {
+      const source = activeViewSource;
+      if (!source) return;
+      try {
+        const nextPreview: EntryPreview = {
+          path: pair.path,
+          kind: "class",
+          language: "plaintext",
+          content: await invoke<string>("disassemble_view_entry", {
+            sourceId: source.id,
+            entryPath: pair.path,
+          }),
+        };
+        if (previewRequestId.current !== requestId) return;
+        setPreview({ left: nextPreview });
+        setViewMode("bytecode");
+        focusCounter.current += 1;
+        setViewWorkspace((current) =>
+          upsertViewEntryTab(
+            current,
+            source.id,
+            { entryPath: pair.path, preview: nextPreview, viewMode: "bytecode", lastFocus: focusCounter.current },
+            MAX_DIFF_TABS,
+          ),
+        );
+      } catch (error) {
+        setMessage(String(error));
+      }
+      return;
+    }
     const next: Partial<Record<Side, EntryPreview>> = {};
     try {
       for (const side of ["left", "right"] as const) {
@@ -1203,6 +1233,15 @@ export function App() {
     if ((mode === "compare" || mode === "text") && next === "single") {
       diffEditorRef.current?.setModel(null);
       diffEditorRef.current = undefined;
+      setSelected(undefined);
+      setPreview({});
+      setEditBuffer("");
+      setOpenTabs([]);
+      setActiveTab("files");
+      setViewMode("source");
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
     }
     if (mode === "text") {
       setPaths(emptyPaths);
@@ -1514,38 +1553,61 @@ export function App() {
       const matches = new Set<string>();
       const results: SearchResult[] = [];
       const options = { includePath: true, includeText: true, includeConstants: true };
-      for (const side of searchSides()) {
-        if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-        for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
+      const appendHit = (hit: BackendSearchHit, side: Side, tier: "T2" | "T3") => {
+        matches.add(hit.entryPath);
+        results.push({
+          side,
+          tier,
+          path: hit.entryPath,
+          kind: hit.kind,
+          line: hit.line,
+          preview: hit.preview,
+        });
+      };
+
+      if (mode === "single") {
+        if (!activeViewSource) {
+          setMessage("Open a source before searching View mode.");
+          return;
+        }
+        for (const hit of await invoke<BackendSearchHit[]>("search_view_source", {
+          sourceId: activeViewSource.id,
+          query,
+          options,
+        })) {
           if (searchStreamId.current !== searchId) return;
-          matches.add(hit.entryPath);
-          results.push({
-            side,
-            tier: "T2",
-            path: hit.entryPath,
-            kind: hit.kind,
-            line: hit.line,
-            preview: hit.preview,
-          });
+          appendHit(hit, "left", "T2");
+        }
+      } else {
+        for (const side of searchSides()) {
+          if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
+          for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
+            if (searchStreamId.current !== searchId) return;
+            appendHit(hit, side, "T2");
+          }
         }
       }
       if (sourceTierEnabled) {
         setSearchPaths(new Set(matches));
         setSearchResults([...results]);
         try {
-          for (const side of searchSides()) {
-            if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-            for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+          if (mode === "single") {
+            if (!activeViewSource) return;
+            for (const hit of await invoke<BackendSearchHit[]>("deep_search_view_source", {
+              sourceId: activeViewSource.id,
+              query,
+              searchId,
+            })) {
               if (searchStreamId.current !== searchId) return;
-              matches.add(hit.entryPath);
-              results.push({
-                side,
-                tier: "T3",
-                path: hit.entryPath,
-                kind: hit.kind,
-                line: hit.line,
-                preview: hit.preview,
-              });
+              appendHit(hit, "left", "T3");
+            }
+          } else {
+            for (const side of searchSides()) {
+              if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
+              for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+                if (searchStreamId.current !== searchId) return;
+                appendHit(hit, side, "T3");
+              }
             }
           }
         } catch (error) {
@@ -1944,7 +2006,7 @@ export function App() {
               treeFilter={treeFilter}
               viewMode={viewMode}
               canShowSource={!!selected}
-              canShowBytecode={mode === "compare" && pairHasClass(selected)}
+              canShowBytecode={pairHasClass(selected)}
               onSelectFiles={() => setActiveTab("files")}
               onSelectTab={(path) => focusTab(path)}
               onCloseTab={(path) => closeTab(path)}

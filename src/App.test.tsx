@@ -26,7 +26,7 @@ let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
 const viewRootEntries: Record<string, string[]> = {
-  "view:/tmp/alpha.jar": ["alpha.json"],
+  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json"],
   "view:/tmp/beta.jar": ["beta.json"],
   "view:/tmp/from-finder.jar": ["finder.json"],
 };
@@ -69,6 +69,10 @@ function entryPreview(side: "left" | "right") {
   };
 }
 
+function entryKind(path: string) {
+  return path.endsWith(".class") ? "class" as const : "text" as const;
+}
+
 const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "platform_hints":
@@ -97,7 +101,7 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
         pairs: paths.map((path) => ({
           path,
           status: "onlyLeft" as const,
-          left: { path, kind: "text" as const },
+          left: { path, kind: entryKind(path) },
         })),
       };
     }
@@ -107,11 +111,18 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
       const entryPath = args?.entryPath as string;
       return {
         path: entryPath,
-        kind: "text" as const,
-        language: "json",
+        kind: entryKind(entryPath),
+        language: entryPath.endsWith(".class") ? "java" : "json",
         content: `${args?.sourceId}:${entryPath}`,
       };
     }
+    case "disassemble_view_entry":
+      return `bytecode:${args?.sourceId}:${args?.entryPath}`;
+    case "search_view_source":
+      return [
+        { entryPath: "alpha.json", kind: "path" as const },
+        { entryPath: "Alpha.class", kind: "constantPool" as const, preview: "Alpha" },
+      ];
     case "search":
       return [
         { entryPath: "config.json", kind: "path" as const },
@@ -121,6 +132,10 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
       if (deepSearchBlock) await deepSearchBlock.promise;
       if (deepSearchError) throw deepSearchError;
       return [{ entryPath: "config.json", kind: "source" as const, line: 3, preview: "class Config" }];
+    case "deep_search_view_source":
+      if (deepSearchBlock) await deepSearchBlock.promise;
+      if (deepSearchError) throw deepSearchError;
+      return [{ entryPath: "Alpha.class", kind: "source" as const, line: 3, preview: "class Alpha" }];
     case "cancel_deep_search":
       return undefined;
     case "stage_write":
@@ -542,6 +557,76 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to right")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save to archive/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show pending changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear staged" })).not.toBeInTheDocument();
+  });
+
+  it("enables bytecode for class entries in View mode", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("Alpha.class"));
+
+    const bytecodeButton = await screen.findByRole("button", { name: "Show bytecode" });
+    expect(bytecodeButton).toBeEnabled();
+    await user.click(bytecodeButton);
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("disassemble_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "Alpha.class",
+      }),
+    );
+    expect(screen.getByTestId("editor")).toBeInTheDocument();
+  });
+
+  it("runs Files search against the active View source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("search_view_source", {
+        sourceId: "view:/tmp/alpha.jar",
+        query: "alpha",
+        options: { includePath: true, includeText: true, includeConstants: true },
+      }),
+    );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "search")).toBe(false);
+    await waitFor(() => expect(screen.getAllByText("Alpha.class").length).toBeGreaterThan(1));
+  });
+
+  it("runs decompiled source search against the active View source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open one source" }));
+    await browseViewSource(user);
+    await user.click(screen.getByLabelText("Toggle search"));
+    await user.type(screen.getByPlaceholderText(/Search paths, text, constants/), "alpha");
+    await user.click(screen.getByLabelText("Include decompiled source search"));
+    await user.click(screen.getByRole("button", { name: /search files/i }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("deep_search_view_source", {
+        sourceId: "view:/tmp/alpha.jar",
+        query: "alpha",
+        searchId: expect.any(Number),
+      }),
+    );
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "deep_search")).toBe(false);
   });
 
   it("shows the Source/Bytecode switch only on the active Diff tab", async () => {
@@ -578,6 +663,26 @@ describe("App file-merge wiring", () => {
 
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
+  });
+
+  it("clears stale Compare tabs when switching to View mode", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(screen.getByRole("tab", { name: /config\.json/ })).toHaveAttribute("aria-selected", "true");
+
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      const modeSelect = screen.getByRole("combobox", { name: "Mode" });
+      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
+      fireEvent.click(await screen.findByRole("option", { name: "View" }));
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+
+    expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
   });
 
   it("wires diff navigator state from Monaco line changes and reveals the next block", async () => {

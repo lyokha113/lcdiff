@@ -99,6 +99,31 @@ describe("FileTree", () => {
     fireEvent.click(screen.getByText("example").closest("button")!);
     expect(screen.getAllByText("App.class").length).toBe(1);
   });
+
+  it("hides copy and unstage context actions in View mode", () => {
+    setup({
+      mode: "single",
+      visiblePairs: [{ path: "App.class", status: "onlyLeft", left: { path: "App.class", kind: "class" } }],
+      stagedEntries: { "App.class": { side: "right", kind: "copy" } },
+    });
+
+    fireEvent.contextMenu(screen.getByText("App.class").closest("button")!);
+
+    expect(screen.queryByText("Copy to left")).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy to right")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unstage")).not.toBeInTheDocument();
+  });
+
+  it("hides staging badges in View mode", () => {
+    setup({
+      mode: "single",
+      visiblePairs: [{ path: "App.class", status: "onlyLeft", left: { path: "App.class", kind: "class" } }],
+      stagedEntries: { "App.class": { side: "right", kind: "copy" } },
+    });
+
+    expect(screen.queryByText(/copy/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/right/)).not.toBeInTheDocument();
+  });
   it("renders a nested archive entry as an expandable row that fetches on click", () => {
     const archivePairs: ComparePair[] = [
       { path: "lib/inner.jar", status: "different", left: { path: "lib/inner.jar", kind: "archive" }, right: { path: "lib/inner.jar", kind: "archive" } },

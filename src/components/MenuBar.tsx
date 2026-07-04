@@ -68,51 +68,53 @@ export function MenuBar({
         </Button>
       </div>
 
-      <div className="command-divider" aria-hidden="true" />
+      {mode === "compare" && <div className="command-divider" aria-hidden="true" />}
 
-      <div className="command-group command-group--save" role="group" aria-label="Save changes">
-        {stagedTarget && <span className="pending-summary">{pendingOps.length} unsaved → {stagedTarget}</span>}
-        <Button
-          variant="default"
-          size="sm"
-          aria-label={`Save to archive (${pendingOps.length})`}
-          disabled={!stagedTarget}
-          onClick={() => stagedTarget && onSave(stagedTarget)}
-        >
-          <Save /> <span className="button-label">Save {pendingOps.length > 0 ? pendingOps.length : ""}</span>
-        </Button>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Show pending changes" disabled={!stagedTarget}>
-              <ChevronDown />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="pending-popover">
-            <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
-            <ul>
-              {pendingOps.map((op) => (
-                <li key={op.key}>
-                  {op.kind === "edit" ? <Pencil size={14} /> : <ArrowRightLeft size={14} />}
-                  <span className="pending-path">{op.path}</span>
-                  <Button variant="ghost" size="icon" aria-label={`Unstage ${op.path}`} onClick={() => onUnstageOne(op.key)}>
-                    <X size={14} />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </PopoverContent>
-        </Popover>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button variant="ghost" size="icon" aria-label="Clear staged" disabled={pendingOps.length === 0} onClick={onClearStaged}>
-                <Trash2 />
+      {mode === "compare" && (
+        <div className="command-group command-group--save" role="group" aria-label="Save changes">
+          {stagedTarget && <span className="pending-summary">{pendingOps.length} unsaved → {stagedTarget}</span>}
+          <Button
+            variant="default"
+            size="sm"
+            aria-label={`Save to archive (${pendingOps.length})`}
+            disabled={!stagedTarget}
+            onClick={() => stagedTarget && onSave(stagedTarget)}
+          >
+            <Save /> <span className="button-label">Save {pendingOps.length > 0 ? pendingOps.length : ""}</span>
+          </Button>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Show pending changes" disabled={!stagedTarget}>
+                <ChevronDown />
               </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent><p>Discard all staged changes</p></TooltipContent>
-        </Tooltip>
-      </div>
+            </PopoverTrigger>
+            <PopoverContent className="pending-popover">
+              <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
+              <ul>
+                {pendingOps.map((op) => (
+                  <li key={op.key}>
+                    {op.kind === "edit" ? <Pencil size={14} /> : <ArrowRightLeft size={14} />}
+                    <span className="pending-path">{op.path}</span>
+                    <Button variant="ghost" size="icon" aria-label={`Unstage ${op.path}`} onClick={() => onUnstageOne(op.key)}>
+                      <X size={14} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </PopoverContent>
+          </Popover>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button variant="ghost" size="icon" aria-label="Clear staged" disabled={pendingOps.length === 0} onClick={onClearStaged}>
+                  <Trash2 />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent><p>Discard all staged changes</p></TooltipContent>
+          </Tooltip>
+        </div>
+      )}
     </header>
   );
 }

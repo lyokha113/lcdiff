@@ -25,6 +25,19 @@ describe("MenuBar", () => {
     expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
   });
 
+  it("hides merge and staging controls in View mode", () => {
+    setup({
+      mode: "single",
+      stagedTarget: "right",
+      pendingOps: [{ key: "right:Main.class", path: "Main.class", side: "right", kind: "copy" }],
+    });
+
+    expect(screen.queryByRole("group", { name: "Save changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save to archive/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show pending changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear staged" })).not.toBeInTheDocument();
+  });
+
   it("shows save-to-archive label and lists pending ops", () => {
     setup({
       stagedTarget: "right",
