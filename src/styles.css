@@ -423,9 +423,9 @@ main.app-shell {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-1);
-  font-size: 0.76rem;
-  font-weight: 650;
+  color: var(--text-0);
+  font-size: 0.84rem;
+  font-weight: 720;
   letter-spacing: 0;
 }
 .free-text-history__summary {

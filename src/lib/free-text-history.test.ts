@@ -28,8 +28,8 @@ describe("Free text history", () => {
       id: "free-text:1000:1:1",
       left: "a",
       right: "b",
-      title: "Same length edit",
-      summary: "1 char left -> 1 char right / same length",
+      title: "Blue Trace",
+      summary: "Short text / 1 char left -> 1 char right",
     });
   });
 
@@ -42,21 +42,21 @@ describe("Free text history", () => {
         left: "left text",
         right: "right text",
         createdAt: 3000,
-        title: "Grew by 1 char",
-        summary: "9 chars left -> 10 chars right / +1 char",
+        title: "Grey Signal",
+        summary: "Short text / 9 chars left -> 10 chars right",
       },
     ]);
   });
 
-  it("uses timeline summaries instead of length-only titles", () => {
+  it("uses stable random names and size summaries instead of length-only titles", () => {
     const [entry] = recordFreeTextResult({
       left: "first line\nwith extra    spacing and a very long continuation",
       right: "",
       createdAt: 3500,
     });
 
-    expect(entry.title).toBe("Shrank by 61 chars");
-    expect(entry.summary).toBe("61 chars left -> empty right / -61 chars");
+    expect(entry.title).toBe("Grey Harbor");
+    expect(entry.summary).toBe("Short text / 61 chars left -> empty right");
   });
 
   it("limits history to the newest confirmed results", () => {
@@ -96,7 +96,7 @@ describe("Free text history", () => {
     ]));
 
     expect(loadFreeTextHistory()).toEqual([
-      { id: "ok", left: "", right: "r", createdAt: 2, title: "Grew by 1 char", summary: "empty left -> 1 char right / +1 char" },
+      { id: "ok", left: "", right: "r", createdAt: 2, title: "Jade Draft", summary: "Short text / empty left -> 1 char right" },
     ]);
   });
 
@@ -112,8 +112,8 @@ describe("Free text history", () => {
         left: "",
         right: "r",
         createdAt: 2,
-        title: "Grew by 1 char",
-        summary: "empty left -> 1 char right / +1 char",
+        title: "Jade Draft",
+        summary: "Short text / empty left -> 1 char right",
       },
     ]);
   });
@@ -147,8 +147,8 @@ describe("Free text history", () => {
         left: "newer",
         right: "value",
         createdAt: 2000,
-        title: "Same length edit",
-        summary: "5 chars left -> 5 chars right / same length",
+        title: "Grey Ledger",
+        summary: "Short text / 5 chars left -> 5 chars right",
       },
     ]);
   });

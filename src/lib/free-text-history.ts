@@ -16,39 +16,68 @@ export interface FreeTextResultInput {
 export const FREE_TEXT_HISTORY_STORAGE_KEY = "lcdiff.freeTextHistory.v1";
 export const FREE_TEXT_HISTORY_LIMIT = 20;
 
+const NAME_PREFIXES = [
+  "Amber",
+  "Blue",
+  "Copper",
+  "Grey",
+  "Ivory",
+  "Jade",
+  "Silver",
+  "Violet",
+] as const;
+
+const NAME_NOUNS = [
+  "Atlas",
+  "Beacon",
+  "Draft",
+  "Field",
+  "Harbor",
+  "Ledger",
+  "Signal",
+  "Trace",
+] as const;
+
 function charLabel(count: number): string {
   if (count === 0) return "empty";
   if (count === 1) return "1 char";
   return `${count} chars`;
 }
 
-function deltaLabel(leftLength: number, rightLength: number): string {
-  const delta = rightLength - leftLength;
-  if (delta === 0) return "same length";
-  const absolute = Math.abs(delta);
-  const unit = absolute === 1 ? "char" : "chars";
-  return `${delta > 0 ? "+" : "-"}${absolute} ${unit}`;
+function hashText(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
-function summaryTitle(leftLength: number, rightLength: number): string {
-  const delta = rightLength - leftLength;
-  if (delta === 0) return "Same length edit";
-  const absolute = Math.abs(delta);
-  const unit = absolute === 1 ? "char" : "chars";
-  return delta > 0 ? `Grew by ${absolute} ${unit}` : `Shrank by ${absolute} ${unit}`;
+function randomName(input: FreeTextResultInput): string {
+  const seed = hashText(`${input.createdAt}\n${input.left}\n${input.right}`);
+  const prefix = NAME_PREFIXES[seed % NAME_PREFIXES.length];
+  const noun = NAME_NOUNS[Math.floor(seed / NAME_PREFIXES.length) % NAME_NOUNS.length];
+  return `${prefix} ${noun}`;
+}
+
+function textSizeLabel(totalLength: number): string {
+  if (totalLength < 120) return "Short text";
+  if (totalLength < 900) return "Mid text";
+  return "Long text";
 }
 
 function buildEntry(input: FreeTextResultInput): FreeTextHistoryEntry {
   const leftLabel = charLabel(input.left.length);
   const rightLabel = charLabel(input.right.length);
+  const sizeLabel = textSizeLabel(input.left.length + input.right.length);
 
   return {
     id: `free-text:${input.createdAt}:${input.left.length}:${input.right.length}`,
     left: input.left,
     right: input.right,
     createdAt: input.createdAt,
-    title: summaryTitle(input.left.length, input.right.length),
-    summary: `${leftLabel} left -> ${rightLabel} right / ${deltaLabel(input.left.length, input.right.length)}`,
+    title: randomName(input),
+    summary: `${sizeLabel} / ${leftLabel} left -> ${rightLabel} right`,
   };
 }
 
