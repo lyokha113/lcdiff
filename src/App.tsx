@@ -47,6 +47,7 @@ import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
+import { FreeTextWorkspace } from "@/components/FreeTextWorkspace";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
 import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/lib/tabs";
 import {
@@ -101,7 +102,6 @@ function isTauriRuntime() {
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
-const FREE_TEXT_PATH = "Free text";
 const VIEW_ROOT_KEY = "";
 
 const SIDE_PREFIX_RE = /^(left|right):/;
@@ -120,30 +120,6 @@ type DiffNavigatorState = {
 type OsOpenPathsPayload = {
   paths: string[];
 };
-
-const freeTextPair: ComparePair = {
-  path: FREE_TEXT_PATH,
-  status: "different",
-  left: { path: FREE_TEXT_PATH, kind: "text" },
-  right: { path: FREE_TEXT_PATH, kind: "text" },
-};
-
-function freeTextSummary(side: Side): ArchiveSummary {
-  return {
-    path: side === "left" ? "Left text" : "Right text",
-    metadata: { sourceKind: "text", signed: false, multiRelease: false, zip64: false },
-    entries: [{ path: FREE_TEXT_PATH, kind: "text", uncompressedSize: 0 }],
-  };
-}
-
-function freeTextPreview(side: Side, content: string): EntryPreview {
-  return {
-    path: FREE_TEXT_PATH,
-    kind: "text",
-    language: "plaintext",
-    content,
-  };
-}
 
 function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
   return {
@@ -292,7 +268,6 @@ export function App() {
   const [stagedTarget, setStagedTarget] = useState<Side>();
   const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
   const [editBuffer, setEditBuffer] = useState<string>("");
-  const [freeText, setFreeText] = useState<Record<Side, string>>({ left: "", right: "" });
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
@@ -648,7 +623,7 @@ export function App() {
 
   const openTextMode = useCallback(() => {
     if (stagedTarget) {
-      setMessage("Save or clear unsaved changes before switching to text compare.");
+      setMessage("Save or clear unsaved changes before switching to Free text.");
       return;
     }
     modeRef.current = "text";
@@ -660,30 +635,19 @@ export function App() {
     setView("workspace");
     setPaths(emptyPaths);
     setPathErrors({});
-    setArchives({ left: freeTextSummary("left"), right: freeTextSummary("right") });
-    setPairs([freeTextPair]);
+    setArchives({});
+    setPairs([]);
     setNestedPairs({});
-    setSelected(freeTextPair);
-    setActiveTab(FREE_TEXT_PATH);
+    setSelected(undefined);
+    setActiveTab("files");
     setViewMode("source");
-    const nextPreview = {
-      left: freeTextPreview("left", freeText.left),
-      right: freeTextPreview("right", freeText.right),
-    };
-    setPreview(nextPreview);
-    focusCounter.current += 1;
-    setOpenTabs([{
-      path: FREE_TEXT_PATH,
-      pair: freeTextPair,
-      preview: nextPreview,
-      viewMode: "source",
-      lastFocus: focusCounter.current,
-    }]);
+    setPreview({});
+    setOpenTabs([]);
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
-    setMessage("Text compare is ready. Paste or type directly in either pane.");
-  }, [freeText.left, freeText.right, stagedTarget]);
+    setMessage("Free text is ready. Edit both sides, then compare when you want a result.");
+  }, [stagedTarget]);
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
@@ -1316,10 +1280,6 @@ export function App() {
 
   async function copy(from: Side, to: Side, pair = selected) {
     if (!pair) return;
-    if (pair.path === FREE_TEXT_PATH) {
-      setMessage("Free text compare is edited directly in the diff editor.");
-      return;
-    }
     try {
       await invoke("stage_copy", { from, to, entryPath: pair.path });
       setStagedTarget(to);
@@ -1461,20 +1421,6 @@ export function App() {
 
   async function stageFileSide(side: Side, content: string) {
     if (!selected) return;
-    if (mode === "text" && selected.path === FREE_TEXT_PATH) {
-      const nextSidePreview = freeTextPreview(side, content);
-      setFreeText((current) => ({ ...current, [side]: content }));
-      setPreview((current) => {
-        const next = { ...current, [side]: nextSidePreview };
-        setOpenTabs((tabs) =>
-          tabs.map((tab) =>
-            tab.path === FREE_TEXT_PATH ? { ...tab, preview: next } : tab,
-          ),
-        );
-        return next;
-      });
-      return;
-    }
     const key = `${side}:${selected.path}`;
     const original = (side === "left" ? preview.left?.content : preview.right?.content) ?? "";
     if (content === original) {
@@ -1767,7 +1713,6 @@ export function App() {
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
-  const isTextMode = mode === "text";
   const backupEnabled = preferences.misc.save.backupEnabled;
   const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
   const activeColorPattern = effectiveColorPattern(
@@ -1787,18 +1732,15 @@ export function App() {
       EDIT_EXTENSIONS.includes(p.path.split(".").pop()?.toLowerCase() ?? ""));
   const isTextMerge =
     mode === "compare" && sideEditableText(preview.left) && sideEditableText(preview.right);
-  const isDiffEditable =
-    isTextMerge || (isTextMode && sideEditableText(preview.left) && sideEditableText(preview.right));
+  const isDiffEditable = isTextMerge;
 
   const isEditableEntry = false;
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
-  const leftLabel = isTextMode
-    ? "Left text"
-    : mode === "single"
+  const leftLabel = mode === "single"
       ? activeViewSource?.name ?? "Source"
       : baseName(archives.left?.path ?? paths.left) ?? "Left";
-  const rightLabel = isTextMode ? "Right text" : baseName(archives.right?.path ?? paths.right) ?? "Right";
+  const rightLabel = baseName(archives.right?.path ?? paths.right) ?? "Right";
   const searchContext = searchContextForActiveTab(activeTab);
   const hunkMerge = isTextMerge;
   const sourceChipArchives = mode === "single"
@@ -2094,7 +2036,12 @@ export function App() {
           >
             {mode === "text" ? (
               <div className="workspace-tabpanel" role="tabpanel">
-                {diffView}
+                <FreeTextWorkspace
+                  preferences={preferences}
+                  effectiveColorPattern={activeColorPattern}
+                  ignoreTrimWhitespace={ignoreTrimWhitespace}
+                  onMessage={setMessage}
+                />
               </div>
             ) : mode === "single" ? (
               <div className="view-workspace-split" role="tabpanel" aria-label="View source browser">

@@ -52,7 +52,7 @@ export function MenuBar({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{mode === "compare" ? "Reload both sources from disk" : mode === "text" ? "Text mode has no disk sources" : "Reload the source from disk"}</p>
+            <p>{mode === "compare" ? "Reload both sources from disk" : mode === "text" ? "Free text has no disk sources" : "Reload the source from disk"}</p>
           </TooltipContent>
         </Tooltip>
       </div>

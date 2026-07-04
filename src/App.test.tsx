@@ -290,8 +290,18 @@ vi.mock("@/lib/monaco", () => ({}));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
-  // Single editor (single mode) — never reached here, stub it out.
-  default: () => <div data-testid="editor" />,
+  default: (props: {
+    value?: string;
+    onChange?: (value: string | undefined) => void;
+    options?: { ariaLabel?: string };
+  }) => (
+    <textarea
+      data-testid="editor"
+      aria-label={props.options?.ariaLabel}
+      value={props.value}
+      onChange={(event) => props.onChange?.(event.target.value)}
+    />
+  ),
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: (props: {
@@ -426,7 +436,7 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 
-  it("opens editable Text mode without source pickers, tree controls, merge controls, or staging", async () => {
+  it("opens Free text with draft editors and no diff result until confirm", async () => {
     const user = userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Compare free text" }));
@@ -438,20 +448,17 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Diff block navigation" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/LEFT: Left free text/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/RIGHT: Right free text/)).not.toBeInTheDocument();
-    expect(screen.getByTestId("diff-editor")).toBeInTheDocument();
-    expect(diffEditorProps.options?.readOnly).toBe(false);
-    expect(diffEditorProps.options?.originalEditable).toBe(true);
-    await waitFor(() => expect(blurOriginalEditor).toBeDefined());
-    await waitFor(() => expect(blurModifiedEditor).toBeDefined());
+    expect(screen.queryByText("Pending changes")).not.toBeInTheDocument();
+    expect(screen.getByText("Confirm a comparison to create a temporary diff result.")).toBeInTheDocument();
 
-    buffers.left = "left pasted text";
-    buffers.right = "right typed text";
-    act(() => blurOriginalEditor?.());
-    act(() => blurModifiedEditor?.());
+    await user.type(screen.getByLabelText("Left free text input"), "left pasted text");
+    await user.type(screen.getByLabelText("Right free text input"), "right typed text");
 
-    await waitFor(() => expect(screen.getByTestId("diff-original")).toHaveTextContent("left pasted text"));
+    expect(screen.queryByTestId("diff-original")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+
+    expect(await screen.findByTestId("diff-original")).toHaveTextContent("left pasted text");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("right typed text");
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });

@@ -11,7 +11,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe("free text history", () => {
+describe("Free text history", () => {
   it("stores confirmed results newest first", () => {
     const first = recordFreeTextResult({ left: "a", right: "b", createdAt: 1000 });
     const second = recordFreeTextResult({ left: "c", right: "d", createdAt: 2000 });
