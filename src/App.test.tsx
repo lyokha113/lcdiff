@@ -503,8 +503,10 @@ describe("App file-merge wiring", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Preferences"));
 
     await waitFor(() => expect(updateClientMocks.checkForAppUpdate).toHaveBeenCalledWith("auto"));
+    expect(updateClientMocks.checkForAppUpdate).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("You are up to date.")).not.toBeInTheDocument();
   });
 
@@ -527,7 +529,36 @@ describe("App file-merge wiring", () => {
     await user.click(screen.getByRole("button", { name: "Download and install" }));
 
     await waitFor(() => expect(updateClientMocks.downloadAndInstallAppUpdate).toHaveBeenCalledOnce());
+    expect(updateClientMocks.downloadAndInstallAppUpdate.mock.calls[0]?.[0].status).toBe("available");
     expect(await screen.findAllByText("Update downloaded. Restart to finish.")).not.toHaveLength(0);
+  });
+
+  it("keeps the update release fallback actionable when install fails", async () => {
+    const user = userEvent.setup();
+    updateClientMocks.state.current = {
+      status: "available",
+      releaseUrl: updateClientMocks.releaseUrl,
+      source: "auto",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      latestVersion: "0.3.5",
+      message: "LCDiff v0.3.5 is available.",
+    } as AppUpdateState;
+    updateClientMocks.downloadAndInstallAppUpdate.mockImplementationOnce(async (state: AppUpdateState) => ({
+      ...state,
+      status: "fallback",
+      message: "Could not install the update.",
+    }));
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(await screen.findByRole("button", { name: "Download and install" }));
+
+    expect(await screen.findAllByText("Could not install the update.")).not.toHaveLength(0);
+    const releaseButton = screen.getByRole("button", { name: "Open release page" });
+    expect(releaseButton).toBeEnabled();
+    await user.click(releaseButton);
+    expect(updateClientMocks.openUpdateFallback).toHaveBeenCalledOnce();
   });
 
   it("runs manual update check from Preferences", async () => {
@@ -552,7 +583,7 @@ describe("App file-merge wiring", () => {
 
     await waitFor(() => expect(updateClientMocks.checkForAppUpdate).toHaveBeenCalledWith("manual"));
     expect(await screen.findAllByText("Could not check for updates.")).not.toHaveLength(0);
-    await user.click(screen.getByRole("button", { name: "Open release page" }));
+    await user.click(screen.getAllByRole("button", { name: "Open release page" })[0]);
     expect(updateClientMocks.openUpdateFallback).toHaveBeenCalledOnce();
   });
 

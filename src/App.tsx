@@ -2002,7 +2002,14 @@ export function App() {
             primaryLabel: "Restart",
             onPrimaryAction: restartUpdate,
           }
-        : undefined;
+        : updateState.status === "fallback" || updateState.status === "error"
+          ? {
+              status: updateState.status,
+              message: updateState.message ?? "Could not install the update.",
+              fallbackLabel: "Open release page",
+              onFallbackAction: openUpdateRelease,
+            }
+          : undefined;
 
   const diffView = (
     <DiffView
