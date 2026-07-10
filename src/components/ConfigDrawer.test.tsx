@@ -24,14 +24,9 @@ function setup(overrides = {}) {
     updateState: {
       status: "idle" as const,
       releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
-      fallbackUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
     },
     onLoadSystemFonts: vi.fn(),
     onPreferencesChange: vi.fn(),
-    onCheckForUpdates: vi.fn(),
-    onDownloadAndInstallUpdate: vi.fn(),
-    onRestartToUpdate: vi.fn(),
-    onOpenUpdateFallback: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
   };
@@ -245,7 +240,10 @@ describe("ConfigDrawer", () => {
   });
 
   it("renders update controls inside Misc for an available update", async () => {
-    const props = setup({
+    const onCheckForUpdates = vi.fn();
+    const onDownloadAndInstallUpdate = vi.fn();
+    const onOpenUpdateFallback = vi.fn();
+    setup({
       updateState: {
         status: "available",
         releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
@@ -253,6 +251,9 @@ describe("ConfigDrawer", () => {
         latestVersion: "0.3.3",
         message: "LCDiff v0.3.3 is available.",
       },
+      onCheckForUpdates,
+      onDownloadAndInstallUpdate,
+      onOpenUpdateFallback,
     });
 
     await userEvent.click(screen.getByRole("button", { name: "Misc" }));
@@ -266,9 +267,28 @@ describe("ConfigDrawer", () => {
     await userEvent.click(screen.getByRole("button", { name: "Download and install" }));
     await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
 
-    expect(props.onCheckForUpdates).toHaveBeenCalledTimes(1);
-    expect(props.onDownloadAndInstallUpdate).toHaveBeenCalledTimes(1);
-    expect(props.onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+    expect(onCheckForUpdates).toHaveBeenCalledTimes(1);
+    expect(onDownloadAndInstallUpdate).toHaveBeenCalledTimes(1);
+    expect(onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables update action buttons when handlers are omitted", async () => {
+    setup({
+      updateState: {
+        status: "available",
+        releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+        currentVersion: "0.3.2",
+        latestVersion: "0.3.3",
+        message: "LCDiff v0.3.3 is available.",
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download and install" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open release page" })).toBeDisabled();
   });
 
   it("renders downloading update state inside Misc", async () => {
@@ -289,6 +309,7 @@ describe("ConfigDrawer", () => {
   });
 
   it("renders release-page fallback for error update state inside Misc", async () => {
+    const onOpenUpdateFallback = vi.fn();
     const updateState: AppUpdateState = {
       status: "error",
       releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
@@ -296,13 +317,13 @@ describe("ConfigDrawer", () => {
       message: "Could not install the update.",
     };
 
-    const props = setup({ updateState });
+    setup({ updateState, onOpenUpdateFallback });
 
     await userEvent.click(screen.getByRole("button", { name: "Misc" }));
     await userEvent.click(screen.getByRole("button", { name: "Updates" }));
     await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
 
-    expect(props.onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+    expect(onOpenUpdateFallback).toHaveBeenCalledTimes(1);
   });
 
   it("toggles automatic update checks while preserving Misc defaults", async () => {

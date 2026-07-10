@@ -29,7 +29,7 @@ export function StatusBar({ message, searching, pendingCount, updatePrompt }: St
       <div className="status-bar__meta">
         {searching && <span>Searching sources</span>}
         {updatePrompt && (
-          <span className={`status-bar__update status-bar__update--${updatePrompt.status}`}>
+          <span className={`status-bar__update status-bar__update--${updatePrompt.status}`} aria-live="polite">
             <span className="status-bar__update-text">{updatePrompt.message}</span>
             {showPrimary && (
               <Button type="button" variant="secondary" size="xs" onClick={updatePrompt.onPrimaryAction}>

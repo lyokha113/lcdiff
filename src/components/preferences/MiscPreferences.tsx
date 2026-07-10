@@ -19,10 +19,10 @@ interface MiscPreferencesProps {
   onPanelChange: (panel: Panel) => void;
   onPreferencesChange: (preferences: UiPreferences) => void;
   updateState: AppUpdateState;
-  onCheckForUpdates: () => void;
-  onDownloadAndInstallUpdate: () => void;
-  onRestartToUpdate: () => void;
-  onOpenUpdateFallback: () => void;
+  onCheckForUpdates?: () => void;
+  onDownloadAndInstallUpdate?: () => void;
+  onRestartToUpdate?: () => void;
+  onOpenUpdateFallback?: () => void;
 }
 
 type Panel = "search" | "decompiler" | "save" | "updates";
@@ -203,7 +203,13 @@ export function MiscPreferences({
           </div>
 
           <div className="preference-update-actions">
-            <Button type="button" variant="secondary" size="sm" disabled={isUpdateBusy} onClick={onCheckForUpdates}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={isUpdateBusy || !onCheckForUpdates}
+              onClick={onCheckForUpdates}
+            >
               {isChecking ? "Checking..." : "Check for updates"}
             </Button>
             {(updateStatus === "available" || isDownloading) && (
@@ -211,19 +217,31 @@ export function MiscPreferences({
                 type="button"
                 variant="default"
                 size="sm"
-                disabled={isDownloading}
+                disabled={isDownloading || !onDownloadAndInstallUpdate}
                 onClick={onDownloadAndInstallUpdate}
               >
                 {isDownloading ? "Downloading..." : "Download and install"}
               </Button>
             )}
             {updateStatus === "readyToRestart" && (
-              <Button type="button" variant="default" size="sm" onClick={onRestartToUpdate}>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={!onRestartToUpdate}
+                onClick={onRestartToUpdate}
+              >
                 Restart to update
               </Button>
             )}
             {canOpenReleasePage && (
-              <Button type="button" variant="outline" size="sm" onClick={onOpenUpdateFallback}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!onOpenUpdateFallback}
+                onClick={onOpenUpdateFallback}
+              >
                 Open release page
               </Button>
             )}

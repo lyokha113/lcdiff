@@ -34,8 +34,6 @@ const sections: Array<{ id: Section; label: string }> = [
   { id: "misc", label: "Misc" },
 ];
 
-const noop = () => {};
-
 export function ConfigDrawer({
   open,
   mode: _mode,
@@ -45,10 +43,10 @@ export function ConfigDrawer({
   updateState = IDLE_UPDATE_STATE,
   onLoadSystemFonts,
   onPreferencesChange,
-  onCheckForUpdates = noop,
-  onDownloadAndInstallUpdate = noop,
-  onRestartToUpdate = noop,
-  onOpenUpdateFallback = noop,
+  onCheckForUpdates,
+  onDownloadAndInstallUpdate,
+  onRestartToUpdate,
+  onOpenUpdateFallback,
   onClose,
 }: ConfigDrawerProps) {
   const [section, setSection] = useState<Section>("appearance");
