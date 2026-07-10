@@ -97,7 +97,12 @@ LCDIFF_JLINK="$JLINK" "$ROOT/scripts/assemble-sidecar-resources.sh"
 
 # --- 3. Build bundles ---------------------------------------------------------
 printf '==> Building Linux bundles: %s\n' "$BUNDLES"
-npm --prefix "$ROOT" run tauri -- build --bundles "$BUNDLES"
+TAURI_BUILD_ARGS=(build --bundles "$BUNDLES")
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  printf '==> TAURI_SIGNING_PRIVATE_KEY is not set; building unsigned local bundles\n'
+  TAURI_BUILD_ARGS+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+fi
+npm --prefix "$ROOT" run tauri -- "${TAURI_BUILD_ARGS[@]}"
 
 printf '\nDone. Bundles under:\n'
 printf '  %s/target/release/bundle/\n' "$ROOT"

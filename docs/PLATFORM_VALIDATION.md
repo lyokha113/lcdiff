@@ -35,8 +35,9 @@ artifact, and attaches the installer to the matching GitHub Release.
 Linux release assets are built by `.github/workflows/linux-release.yml` on
 GitHub-hosted `ubuntu-latest` runners for future `v*` tags. The workflow calls
 `docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb`, uploads the
-staged Ubuntu 24.04 and Ubuntu 26.04 AppImage/deb assets as a workflow artifact,
-and attaches uniquely named assets to the matching GitHub Release.
+staged Ubuntu 22.04, Ubuntu 24.04, and Ubuntu 26.04 AppImage/deb assets as a
+workflow artifact, and attaches uniquely named assets to the matching GitHub
+Release.
 
 ## macOS Release Builder
 

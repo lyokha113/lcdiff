@@ -101,6 +101,9 @@ if (!releasing.includes("Linux Release")) {
 if (!releasing.includes("LCDiff-<version>-windows-x64-setup.exe")) {
   failures.push("docs/RELEASING.md: missing Windows release artifact name");
 }
+if (!releasing.includes("LCDiff_<version>_ubuntu22.04_amd64.AppImage")) {
+  failures.push("docs/RELEASING.md: missing Ubuntu 22.04 release artifact name");
+}
 if (!releasing.includes("LCDiff_<version>_ubuntu24.04_amd64.AppImage")) {
   failures.push("docs/RELEASING.md: missing Ubuntu 24.04 release artifact name");
 }
@@ -269,6 +272,7 @@ for (const marker of [
   "runs-on: ubuntu-latest",
   "actions/setup-node@v4",
   "docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb",
+  "LCDiff_${version}_ubuntu22.04_amd64.AppImage",
   "LCDiff_${version}_ubuntu24.04_amd64.AppImage",
   "LCDiff_${version}_ubuntu26.04_amd64.deb",
   "softprops/action-gh-release@v2",

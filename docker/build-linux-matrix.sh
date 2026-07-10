@@ -10,7 +10,7 @@
 #   docker/build-linux-matrix.sh
 #   docker/build-linux-matrix.sh --arch amd64
 #   docker/build-linux-matrix.sh --bundles appimage,deb
-#   docker/build-linux-matrix.sh --ubuntu 24.04 --ubuntu 26.04
+#   docker/build-linux-matrix.sh --ubuntu 22.04 --ubuntu 24.04 --ubuntu 26.04
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${#UBUNTUS[@]}" -eq 0 ]]; then
-  UBUNTUS=(24.04 26.04)
+  UBUNTUS=(22.04 24.04 26.04)
 fi
 
 mkdir -p "$ROOT/artifacts/linux"

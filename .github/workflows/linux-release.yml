@@ -59,6 +59,15 @@ jobs:
           rm -rf "$out"
           mkdir -p "$out"
           cp \
+            "artifacts/linux/ubuntu22.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
+            "$out/LCDiff_${version}_ubuntu22.04_amd64.AppImage"
+          cp \
+            "artifacts/linux/ubuntu22.04-amd64/appimage/LCDiff_${version}_amd64.AppImage.sig" \
+            "$out/LCDiff_${version}_ubuntu22.04_amd64.AppImage.sig"
+          cp \
+            "artifacts/linux/ubuntu22.04-amd64/deb/LCDiff_${version}_amd64.deb" \
+            "$out/LCDiff_${version}_ubuntu22.04_amd64.deb"
+          cp \
             "artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
             "$out/LCDiff_${version}_ubuntu24.04_amd64.AppImage"
           cp \
@@ -75,7 +84,7 @@ jobs:
             "$out/LCDiff_${version}_ubuntu26.04_amd64.deb"
           export LCDIFF_VERSION="$version"
           export LCDIFF_TAG="$tag"
-          export LCDIFF_UPDATER_ASSET="LCDiff_${version}_ubuntu24.04_amd64.AppImage"
+          export LCDIFF_UPDATER_ASSET="LCDiff_${version}_ubuntu22.04_amd64.AppImage"
           node - <<'NODE'
           const { readFileSync, writeFileSync } = require("node:fs");
           const version = process.env.LCDIFF_VERSION;

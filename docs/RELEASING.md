@@ -6,13 +6,16 @@ build and upload platform assets automatically. The local commands below are
 the same build paths, kept for debugging and manual fallback releases.
 
 Targets the current build focus: **macOS (Apple Silicon)**, **Linux (x86_64,
-Ubuntu 24.04 LTS and Ubuntu 26.04 LTS)**, and **Windows 10/11 x64**.
+Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, and Ubuntu 26.04 LTS)**, and **Windows
+10/11 x64**.
 
 ## Artifacts per release
 
 | Platform | File | Built where |
 | --- | --- | --- |
 | macOS arm64 | `LCDiff-<version>-aarch64.dmg` | GitHub Actions (`macos-15`) or local macOS |
+| Linux x86_64 / Ubuntu 22.04 LTS | `LCDiff_<version>_ubuntu22.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:22.04`) or local Docker |
+| Linux x86_64 / Ubuntu 22.04 LTS | `LCDiff_<version>_ubuntu22.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:22.04`) or local Docker |
 | Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
 | Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
 | Linux x86_64 / Ubuntu 26.04 LTS | `LCDiff_<version>_ubuntu26.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:26.04`) or local Docker |
@@ -106,6 +109,8 @@ Future tags run the `Linux Release` workflow from
 `ubuntu-latest`, then stages unique GitHub release asset names:
 
 ```text
+LCDiff_<version>_ubuntu22.04_amd64.AppImage
+LCDiff_<version>_ubuntu22.04_amd64.deb
 LCDiff_<version>_ubuntu24.04_amd64.AppImage
 LCDiff_<version>_ubuntu24.04_amd64.deb
 LCDiff_<version>_ubuntu26.04_amd64.AppImage
@@ -119,13 +124,14 @@ For a local/manual Linux build:
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
 ```
 
-This builds separately inside `ubuntu:24.04` and `ubuntu:26.04`, giving the GTK,
-WebKit, OpenSSL, and glibc-linked desktop stack its own dependency floor per
-supported Ubuntu LTS version. The bundled jlink JRE is built inside each Linux
-container, so it matches Linux x86_64 instead of the host. The matrix script
-copies artifacts to:
+This builds separately inside `ubuntu:22.04`, `ubuntu:24.04`, and
+`ubuntu:26.04`, giving the GTK, WebKit, OpenSSL, and glibc-linked desktop stack
+its own dependency floor per supported Ubuntu LTS version. The bundled jlink JRE
+is built inside each Linux container, so it matches Linux x86_64 instead of the
+host. The matrix script copies artifacts to:
 
 ```bash
+artifacts/linux/ubuntu22.04-amd64/
 artifacts/linux/ubuntu24.04-amd64/
 artifacts/linux/ubuntu26.04-amd64/
 ```
@@ -133,6 +139,7 @@ artifacts/linux/ubuntu26.04-amd64/
 For a single target while debugging:
 
 ```bash
+docker/build-linux-docker.sh --arch amd64 --ubuntu 22.04 --bundles appimage,deb
 docker/build-linux-docker.sh --arch amd64 --ubuntu 24.04 --bundles appimage,deb
 docker/build-linux-docker.sh --arch amd64 --ubuntu 26.04 --bundles appimage,deb
 ```
@@ -181,6 +188,9 @@ gh release create v<version> \
   artifacts/macos/LCDiff-<version>-aarch64.dmg \
   artifacts/macos/LCDiff-<version>-aarch64.app.tar.gz \
   artifacts/macos/LCDiff-<version>-aarch64.app.tar.gz.sig \
+  artifacts/release-linux/LCDiff_<version>_ubuntu22.04_amd64.AppImage \
+  artifacts/release-linux/LCDiff_<version>_ubuntu22.04_amd64.AppImage.sig \
+  artifacts/release-linux/LCDiff_<version>_ubuntu22.04_amd64.deb \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage.sig \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.deb \
@@ -203,8 +213,8 @@ gh release create v<version> \
   confirm `open -a LCDiff` launches.
 - Linux: download the AppImage or `.deb` matching the Ubuntu LTS floor plus
   `install-linux.sh`, run
-  `bash install-linux.sh LCDiff_<version>_ubuntu24.04_amd64.AppImage` or
-  `bash install-linux.sh LCDiff_<version>_ubuntu24.04_amd64.deb`, confirm
+  `bash install-linux.sh LCDiff_<version>_ubuntu22.04_amd64.AppImage` or
+  `bash install-linux.sh LCDiff_<version>_ubuntu22.04_amd64.deb`, confirm
   `lcdiff` runs.
 - Windows: download `LCDiff-<version>-windows-x64-setup.exe`, install it on
   Windows 10 or 11, confirm LCDiff launches and decompile/bytecode views work.
@@ -221,8 +231,8 @@ gh release create v<version> \
   for the GitHub Actions workflow; unsigned builds may trigger SmartScreen.
 - Arch Linux uses the AUR package, not a GitHub release asset.
 - Ubuntu release assets are intentionally split by LTS floor. Do not collapse
-  24.04 and 26.04 artifacts into one Linux directory because linked GTK/WebKit
-  dependencies can drift across distro releases.
+  22.04, 24.04, and 26.04 artifacts into one Linux directory because linked
+  GTK/WebKit dependencies can drift across distro releases.
 - ARM Linux is not a release target — build from source with
   `docker/build-linux-docker.sh --arch arm64 --ubuntu 26.04` if needed.
 - Run the developer checks (`npm run verify:all`,

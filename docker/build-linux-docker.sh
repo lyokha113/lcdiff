@@ -26,9 +26,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REBUILD=0
 ARCH=""
 # glibc floor of the produced binaries. Release builds use the matrix wrapper
-# for 24.04 and 26.04; direct single-target builds default to the older
-# supported LTS floor.
-UBUNTU="${LCDIFF_UBUNTU:-24.04}"
+# for every supported Ubuntu LTS floor; direct single-target builds default to
+# the oldest supported floor.
+UBUNTU="${LCDIFF_UBUNTU:-22.04}"
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --rebuild) REBUILD=1; shift ;;
