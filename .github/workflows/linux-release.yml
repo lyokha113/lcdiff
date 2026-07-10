@@ -45,18 +45,25 @@ jobs:
 
       - name: Build Linux AppImage/deb matrix
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
 
       - name: Stage Linux release assets
         shell: bash
         run: |
           version="$(node -p "require('./package.json').version")"
+          tag="${{ steps.release.outputs.tag }}"
           out="artifacts/release-linux"
           rm -rf "$out"
           mkdir -p "$out"
           cp \
             "artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
             "$out/LCDiff_${version}_ubuntu24.04_amd64.AppImage"
+          cp \
+            "artifacts/linux/ubuntu24.04-amd64/appimage/LCDiff_${version}_amd64.AppImage.sig" \
+            "$out/LCDiff_${version}_ubuntu24.04_amd64.AppImage.sig"
           cp \
             "artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_${version}_amd64.deb" \
             "$out/LCDiff_${version}_ubuntu24.04_amd64.deb"
@@ -66,7 +73,29 @@ jobs:
           cp \
             "artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_${version}_amd64.deb" \
             "$out/LCDiff_${version}_ubuntu26.04_amd64.deb"
+          export LCDIFF_VERSION="$version"
+          export LCDIFF_TAG="$tag"
+          export LCDIFF_UPDATER_ASSET="LCDiff_${version}_ubuntu24.04_amd64.AppImage"
+          node - <<'NODE'
+          const { readFileSync, writeFileSync } = require("node:fs");
+          const version = process.env.LCDIFF_VERSION;
+          const tag = process.env.LCDIFF_TAG;
+          const asset = process.env.LCDIFF_UPDATER_ASSET;
+          const signature = readFileSync(`artifacts/release-linux/${asset}.sig`, "utf8").trim();
+          writeFileSync("artifacts/release-linux/latest-linux-x86_64.json", JSON.stringify({
+            version,
+            notes: readFileSync(`docs/release-notes/v${version}.md`, "utf8"),
+            pub_date: new Date().toISOString(),
+            platforms: {
+              "linux-x86_64": {
+                signature,
+                url: `https://github.com/lyokha113/lcdiff/releases/download/${tag}/${asset}`,
+              },
+            },
+          }, null, 2));
+          NODE
           cp scripts/install-linux.sh "$out/install-linux.sh"
+          find "$out" \( -name "*.sig" -o -name "latest-*.json" \) -print
           ls -lh "$out"
 
       - name: Upload workflow artifact

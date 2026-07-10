@@ -75,6 +75,8 @@ COMMON_ARGS=(
   --platform "$PLATFORM"
   -e APPIMAGE_EXTRACT_AND_RUN=1
   -e CARGO_TARGET_DIR="$TARGET_DIR"
+  -e TAURI_SIGNING_PRIVATE_KEY
+  -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD
   # linuxdeploy scans the bundled jlink JRE's ELFs; libjvm.so lives in
   # jre/lib/server, off the default linker path -> point LD_LIBRARY_PATH at it
   # so AppImage dependency resolution finds it.

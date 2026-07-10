@@ -25,6 +25,31 @@ The install scripts ship as release assets so users get them next to the
 binaries without cloning the repo. Arch Linux uses the AUR package in
 `aur/lcdiff/` instead of a GitHub release asset.
 
+## In-app updater artifacts
+
+Tagged releases publish signed updater artifacts plus static `latest.json`-style
+metadata named per Tauri target, for example:
+
+```text
+latest-darwin-aarch64.json
+latest-linux-x86_64.json
+latest-windows-x86_64.json
+```
+
+The app endpoint in `src-tauri/tauri.conf.json` uses
+`latest-{{target}}-{{arch}}.json` so the independent platform workflows do not
+overwrite one shared manifest. Native update uses signed updater artifacts where
+Tauri supports the current package; unsupported packages and failed updater
+checks fall back to GitHub Releases.
+
+Required GitHub secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+`src-tauri/tauri.conf.json` keeps `bundle.createUpdaterArtifacts` enabled and
+stores the public updater key. The private key must never be committed.
+
 ## 1. Pick the version
 
 The version lives in three manifests, kept in sync:
@@ -154,10 +179,18 @@ then create the tagged release:
 ```bash
 gh release create v<version> \
   artifacts/macos/LCDiff-<version>-aarch64.dmg \
+  artifacts/macos/LCDiff-<version>-aarch64.app.tar.gz \
+  artifacts/macos/LCDiff-<version>-aarch64.app.tar.gz.sig \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage \
+  artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage.sig \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.deb \
   artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.AppImage \
   artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.deb \
+  artifacts/windows/LCDiff-<version>-windows-x64-setup.exe \
+  artifacts/windows/LCDiff-<version>-windows-x64-setup.exe.sig \
+  artifacts/macos/latest-darwin-aarch64.json \
+  artifacts/release-linux/latest-linux-x86_64.json \
+  artifacts/windows/latest-windows-x86_64.json \
   scripts/install-macos.sh \
   artifacts/release-linux/install-linux.sh \
   --title "LCDiff v<version>" \
@@ -176,6 +209,10 @@ gh release create v<version> \
 - Windows: download `LCDiff-<version>-windows-x64-setup.exe`, install it on
   Windows 10 or 11, confirm LCDiff launches and decompile/bytecode views work.
 - Arch Linux: install from AUR with `yay -S lcdiff`, confirm `lcdiff` runs.
+- In-app updater: install the previous LCDiff version, publish a release with
+  the matching `latest-<target>-<arch>.json`, then use Preferences > Misc >
+  Updates > Check for updates. Confirm native update installs where supported
+  and fallback opens GitHub Releases where native update is unavailable.
 
 ## Notes
 
