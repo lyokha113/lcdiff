@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libgl1-mesa-dri libegl1 libglx-mesa0 mesa-vulkan-drivers \
       fonts-dejavu-core \
       fuse libfuse2 \
-      x11-apps x11-utils imagemagick \
+      x11-apps x11-utils xdg-utils imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Node 20 (NodeSource; Ubuntu's nodejs is too old for the toolchain) -------

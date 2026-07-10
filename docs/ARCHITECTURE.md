@@ -39,6 +39,11 @@ operations
 use async Tauri commands with blocking work offloaded from the IPC thread. The
 Java sidecar implements Vineflower decompile by default, CFR, JD-Core, and
 JD-Core v0 as explicit alternate source engines, and ASM Textifier for bytecode.
+In-app updates use `tauri-plugin-updater` with signed updater artifacts from
+GitHub Releases. LCDiff checks per-platform static updater manifests, installs
+signed updater artifacts when the package is native-updatable, and uses a
+GitHub Release fallback when the manifest, signature, package, or platform
+cannot complete a native update.
 `scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
 and copies the shaded sidecar JAR into Tauri resources. Release verification is
 split between local invariants and external platform gates. Locally,

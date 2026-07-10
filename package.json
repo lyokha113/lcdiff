@@ -1,11 +1,11 @@
 {
   "name": "lcdiff-ui",
   "private": true,
-  "version": "0.3.4",
+  "version": "0.3.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "vitest run",
+    "test": "vitest run --exclude \".worktrees/**\"",
     "build": "tsc && vite build",
     "tauri": "tauri",
     "verify:packaging-scripts": "node scripts/verify-packaging-scripts.mjs",
@@ -25,6 +25,9 @@
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "gsap": "^3.15.0",

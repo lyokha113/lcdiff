@@ -5,6 +5,7 @@ import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DEFAULT_UI_PREFERENCES } from "@/lib/preferences";
 import { FALLBACK_SYSTEM_FONTS } from "@/lib/system-fonts";
+import type { AppUpdateState } from "@/lib/update-client";
 
 Object.assign(window.HTMLElement.prototype, {
   hasPointerCapture: vi.fn(() => false),
@@ -20,6 +21,10 @@ function setup(overrides = {}) {
     preferences: DEFAULT_UI_PREFERENCES,
     systemFonts: FALLBACK_SYSTEM_FONTS,
     fontStatus: "ready" as const,
+    updateState: {
+      status: "idle" as const,
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+    },
     onLoadSystemFonts: vi.fn(),
     onPreferencesChange: vi.fn(),
     onClose: vi.fn(),
@@ -71,6 +76,7 @@ describe("ConfigDrawer", () => {
     expect(within(nav).queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("button", { name: "Decompiler" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("button", { name: "Updates" })).not.toBeInTheDocument();
   });
 
   it("changes Appearance color pattern", async () => {
@@ -222,6 +228,7 @@ describe("ConfigDrawer", () => {
     await userEvent.click(screen.getByRole("button", { name: "Misc" }));
 
     expect(screen.getByRole("button", { name: "Search" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Updates" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Decompiler" }));
     expect(screen.getByLabelText("Decompiler engine")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Appearance" }));
@@ -230,5 +237,110 @@ describe("ConfigDrawer", () => {
     expect(screen.getByLabelText("Decompiler engine")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByText("Keep one overwritten .bak on save")).toBeInTheDocument();
+  });
+
+  it("renders update controls inside Misc for an available update", async () => {
+    const onCheckForUpdates = vi.fn();
+    const onDownloadAndInstallUpdate = vi.fn();
+    const onOpenUpdateFallback = vi.fn();
+    setup({
+      updateState: {
+        status: "available",
+        releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+        currentVersion: "0.3.2",
+        latestVersion: "0.3.3",
+        message: "LCDiff v0.3.3 is available.",
+      },
+      onCheckForUpdates,
+      onDownloadAndInstallUpdate,
+      onOpenUpdateFallback,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByText("Current version: 0.3.2")).toBeInTheDocument();
+    expect(screen.getByText("Latest version: 0.3.3")).toBeInTheDocument();
+    expect(screen.getByText("LCDiff v0.3.3 is available.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await userEvent.click(screen.getByRole("button", { name: "Download and install" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
+
+    expect(onCheckForUpdates).toHaveBeenCalledTimes(1);
+    expect(onDownloadAndInstallUpdate).toHaveBeenCalledTimes(1);
+    expect(onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables update action buttons when handlers are omitted", async () => {
+    setup({
+      updateState: {
+        status: "available",
+        releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+        currentVersion: "0.3.2",
+        latestVersion: "0.3.3",
+        message: "LCDiff v0.3.3 is available.",
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Check for updates" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download and install" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open release page" })).toBeDisabled();
+  });
+
+  it("renders downloading update state inside Misc", async () => {
+    const updateState: AppUpdateState = {
+      status: "downloading",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      latestVersion: "0.3.3",
+      message: "Downloading LCDiff v0.3.3.",
+    };
+
+    setup({ updateState });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Downloading..." })).toBeDisabled();
+  });
+
+  it("renders release-page fallback for error update state inside Misc", async () => {
+    const onOpenUpdateFallback = vi.fn();
+    const updateState: AppUpdateState = {
+      status: "error",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      message: "Could not install the update.",
+    };
+
+    setup({ updateState, onOpenUpdateFallback });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
+
+    expect(onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles automatic update checks while preserving Misc defaults", async () => {
+    const props = setup();
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Automatically check for updates" }));
+
+    expect(props.onPreferencesChange).toHaveBeenCalledWith({
+      ...DEFAULT_UI_PREFERENCES,
+      misc: {
+        ...DEFAULT_UI_PREFERENCES.misc,
+        updates: {
+          autoCheck: false,
+        },
+      },
+    });
   });
 });

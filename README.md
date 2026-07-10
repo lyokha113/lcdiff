@@ -60,6 +60,7 @@ because GTK/WebKit desktop dependencies can drift between distro releases.
 
 | Ubuntu | Pick |
 | --- | --- |
+| 22.04 LTS | `ubuntu22.04-amd64` AppImage or `.deb` |
 | 24.04 LTS | `ubuntu24.04-amd64` AppImage or `.deb` |
 | 26.04 LTS | `ubuntu26.04-amd64` AppImage or `.deb` |
 

@@ -35,8 +35,9 @@ artifact, and attaches the installer to the matching GitHub Release.
 Linux release assets are built by `.github/workflows/linux-release.yml` on
 GitHub-hosted `ubuntu-latest` runners for future `v*` tags. The workflow calls
 `docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb`, uploads the
-staged Ubuntu 24.04 and Ubuntu 26.04 AppImage/deb assets as a workflow artifact,
-and attaches uniquely named assets to the matching GitHub Release.
+staged Ubuntu 22.04, Ubuntu 24.04, and Ubuntu 26.04 AppImage/deb assets as a
+workflow artifact, and attaches uniquely named assets to the matching GitHub
+Release.
 
 ## macOS Release Builder
 
@@ -46,6 +47,23 @@ future `v*` tags. The workflow calls
 `scripts/verify-macos-distribution.sh --target aarch64-apple-darwin`, uploads
 the staged DMG as a workflow artifact, and attaches the DMG plus
 `install-macos.sh` to the matching GitHub Release.
+
+## In-app updater validation
+
+Each release workflow signs updater artifacts and publishes static
+`latest.json`-style metadata as `latest-<target>-<arch>.json`. The app uses
+native update where Tauri supports the current package and fallback opens GitHub
+Releases when the package, platform, manifest, or signature cannot complete a
+native update.
+
+Pass evidence:
+
+- Install an older LCDiff build.
+- Publish or stage a newer release with signed updater artifacts and the
+  platform manifest, for example `latest-darwin-aarch64.json`.
+- Use Preferences > Misc > Updates > Check for updates.
+- Confirm native update downloads and relaunches where supported.
+- Confirm fallback opens GitHub Releases for unsupported packages/platforms.
 
 ## Windows Signing
 

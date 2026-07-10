@@ -110,6 +110,31 @@ if (!app.includes("viewWorkspace") || !app.includes("open_view_source")) {
 if (!frontend.includes("FreeTextWorkspace") || !frontend.includes("recordFreeTextResult")) {
   failures.push("frontend: Free text must render FreeTextWorkspace and persist confirmed results");
 }
+
+for (const marker of [
+  "checkForAppUpdate",
+  "downloadAndInstallAppUpdate",
+  "restartToApplyUpdate",
+  "openUpdateFallback",
+  "preferences.misc.updates.autoCheck",
+  "updatePrompt={updatePrompt}",
+]) {
+  if (!app.includes(marker)) {
+    failures.push(`src/App.tsx: missing update flow marker ${marker}`);
+  }
+}
+
+for (const marker of [
+  "Automatically check for updates",
+  "Check for updates",
+  "Download and install",
+  "Open release page",
+]) {
+  if (!frontend.includes(marker)) {
+    failures.push(`frontend: missing update UI marker ${marker}`);
+  }
+}
+
 if (!app.includes("setActiveTab(pair.path);")) {
   failures.push("src/App.tsx: opening an entry must switch the workspace to its diff tab");
 }

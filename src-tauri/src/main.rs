@@ -1754,6 +1754,9 @@ fn main() {
             store_and_emit_open_paths(app, open_paths_from_args(args));
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             install_app_menu(app)?;
             let mut state = AppState::new(app.path().resource_dir().ok());

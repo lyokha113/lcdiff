@@ -91,6 +91,30 @@ describe("UI preferences persistence", () => {
     });
   });
 
+  it("defaults update auto-check to enabled", () => {
+    expect(loadUiPreferences().misc.updates.autoCheck).toBe(true);
+  });
+
+  it("keeps persisted update auto-check preference", () => {
+    const preferences = mergeUiPreferences({
+      misc: {
+        updates: { autoCheck: false },
+      },
+    });
+
+    expect(preferences.misc.updates.autoCheck).toBe(false);
+  });
+
+  it("normalizes invalid update preferences to defaults", () => {
+    const preferences = mergeUiPreferences({
+      misc: {
+        updates: { autoCheck: "sometimes" },
+      },
+    });
+
+    expect(preferences.misc.updates.autoCheck).toBe(true);
+  });
+
   it("falls back to defaults for unknown enum and invalid numeric values", () => {
     expect(
       mergeUiPreferences({

@@ -88,11 +88,12 @@ For release artifacts, prefer Docker from any host. Future `v*` tags run the
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
 ```
 
-The matrix builds Ubuntu 24.04 and Ubuntu 26.04 separately so GTK, WebKit,
-OpenSSL, and glibc-linked dependencies cannot overwrite each other. Artifacts
-land in:
+The matrix builds Ubuntu 22.04, Ubuntu 24.04, and Ubuntu 26.04 separately so
+GTK, WebKit, OpenSSL, and glibc-linked dependencies cannot overwrite each
+other. Artifacts land in:
 
 ```text
+artifacts/linux/ubuntu22.04-amd64/
 artifacts/linux/ubuntu24.04-amd64/
 artifacts/linux/ubuntu26.04-amd64/
 ```
@@ -100,6 +101,7 @@ artifacts/linux/ubuntu26.04-amd64/
 For single-target debugging:
 
 ```bash
+docker/build-linux-docker.sh --arch amd64 --ubuntu 22.04 --bundles appimage,deb
 docker/build-linux-docker.sh --arch amd64 --ubuntu 24.04 --bundles appimage,deb
 docker/build-linux-docker.sh --arch amd64 --ubuntu 26.04 --bundles appimage,deb
 ```

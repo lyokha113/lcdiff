@@ -1,6 +1,7 @@
 param(
   [string] $Bundles = "nsis",
   [string] $OutDir = "artifacts\windows",
+  [string] $ReleaseTag = "",
   [switch] $SkipInstall,
   [switch] $SkipVerify,
   [switch] $SignIfSecretsPresent
@@ -127,6 +128,35 @@ foreach ($artifact in $artifacts) {
   $destination = Join-Path $OutDir "LCDiff-$version-windows-x64-$suffix"
   Copy-Item -LiteralPath $artifact.FullName -Destination $destination -Force
   Write-Host "copied $destination"
+  $signature = "$($artifact.FullName).sig"
+  if (Test-Path -LiteralPath $signature -PathType Leaf) {
+    Copy-Item -LiteralPath $signature -Destination "$destination.sig" -Force
+    Write-Host "copied $destination.sig"
+  }
+}
+
+$updaterAsset = Get-ChildItem -LiteralPath $OutDir -File -Filter "LCDiff-$version-windows-x64-setup.exe" |
+  Select-Object -First 1
+if ($updaterAsset) {
+  $updaterSignature = "$($updaterAsset.FullName).sig"
+  if (-not (Test-Path -LiteralPath $updaterSignature -PathType Leaf)) {
+    throw "missing Windows updater signature: $updaterSignature"
+  }
+  $tag = if ($ReleaseTag) { $ReleaseTag } else { "v$version" }
+  $manifest = [ordered] @{
+    version = $version
+    notes = Get-Content -LiteralPath "docs\release-notes\v$version.md" -Raw
+    pub_date = (Get-Date).ToUniversalTime().ToString("o")
+    platforms = [ordered] @{
+      "windows-x86_64" = [ordered] @{
+        signature = (Get-Content -LiteralPath $updaterSignature -Raw).Trim()
+        url = "https://github.com/lyokha113/lcdiff/releases/download/$tag/$($updaterAsset.Name)"
+      }
+    }
+  }
+  $manifestPath = Join-Path $OutDir "latest-windows-x86_64.json"
+  $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+  Write-Host "copied $manifestPath"
 }
 
 Write-Host "Windows release artifacts written to $OutDir"

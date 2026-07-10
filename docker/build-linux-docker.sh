@@ -26,9 +26,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REBUILD=0
 ARCH=""
 # glibc floor of the produced binaries. Release builds use the matrix wrapper
-# for 24.04 and 26.04; direct single-target builds default to the older
-# supported LTS floor.
-UBUNTU="${LCDIFF_UBUNTU:-24.04}"
+# for every supported Ubuntu LTS floor; direct single-target builds default to
+# the oldest supported floor.
+UBUNTU="${LCDIFF_UBUNTU:-22.04}"
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
     --rebuild) REBUILD=1; shift ;;
@@ -75,6 +75,8 @@ COMMON_ARGS=(
   --platform "$PLATFORM"
   -e APPIMAGE_EXTRACT_AND_RUN=1
   -e CARGO_TARGET_DIR="$TARGET_DIR"
+  -e TAURI_SIGNING_PRIVATE_KEY
+  -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD
   # linuxdeploy scans the bundled jlink JRE's ELFs; libjvm.so lives in
   # jre/lib/server, off the default linker path -> point LD_LIBRARY_PATH at it
   # so AppImage dependency resolution finds it.

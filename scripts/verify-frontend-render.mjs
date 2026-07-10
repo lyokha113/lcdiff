@@ -153,6 +153,9 @@ try {
       async invoke(cmd) {
         if (cmd === "plugin:event|listen") return nextCallback++;
         if (cmd === "plugin:event|unlisten") return undefined;
+        if (cmd === "plugin:updater|check") return null;
+        if (cmd === "plugin:opener|open_url") return undefined;
+        if (cmd === "plugin:process|restart") return undefined;
         if (cmd === "platform_hints") return {};
         if (cmd === "set_engine") return undefined;
         if (cmd === "list_system_fonts") {
@@ -175,6 +178,7 @@ try {
     ]));
     localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
+      misc: { updates: { autoCheck: false } },
     }));
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
@@ -317,6 +321,7 @@ try {
   await miscGroup.getByRole("button", { name: "Search" }).waitFor({ timeout: 5_000 });
   await miscGroup.getByRole("button", { name: "Decompiler" }).waitFor({ timeout: 5_000 });
   await miscGroup.getByRole("button", { name: "Save" }).waitFor({ timeout: 5_000 });
+  await miscGroup.getByRole("button", { name: "Updates" }).waitFor({ timeout: 5_000 });
   await assertBoxInside(miscGroup, miscSegments, "Preferences Misc segmented control");
   await page.setViewportSize({ width: 560, height: 620 });
   await assertBoxInside(miscGroup, miscSegments, "Compact Preferences Misc segmented control");
@@ -530,6 +535,26 @@ try {
       async invoke(cmd, args) {
         if (cmd === "plugin:event|listen") return nextCallback++;
         if (cmd === "plugin:event|unlisten") return undefined;
+        if (cmd === "plugin:updater|check") {
+          if (!window.__LCDIFF_RENDER_UPDATE_AVAILABLE__) return null;
+          return {
+            rid: 1001,
+            currentVersion: "0.3.4",
+            version: "0.3.5",
+            date: "2026-07-10T00:00:00Z",
+            body: "Render verifier update",
+            rawJson: {},
+          };
+        }
+        if (cmd === "plugin:updater|download_and_install") return undefined;
+        if (cmd === "plugin:opener|open_url") {
+          window.__LCDIFF_RENDER_OPENED_UPDATE_URL__ = args.url;
+          return undefined;
+        }
+        if (cmd === "plugin:process|restart") {
+          window.__LCDIFF_RENDER_RESTARTED__ = true;
+          return undefined;
+        }
         if (cmd === "platform_hints") return {};
         if (cmd === "validate_path") {
           if (args.raw === "/fixtures/not-a-zip.jar") {
@@ -653,12 +678,29 @@ try {
   await mockedPage.evaluate(() => {
     localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
+      misc: { updates: { autoCheck: true } },
     }));
   });
   await mockedPage.reload({ waitUntil: "domcontentloaded" });
   await disableAnimations(mockedPage);
   await mockedPage.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
+  await mockedPage.getByRole("button", { name: "Preferences", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Misc", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Updates", exact: true }).click();
+  await mockedPage.evaluate(() => {
+    window.__LCDIFF_RENDER_UPDATE_AVAILABLE__ = true;
+  });
+  await mockedPage.getByRole("button", { name: "Check for updates", exact: true }).click();
+  await mockedPage.locator("text=LCDiff v0.3.5 is available.").first().waitFor({ timeout: 5_000 });
+  await mockedPage
+    .getByRole("dialog", { name: "Preferences" })
+    .getByRole("button", { name: "Download and install", exact: true })
+    .click();
+  await mockedPage.locator("text=Update downloaded. Restart to finish.").first().waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Restart", exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Close preferences", exact: true }).click();
+  await mockedPage.getByRole("dialog", { name: "Preferences" }).waitFor({ state: "detached", timeout: 5_000 });
 
   // Helpers for the new chip-based source UI. The path Input only renders while
   // the chip's Popover is open, so open the chip, act, then close (Escape).

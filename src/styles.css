@@ -668,7 +668,7 @@ main.app-shell {
 }
 .segmented-control {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(4.75rem, 1fr));
   gap: 0.35rem;
 }
 .segmented-control__button {
@@ -698,6 +698,22 @@ main.app-shell {
   height: 2rem;
   border-radius: 0.45rem;
   color: var(--text-2);
+}
+.preference-update-summary {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+.preference-update-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.preference-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 .editor-font-select-item > span:last-child {
   min-width: 0;
@@ -887,7 +903,9 @@ main.app-shell {
 .status-bar p { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-bar__pulse { width: 0.38rem; height: 0.38rem; flex: 0 0 auto; border-radius: 999px; background: var(--st-same); }
 .status-bar__pulse.active { background: var(--brass); box-shadow: 0 0 0.75rem var(--brass); animation: status-pulse 1.1s ease-in-out infinite alternate; }
-.status-bar__meta { display: inline-flex; align-items: center; gap: 0.8rem; flex: 0 0 auto; }
+.status-bar__meta { display: inline-flex; align-items: center; gap: 0.8rem; flex: 0 1 auto; min-width: 0; }
+.status-bar__update { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.status-bar__update-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-bar__pending { flex: 0 0 auto; }
 
 @keyframes status-pulse { to { opacity: 0.35; transform: scale(0.75); } }

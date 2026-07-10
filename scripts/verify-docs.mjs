@@ -101,6 +101,9 @@ if (!releasing.includes("Linux Release")) {
 if (!releasing.includes("LCDiff-<version>-windows-x64-setup.exe")) {
   failures.push("docs/RELEASING.md: missing Windows release artifact name");
 }
+if (!releasing.includes("LCDiff_<version>_ubuntu22.04_amd64.AppImage")) {
+  failures.push("docs/RELEASING.md: missing Ubuntu 22.04 release artifact name");
+}
 if (!releasing.includes("LCDiff_<version>_ubuntu24.04_amd64.AppImage")) {
   failures.push("docs/RELEASING.md: missing Ubuntu 24.04 release artifact name");
 }
@@ -269,6 +272,7 @@ for (const marker of [
   "runs-on: ubuntu-latest",
   "actions/setup-node@v4",
   "docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb",
+  "LCDiff_${version}_ubuntu22.04_amd64.AppImage",
   "LCDiff_${version}_ubuntu24.04_amd64.AppImage",
   "LCDiff_${version}_ubuntu26.04_amd64.deb",
   "softprops/action-gh-release@v2",
@@ -289,6 +293,64 @@ for (const marker of [
 ]) {
   if (!windowsWorkflow.includes(marker)) {
     failures.push(`.github/workflows/windows-release.yml: missing ${marker}`);
+  }
+}
+
+for (const [workflowFile, workflowText] of [
+  [".github/workflows/macos-release.yml", macosWorkflow],
+  [".github/workflows/linux-release.yml", linuxWorkflow],
+  [".github/workflows/windows-release.yml", windowsWorkflow],
+]) {
+  for (const marker of [
+    "TAURI_SIGNING_PRIVATE_KEY",
+    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+    "latest-",
+    "*.sig",
+  ]) {
+    if (!workflowText.includes(marker)) {
+      failures.push(`${workflowFile}: missing updater workflow marker ${marker}`);
+    }
+  }
+}
+
+for (const marker of [
+  "latest.json",
+  "TAURI_SIGNING_PRIVATE_KEY",
+  "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+  "createUpdaterArtifacts",
+]) {
+  if (!releasing.includes(marker)) {
+    failures.push(`docs/RELEASING.md: missing updater marker ${marker}`);
+  }
+}
+
+const architecture = readFileSync("docs/ARCHITECTURE.md", "utf8");
+for (const marker of [
+  "tauri-plugin-updater",
+  "GitHub Release fallback",
+  "signed updater artifacts",
+]) {
+  if (!architecture.includes(marker)) {
+    failures.push(`docs/ARCHITECTURE.md: missing updater marker ${marker}`);
+  }
+}
+
+for (const marker of [
+  "latest.json",
+  "native update",
+  "fallback opens GitHub Releases",
+]) {
+  if (!platformValidation.includes(marker)) {
+    failures.push(`docs/PLATFORM_VALIDATION.md: missing updater marker ${marker}`);
+  }
+}
+
+for (const marker of [
+  "Check for updates",
+  "GitHub Release fallback",
+]) {
+  if (!releaseNotes.includes(marker)) {
+    failures.push(`${releaseNotesFile}: missing updater marker ${marker}`);
   }
 }
 
