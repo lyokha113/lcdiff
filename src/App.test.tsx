@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AppUpdateState } from "@/lib/update-client";
 
 // ---------------------------------------------------------------------------
 // Tauri / Monaco mocks.
@@ -224,6 +225,43 @@ const DIRECTORY_PICKER_OPTIONS: OpenDialogOptions = {
 const chooseFile = vi.fn(async (_options?: OpenDialogOptions): Promise<string | null> => "/tmp/config.json");
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (options?: OpenDialogOptions) => chooseFile(options) }));
 
+const updateClientMocks = vi.hoisted(() => {
+  const releaseUrl = "https://github.com/lyokha113/lcdiff/releases/latest";
+  const state: { current: AppUpdateState } = {
+    current: {
+      status: "upToDate",
+      releaseUrl,
+      source: "auto",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      message: "You are up to date.",
+    },
+  };
+  return {
+    releaseUrl,
+    state,
+    checkForAppUpdate: vi.fn(async () => state.current),
+    downloadAndInstallAppUpdate: vi.fn(async (updateState) => ({
+      ...updateState,
+      status: "readyToRestart",
+      message: "Update downloaded. Restart to finish.",
+    })),
+    restartToApplyUpdate: vi.fn(async () => undefined),
+    openUpdateFallback: vi.fn(async () => undefined),
+  };
+});
+
+vi.mock("@/lib/update-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/update-client")>();
+  return {
+    ...actual,
+    checkForAppUpdate: updateClientMocks.checkForAppUpdate,
+    downloadAndInstallAppUpdate: updateClientMocks.downloadAndInstallAppUpdate,
+    restartToApplyUpdate: updateClientMocks.restartToApplyUpdate,
+    openUpdateFallback: updateClientMocks.openUpdateFallback,
+  };
+});
+
 // Mutable buffers so setValue is observable and moveHunk has real text to chew.
 const LEFT_TEXT = '{\n  "v": 1\n}\n';
 const RIGHT_TEXT = '{\n  "v": 2\n}\n';
@@ -408,6 +446,18 @@ describe("App file-merge wiring", () => {
     summarySourceKind = "file";
     deepSearchBlock = undefined;
     deepSearchError = undefined;
+    updateClientMocks.state.current = {
+      status: "upToDate",
+      releaseUrl: updateClientMocks.releaseUrl,
+      source: "auto",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      message: "You are up to date.",
+    };
+    updateClientMocks.checkForAppUpdate.mockClear();
+    updateClientMocks.downloadAndInstallAppUpdate.mockClear();
+    updateClientMocks.restartToApplyUpdate.mockClear();
+    updateClientMocks.openUpdateFallback.mockClear();
     deferredAppActionListen = undefined;
     appActionHandler = undefined;
     osOpenPathsHandler = undefined;
@@ -446,6 +496,64 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("navigation", { name: "Open files" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Workspace canvas" })).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
+  });
+
+  it("auto-checks for updates after leaving the splash when enabled", async () => {
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+
+    await waitFor(() => expect(updateClientMocks.checkForAppUpdate).toHaveBeenCalledWith("auto"));
+    expect(screen.queryByText("You are up to date.")).not.toBeInTheDocument();
+  });
+
+  it("shows available update prompt from auto-check", async () => {
+    const user = userEvent.setup();
+    updateClientMocks.state.current = {
+      status: "available",
+      releaseUrl: updateClientMocks.releaseUrl,
+      source: "auto",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      latestVersion: "0.3.5",
+      message: "LCDiff v0.3.5 is available.",
+    } as AppUpdateState;
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+
+    expect(await screen.findByText("LCDiff v0.3.5 is available.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Download and install" }));
+
+    await waitFor(() => expect(updateClientMocks.downloadAndInstallAppUpdate).toHaveBeenCalledOnce());
+    expect(await screen.findAllByText("Update downloaded. Restart to finish.")).not.toHaveLength(0);
+  });
+
+  it("runs manual update check from Preferences", async () => {
+    const user = userEvent.setup();
+    updateClientMocks.state.current = {
+      status: "fallback",
+      releaseUrl: updateClientMocks.releaseUrl,
+      source: "manual",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      message: "Could not check for updates.",
+    } as AppUpdateState;
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Preferences"));
+    await user.click(screen.getByRole("button", { name: "Misc" }));
+    await user.click(screen.getByRole("button", { name: "Updates" }));
+    updateClientMocks.checkForAppUpdate.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Check for updates" }));
+
+    await waitFor(() => expect(updateClientMocks.checkForAppUpdate).toHaveBeenCalledWith("manual"));
+    expect(await screen.findAllByText("Could not check for updates.")).not.toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Open release page" }));
+    expect(updateClientMocks.openUpdateFallback).toHaveBeenCalledOnce();
   });
 
   it("opens Free text with draft editors and no diff result until confirm", async () => {

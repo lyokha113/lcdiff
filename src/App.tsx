@@ -71,7 +71,7 @@ import { ViewSourceTabs } from "@/components/ViewSourceTabs";
 import { FileTree } from "@/components/FileTree";
 import { isDirectoryPair, pairPassesTreeFilter } from "@/lib/tree";
 import { SplashScreen } from "@/components/SplashScreen";
-import { StatusBar } from "@/components/StatusBar";
+import { StatusBar, type StatusBarUpdatePrompt } from "@/components/StatusBar";
 import {
   type HistoryEntry,
   clearHistory,
@@ -94,6 +94,14 @@ import {
   openViewSource,
   upsertViewEntryTab,
 } from "@/lib/view-workspace";
+import {
+  checkForAppUpdate,
+  downloadAndInstallAppUpdate,
+  IDLE_UPDATE_STATE,
+  openUpdateFallback,
+  restartToApplyUpdate,
+  type AppUpdateState,
+} from "@/lib/update-client";
 
 function isTauriRuntime() {
   return "__TAURI_INTERNALS__" in window;
@@ -248,6 +256,7 @@ export function App() {
   const [treeExpandAllVersion, setTreeExpandAllVersion] = useState(0);
   const [treeCollapseAllVersion, setTreeCollapseAllVersion] = useState(0);
   const [preferences, setPreferences] = useState(loadUiPreferences);
+  const [updateState, setUpdateState] = useState<AppUpdateState>(IDLE_UPDATE_STATE);
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
   );
@@ -296,6 +305,8 @@ export function App() {
   const actionContextRef = useRef<AppActionContext | undefined>(undefined);
   const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
   const shortcutDialogOpenRef = useRef(shortcutDialogOpen);
+  const updateStateRef = useRef<AppUpdateState>(IDLE_UPDATE_STATE);
+  const updateAutoCheckStarted = useRef(false);
   const viewRef = useRef(view);
   const modeRef = useRef(mode);
   const activeViewSourceIdRef = useRef<string | undefined>(undefined);
@@ -460,6 +471,51 @@ export function App() {
       setFontStatus("fallback");
     }
   }, [fontStatus]);
+
+  const setCurrentUpdateState = useCallback((nextState: AppUpdateState) => {
+    updateStateRef.current = nextState;
+    setUpdateState(nextState);
+  }, []);
+
+  const checkUpdates = useCallback(async (source: "auto" | "manual") => {
+    setCurrentUpdateState({
+      ...updateStateRef.current,
+      status: "checking",
+      source,
+      message: source === "manual" ? "Checking for updates..." : updateStateRef.current.message,
+    });
+    const nextState = await checkForAppUpdate(source);
+    setCurrentUpdateState(nextState);
+    if (source === "manual" && nextState.message) setMessage(nextState.message);
+  }, [setCurrentUpdateState]);
+
+  const installUpdate = useCallback(async () => {
+    const currentState = updateStateRef.current;
+    setCurrentUpdateState({
+      ...currentState,
+      status: "downloading",
+      message: "Downloading update...",
+    });
+    const nextState = await downloadAndInstallAppUpdate(currentState);
+    setCurrentUpdateState(nextState);
+    if (nextState.message) setMessage(nextState.message);
+  }, [setCurrentUpdateState]);
+
+  const restartUpdate = useCallback(async () => {
+    await restartToApplyUpdate();
+  }, []);
+
+  const openUpdateRelease = useCallback(async () => {
+    await openUpdateFallback();
+  }, []);
+
+  useEffect(() => {
+    if (view === "splash") return;
+    if (!preferences.misc.updates.autoCheck) return;
+    if (updateAutoCheckStarted.current) return;
+    updateAutoCheckStarted.current = true;
+    void checkUpdates("auto");
+  }, [checkUpdates, preferences.misc.updates.autoCheck, view]);
 
   const updateShortcutDialogOpen = useCallback((next: boolean | ((current: boolean) => boolean)) => {
     const resolved = typeof next === "function" ? next(shortcutDialogOpenRef.current) : next;
@@ -1929,6 +1985,24 @@ export function App() {
     onPrevious: () => navigateDiffBlock(-1),
     onNext: () => navigateDiffBlock(1),
   };
+  const updatePrompt: StatusBarUpdatePrompt | undefined =
+    updateState.status === "available"
+      ? {
+          status: "available",
+          message: updateState.message ?? "Update available.",
+          primaryLabel: "Download and install",
+          fallbackLabel: "Open release page",
+          onPrimaryAction: installUpdate,
+          onFallbackAction: openUpdateRelease,
+        }
+      : updateState.status === "readyToRestart"
+        ? {
+            status: "readyToRestart",
+            message: updateState.message ?? "Update downloaded. Restart to finish.",
+            primaryLabel: "Restart",
+            onPrimaryAction: restartUpdate,
+          }
+        : undefined;
 
   const diffView = (
     <DiffView
@@ -2147,8 +2221,13 @@ export function App() {
           preferences={preferences}
           systemFonts={systemFonts}
           fontStatus={fontStatus}
+          updateState={updateState}
           onLoadSystemFonts={loadSystemFonts}
           onPreferencesChange={setPreferences}
+          onCheckForUpdates={() => void checkUpdates("manual")}
+          onDownloadAndInstallUpdate={installUpdate}
+          onRestartToUpdate={restartUpdate}
+          onOpenUpdateFallback={openUpdateRelease}
           onClose={() => setDrawerOpen(false)}
         />
       </div>
@@ -2156,6 +2235,7 @@ export function App() {
         message={message}
         searching={searching}
         pendingCount={Object.keys(stagedEntries).length}
+        updatePrompt={updatePrompt}
       />
       <KeyboardShortcutsDialog
         open={shortcutDialogOpen}
