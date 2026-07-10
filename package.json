@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "vitest run",
+    "test": "vitest run --exclude \".worktrees/**\"",
     "build": "tsc && vite build",
     "tauri": "tauri",
     "verify:packaging-scripts": "node scripts/verify-packaging-scripts.mjs",
