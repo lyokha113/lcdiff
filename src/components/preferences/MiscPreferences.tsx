@@ -49,7 +49,7 @@ export function MiscPreferences({
     onPreferencesChange({ ...preferences, misc });
   const updateUpdates = (updates: UiPreferences["misc"]["updates"]) =>
     updateMisc({ ...preferences.misc, updates });
-  const updateStatus = updateState.status as string;
+  const updateStatus = updateState.status;
   const isChecking = updateStatus === "checking";
   const isDownloading = updateStatus === "downloading";
   const isUpdateBusy = isChecking || isDownloading;

@@ -6,7 +6,15 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 export const RELEASE_URL = "https://github.com/lyokha113/lcdiff/releases/latest";
 
 export type UpdateSource = "auto" | "manual";
-export type UpdateStatus = "idle" | "upToDate" | "available" | "readyToRestart" | "fallback";
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "upToDate"
+  | "available"
+  | "downloading"
+  | "readyToRestart"
+  | "fallback"
+  | "error";
 
 export type AppUpdateState = {
   status: UpdateStatus;

@@ -5,6 +5,7 @@ import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DEFAULT_UI_PREFERENCES } from "@/lib/preferences";
 import { FALLBACK_SYSTEM_FONTS } from "@/lib/system-fonts";
+import type { AppUpdateState } from "@/lib/update-client";
 
 Object.assign(window.HTMLElement.prototype, {
   hasPointerCapture: vi.fn(() => false),
@@ -267,6 +268,40 @@ describe("ConfigDrawer", () => {
 
     expect(props.onCheckForUpdates).toHaveBeenCalledTimes(1);
     expect(props.onDownloadAndInstallUpdate).toHaveBeenCalledTimes(1);
+    expect(props.onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders downloading update state inside Misc", async () => {
+    const updateState: AppUpdateState = {
+      status: "downloading",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      latestVersion: "0.3.3",
+      message: "Downloading LCDiff v0.3.3.",
+    };
+
+    setup({ updateState });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Downloading..." })).toBeDisabled();
+  });
+
+  it("renders release-page fallback for error update state inside Misc", async () => {
+    const updateState: AppUpdateState = {
+      status: "error",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      message: "Could not install the update.",
+    };
+
+    const props = setup({ updateState });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
+
     expect(props.onOpenUpdateFallback).toHaveBeenCalledTimes(1);
   });
 
