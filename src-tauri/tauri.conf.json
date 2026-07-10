@@ -31,6 +31,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.png"],
     "fileAssociations": [
       {
@@ -61,5 +62,13 @@
       }
     ],
     "resources": ["resources"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY2N0FEMTk4NDM3MzIyMTgKUldRWUluTkRtTkY2WnQrZ2F0eVF6ZWlyc3BVQkRCbzJLL3hTR1FmdWE4WDRFQlhHNEt1cy9oRmcK",
+      "endpoints": [
+        "https://github.com/lyokha113/lcdiff/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

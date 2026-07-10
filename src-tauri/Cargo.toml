@@ -11,14 +11,17 @@ tauri-build = { version = "2.5", features = [] }
 font-kit = "0.14.3"
 lcdiff-core = { path = "../crates/lcdiff-core" }
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 tauri = { version = "2.11", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.4"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2.3"
+tauri-plugin-updater = "2"
 url = "2.5"
 
 [dev-dependencies]
-serde_json.workspace = true
 tauri = { version = "2.11", features = ["test"] }
 tempfile.workspace = true
 zip.workspace = true
