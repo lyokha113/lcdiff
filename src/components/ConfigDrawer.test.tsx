@@ -20,8 +20,17 @@ function setup(overrides = {}) {
     preferences: DEFAULT_UI_PREFERENCES,
     systemFonts: FALLBACK_SYSTEM_FONTS,
     fontStatus: "ready" as const,
+    updateState: {
+      status: "idle" as const,
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      fallbackUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+    },
     onLoadSystemFonts: vi.fn(),
     onPreferencesChange: vi.fn(),
+    onCheckForUpdates: vi.fn(),
+    onDownloadAndInstallUpdate: vi.fn(),
+    onRestartToUpdate: vi.fn(),
+    onOpenUpdateFallback: vi.fn(),
     onClose: vi.fn(),
     ...overrides,
   };
@@ -71,6 +80,7 @@ describe("ConfigDrawer", () => {
     expect(within(nav).queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("button", { name: "Decompiler" })).not.toBeInTheDocument();
     expect(within(nav).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("button", { name: "Updates" })).not.toBeInTheDocument();
   });
 
   it("changes Appearance color pattern", async () => {
@@ -222,6 +232,7 @@ describe("ConfigDrawer", () => {
     await userEvent.click(screen.getByRole("button", { name: "Misc" }));
 
     expect(screen.getByRole("button", { name: "Search" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Updates" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Decompiler" }));
     expect(screen.getByLabelText("Decompiler engine")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Appearance" }));
@@ -230,5 +241,50 @@ describe("ConfigDrawer", () => {
     expect(screen.getByLabelText("Decompiler engine")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(screen.getByText("Keep one overwritten .bak on save")).toBeInTheDocument();
+  });
+
+  it("renders update controls inside Misc for an available update", async () => {
+    const props = setup({
+      updateState: {
+        status: "available",
+        releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+        currentVersion: "0.3.2",
+        latestVersion: "0.3.3",
+        message: "LCDiff v0.3.3 is available.",
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByText("Current version: 0.3.2")).toBeInTheDocument();
+    expect(screen.getByText("Latest version: 0.3.3")).toBeInTheDocument();
+    expect(screen.getByText("LCDiff v0.3.3 is available.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await userEvent.click(screen.getByRole("button", { name: "Download and install" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open release page" }));
+
+    expect(props.onCheckForUpdates).toHaveBeenCalledTimes(1);
+    expect(props.onDownloadAndInstallUpdate).toHaveBeenCalledTimes(1);
+    expect(props.onOpenUpdateFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles automatic update checks while preserving Misc defaults", async () => {
+    const props = setup();
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Automatically check for updates" }));
+
+    expect(props.onPreferencesChange).toHaveBeenCalledWith({
+      ...DEFAULT_UI_PREFERENCES,
+      misc: {
+        ...DEFAULT_UI_PREFERENCES.misc,
+        updates: {
+          autoCheck: false,
+        },
+      },
+    });
   });
 });

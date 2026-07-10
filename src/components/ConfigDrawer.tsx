@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import type { UiPreferences } from "@/lib/preferences";
 import type { SystemFont } from "@/lib/system-fonts";
 import type { Mode } from "@/lib/types";
+import { IDLE_UPDATE_STATE, type AppUpdateState } from "@/lib/update-client";
 
 type Section = "appearance" | "editor" | "misc";
+type MiscPanel = "search" | "decompiler" | "save" | "updates";
 
 interface ConfigDrawerProps {
   open: boolean;
@@ -16,8 +18,13 @@ interface ConfigDrawerProps {
   preferences: UiPreferences;
   systemFonts: SystemFont[];
   fontStatus: "idle" | "loading" | "ready" | "fallback";
+  updateState?: AppUpdateState;
   onLoadSystemFonts: () => void;
   onPreferencesChange: (preferences: UiPreferences) => void;
+  onCheckForUpdates?: () => void;
+  onDownloadAndInstallUpdate?: () => void;
+  onRestartToUpdate?: () => void;
+  onOpenUpdateFallback?: () => void;
   onClose: () => void;
 }
 
@@ -27,18 +34,25 @@ const sections: Array<{ id: Section; label: string }> = [
   { id: "misc", label: "Misc" },
 ];
 
+const noop = () => {};
+
 export function ConfigDrawer({
   open,
   mode: _mode,
   preferences,
   systemFonts,
   fontStatus,
+  updateState = IDLE_UPDATE_STATE,
   onLoadSystemFonts,
   onPreferencesChange,
+  onCheckForUpdates = noop,
+  onDownloadAndInstallUpdate = noop,
+  onRestartToUpdate = noop,
+  onOpenUpdateFallback = noop,
   onClose,
 }: ConfigDrawerProps) {
   const [section, setSection] = useState<Section>("appearance");
-  const [miscPanel, setMiscPanel] = useState<"search" | "decompiler" | "save">("search");
+  const [miscPanel, setMiscPanel] = useState<MiscPanel>("search");
 
   useEffect(() => {
     if (open && fontStatus === "idle") {
@@ -97,6 +111,11 @@ export function ConfigDrawer({
               panel={miscPanel}
               onPanelChange={setMiscPanel}
               onPreferencesChange={onPreferencesChange}
+              updateState={updateState}
+              onCheckForUpdates={onCheckForUpdates}
+              onDownloadAndInstallUpdate={onDownloadAndInstallUpdate}
+              onRestartToUpdate={onRestartToUpdate}
+              onOpenUpdateFallback={onOpenUpdateFallback}
             />
           )}
         </div>

@@ -11,20 +11,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { UiPreferences } from "@/lib/preferences";
+import type { AppUpdateState } from "@/lib/update-client";
 
 interface MiscPreferencesProps {
   preferences: UiPreferences;
   panel: Panel;
   onPanelChange: (panel: Panel) => void;
   onPreferencesChange: (preferences: UiPreferences) => void;
+  updateState: AppUpdateState;
+  onCheckForUpdates: () => void;
+  onDownloadAndInstallUpdate: () => void;
+  onRestartToUpdate: () => void;
+  onOpenUpdateFallback: () => void;
 }
 
-type Panel = "search" | "decompiler" | "save";
+type Panel = "search" | "decompiler" | "save" | "updates";
 
 const panels: Array<{ id: Panel; label: string; hint: string }> = [
   { id: "search", label: "Search", hint: "Search defaults." },
   { id: "decompiler", label: "Decompiler", hint: "Class preview defaults." },
   { id: "save", label: "Save", hint: "Archive save defaults." },
+  { id: "updates", label: "Updates", hint: "App update checks." },
 ];
 
 export function MiscPreferences({
@@ -32,9 +39,21 @@ export function MiscPreferences({
   panel,
   onPanelChange,
   onPreferencesChange,
+  updateState,
+  onCheckForUpdates,
+  onDownloadAndInstallUpdate,
+  onRestartToUpdate,
+  onOpenUpdateFallback,
 }: MiscPreferencesProps) {
   const updateMisc = (misc: UiPreferences["misc"]) =>
     onPreferencesChange({ ...preferences, misc });
+  const updateUpdates = (updates: UiPreferences["misc"]["updates"]) =>
+    updateMisc({ ...preferences.misc, updates });
+  const updateStatus = updateState.status as string;
+  const isChecking = updateStatus === "checking";
+  const isDownloading = updateStatus === "downloading";
+  const isUpdateBusy = isChecking || isDownloading;
+  const canOpenReleasePage = ["available", "fallback", "error"].includes(updateStatus);
 
   return (
     <section className="drawer-group" aria-label="Misc preferences">
@@ -160,6 +179,56 @@ export function MiscPreferences({
             <span>Keep one overwritten .bak on save</span>
           </label>
         </PreferenceHint>
+      )}
+
+      {panel === "updates" && (
+        <>
+          <PreferenceHint text="Check for LCDiff releases automatically.">
+            <label className="check-label">
+              <Checkbox
+                aria-label="Automatically check for updates"
+                checked={preferences.misc.updates.autoCheck}
+                onCheckedChange={(checked) => updateUpdates({
+                  autoCheck: checked === true,
+                })}
+              />
+              <span>Automatically check for updates</span>
+            </label>
+          </PreferenceHint>
+
+          <div className="preference-update-summary">
+            <span>Current version: {updateState.currentVersion ?? "unknown"}</span>
+            {updateState.latestVersion && <span>Latest version: {updateState.latestVersion}</span>}
+            {updateState.message && <span>{updateState.message}</span>}
+          </div>
+
+          <div className="preference-update-actions">
+            <Button type="button" variant="secondary" size="sm" disabled={isUpdateBusy} onClick={onCheckForUpdates}>
+              {isChecking ? "Checking..." : "Check for updates"}
+            </Button>
+            {(updateStatus === "available" || isDownloading) && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={isDownloading}
+                onClick={onDownloadAndInstallUpdate}
+              >
+                {isDownloading ? "Downloading..." : "Download and install"}
+              </Button>
+            )}
+            {updateStatus === "readyToRestart" && (
+              <Button type="button" variant="default" size="sm" onClick={onRestartToUpdate}>
+                Restart to update
+              </Button>
+            )}
+            {canOpenReleasePage && (
+              <Button type="button" variant="outline" size="sm" onClick={onOpenUpdateFallback}>
+                Open release page
+              </Button>
+            )}
+          </div>
+        </>
       )}
     </section>
   );
