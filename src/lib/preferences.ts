@@ -35,6 +35,9 @@ export interface UiPreferences {
     save: {
       backupEnabled: boolean;
     };
+    updates: {
+      autoCheck: boolean;
+    };
   };
 }
 
@@ -60,6 +63,9 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
     },
     save: {
       backupEnabled: false,
+    },
+    updates: {
+      autoCheck: true,
     },
   },
 };
@@ -258,6 +264,7 @@ export function normalizeUiPreferences(
   const search = isRecord(misc.search) ? misc.search : oldSearch;
   const decompiler = isRecord(misc.decompiler) ? misc.decompiler : {};
   const save = isRecord(misc.save) ? misc.save : {};
+  const updates = isRecord(misc.updates) ? misc.updates : {};
 
   const oldColorPattern =
     appearance.colorMode === "light" || appearance.colorMode === "dark"
@@ -317,6 +324,12 @@ export function normalizeUiPreferences(
         backupEnabled: booleanValue(
           save.backupEnabled,
           DEFAULT_UI_PREFERENCES.misc.save.backupEnabled,
+        ),
+      },
+      updates: {
+        autoCheck: booleanValue(
+          updates.autoCheck,
+          DEFAULT_UI_PREFERENCES.misc.updates.autoCheck,
         ),
       },
     },
