@@ -65,7 +65,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU1NURCNTQ4OEY1OThCNkQKUldSdGkxbVBTTFZkNWFCTEExdVBhTXprazFIbUI3RGNWZFNpNWdOMTBUYjc0K2dYblJ2OGtRWW0K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhEQjMwNEZGNjk2QThDRDUKUldUVmpHcHAvd1N6alltQ213U29QZjhucVJPalZSTHNFUnFHM3J3US9oa1FFN1p4Mk8vbWd3c0kK",
       "endpoints": [
         "https://github.com/lyokha113/lcdiff/releases/latest/download/latest-{{target}}-{{arch}}.json"
       ]
