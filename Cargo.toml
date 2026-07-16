@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lcdiff-core", "crates/lcdiff-cli", "src-tauri"]
+members = ["crates/lcdiff-core", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -8,8 +8,6 @@ license = "MIT"
 version = "0.3.5"
 
 [workspace.dependencies]
-anyhow = "1.0"
-clap = { version = "4.5", features = ["derive"] }
 crc32fast = "1.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

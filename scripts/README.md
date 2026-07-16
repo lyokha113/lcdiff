@@ -6,10 +6,8 @@ Build, sign, package, and verification scripts for LCDiff.
 
 Wired into `package.json` (`npm run verify:*`, `npm run verify:all`):
 
-- `verify-docs.mjs` — documentation invariants.
-- `verify-frontend-invariants.mjs` — frontend structural invariants.
+- `verify-docs.mjs` — release version and artifact synchronization.
 - `verify-frontend-render.mjs` — frontend render checks.
-- `verify-packaging-scripts.mjs` — packaging-script invariants.
 
 Platform verifiers (run on the relevant host):
 

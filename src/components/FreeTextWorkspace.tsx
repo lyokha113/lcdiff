@@ -123,9 +123,11 @@ export function FreeTextWorkspace({
               <span className="free-text-history__content">
                 <span className="free-text-history__time-row">
                   <time dateTime={new Date(entry.createdAt).toISOString()}>{formatHistoryTime(entry.createdAt)}</time>
-                  <span>{entry.title}</span>
+                  <span>Free text</span>
                 </span>
-                <span className="free-text-history__summary">{entry.summary}</span>
+                <span className="free-text-history__summary">
+                  {entry.left.length + entry.right.length} characters
+                </span>
               </span>
             </button>
           ))}

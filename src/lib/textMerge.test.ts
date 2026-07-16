@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { takeAll, applyHunk, moveHunk, type Hunk } from "./textMerge";
-
-describe("takeAll", () => {
-  it("replaces target with source content", () => {
-    expect(takeAll("dst\n", "src\n")).toBe("src\n");
-  });
-});
+import { applyHunk, moveHunk, type Hunk } from "./textMerge";
 
 describe("applyHunk", () => {
   it("replaces target lines with source lines", () => {

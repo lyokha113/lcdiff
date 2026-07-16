@@ -13,6 +13,6 @@ This directory holds the `LCDiff` design, architecture, and validation docs.
 
 ## Current State
 
-`LCDiff` is implemented: Rust `lcdiff-core` + `lcdiff-cli`, a Tauri v2 desktop
+`LCDiff` is implemented: Rust `lcdiff-core`, a Tauri v2 desktop
 shell, and a JVM decompiler sidecar. See `../README.md` for the build and
 platform-validation commands and `LCDIFF_COMPLETION_AUDIT.md` for proof evidence.

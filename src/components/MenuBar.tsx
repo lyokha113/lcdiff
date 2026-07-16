@@ -1,8 +1,5 @@
-import { ChevronDown, Pencil, RefreshCw, Save, Search, Settings, Trash2, X, ArrowRightLeft } from "lucide-react";
+import { ChevronDown, Pencil, RefreshCw, Save, Trash2, X, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { Mode, Side } from "@/lib/types";
@@ -11,38 +8,25 @@ interface MenuBarProps {
   mode: Mode;
   stagedTarget?: Side;
   pendingOps: Array<{ key: string; path: string; side: Side; kind: "copy" | "edit" }>;
-  searchOpen: boolean;
-  drawerOpen: boolean;
   canRefresh: boolean;
-  onChangeMode: (mode: Mode) => void;
   onSave: (side: Side) => void;
   onRefresh: () => void;
   onClearStaged: () => void;
   onUnstageOne: (entryPath: string) => void;
-  onToggleSearch: () => void;
-  onToggleDrawer: () => void;
 }
 
 export function MenuBar({
-  mode, stagedTarget, pendingOps, searchOpen, drawerOpen, canRefresh,
-  onChangeMode, onSave, onRefresh, onClearStaged, onUnstageOne, onToggleSearch, onToggleDrawer,
+  mode, stagedTarget, pendingOps, canRefresh,
+  onSave, onRefresh, onClearStaged, onUnstageOne,
 }: MenuBarProps) {
   return (
     <header className="command-bar" aria-label="Workspace commands">
-      <div className="command-brand" aria-label="LCDiff workspace">
-        <span className="command-brand__mark">LD</span>
-        <span className="command-brand__name">LCDiff</span>
+      <div className="command-context">
+        <span className="command-context__mode">{mode === "single" ? "View" : mode === "compare" ? "Compare" : "Text"}</span>
+        <span className="command-context__detail">{mode === "single" ? "Source inspector" : mode === "compare" ? "Archive workbench" : "Draft comparison"}</span>
       </div>
 
-      <div className="command-group command-group--mode" role="group" aria-label="Workspace mode">
-        <Select value={mode} onValueChange={(value) => onChangeMode(value as Mode)}>
-          <SelectTrigger aria-label="Workspace mode"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectGroup>
-            <SelectItem value="single">View</SelectItem>
-            <SelectItem value="compare">Compare and Merge</SelectItem>
-            <SelectItem value="text">Free text</SelectItem>
-          </SelectGroup></SelectContent>
-        </Select>
+      <div className="command-group command-group--refresh" role="group" aria-label="Source commands">
         <Tooltip>
           <TooltipTrigger asChild>
             <span>
@@ -58,17 +42,6 @@ export function MenuBar({
       </div>
 
       <div className="command-spacer" />
-
-      <div className="command-group command-group--tools" role="group" aria-label="Workspace tools">
-        {mode !== "text" && (
-          <Button variant={searchOpen ? "secondary" : "ghost"} size="icon" aria-label="Toggle search" aria-pressed={searchOpen} onClick={onToggleSearch}>
-            <Search />
-          </Button>
-        )}
-        <Button variant={drawerOpen ? "secondary" : "ghost"} size="icon" aria-label="Preferences" aria-pressed={drawerOpen} onClick={onToggleDrawer}>
-          <Settings />
-        </Button>
-      </div>
 
       {mode === "compare" && <div className="command-divider" aria-hidden="true" />}
 

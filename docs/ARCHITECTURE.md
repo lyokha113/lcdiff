@@ -12,8 +12,8 @@ React + shadcn/ui + Tailwind v4 + Monaco desktop view
 ```
 
 `lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
-constant-pool search, staged changes, and save semantics. Frontend and CLI code
-are adapters. Decompiled Java is a view only and must never enter merge writes.
+constant-pool search, staged changes, and save semantics. The frontend and
+Tauri host are adapters. Decompiled Java is a view only and must never enter merge writes.
 
 The Tauri desktop adapter currently uses React with shadcn/ui source
 components, Tailwind v4 theming, and Monaco. It provides path preflight with per-panel
@@ -46,9 +46,7 @@ GitHub Release fallback when the manifest, signature, package, or platform
 cannot complete a native update.
 `scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
 and copies the shaded sidecar JAR into Tauri resources. Release verification is
-split between local invariants and external platform gates. Locally,
-`npm run verify:packaging-scripts` checks the macOS/Windows helper-script
-contracts that cannot all execute on one host.
+split between `npm run verify:all` and external platform gates.
 `scripts/sign-macos-bundle.sh` stages a clean copy outside FileProvider
 directories, signs JRE Mach-O children inside-out, signs the outer `.app`,
 verifies the result, and can copy the signed app back to a deterministic output
@@ -92,8 +90,7 @@ results. A result is created only when the user confirms comparison, and
 confirmed results are stored in local temporary history with a fixed limit and
 clear action.
 
-GSAP and `@gsap/react` are restricted to the startup composition. Normal
-workspace interactions use transform/opacity CSS transitions, and reduced
+Startup and workspace motion use CSS animations and transitions, while reduced
 motion suppresses nonessential animation. Geist and JetBrains Mono remain
 self-hosted so the desktop bundle renders offline.
 

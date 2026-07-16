@@ -1017,8 +1017,7 @@ try {
   await mockedPage.locator("text=00000000  fe ed fa ce").waitFor({ timeout: 5_000 });
 
   // Single-mode switch guard: blocked while staged.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "View" }).click();
+  await mockedPage.getByRole("button", { name: "View mode" }).click();
   await mockedPage.locator("text=Save or clear unsaved changes before switching to View mode.").waitFor({ timeout: 5_000 });
 
   // Clear staged (MenuBar icon button): badges gone.
@@ -1030,8 +1029,7 @@ try {
   await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
 
   // Now the switch to View succeeds; SourceChips renders only the left chip.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "View" }).click();
+  await mockedPage.getByRole("button", { name: "View mode" }).click();
   await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
   if (
     await mockedPage.getByRole("group", { name: "Actions into left pane" }).count() ||
@@ -1059,8 +1057,7 @@ try {
   await mockedPage.locator("text=class ViewOnly").waitFor({ timeout: 5_000 });
 
   // Back to Compare: right chip returns.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "Compare and Merge" }).click();
+  await mockedPage.getByRole("button", { name: "Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
   await openLeftPopover();
