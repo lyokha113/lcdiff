@@ -5,49 +5,81 @@
 </p>
 
 <p align="center">
-  <strong>Diff JARs without turning your brain into bytecode.</strong>
+  <strong>Inspect, compare, search, decompile, and safely merge Java archives.</strong>
 </p>
 
 <p align="center">
-  Inspect, compare, search, decompile, and stage merges between
-  <strong>JAR/ZIP archives and folders</strong>. Decompiled Java is always a
-  read-only view; saved merges copy the original entry bytes.
+  A native desktop workbench for JAR, ZIP, WAR, EAR, folders, and free-text diffs.
+  Decompiled Java stays read-only; saved merges always use the original entry bytes.
 </p>
 
 <p align="center">
   <a href="https://github.com/lyokha113/lcdiff/releases/latest">Download</a>
-  · <a href="#use-it">Use it</a>
+  · <a href="#features">Features</a>
   · <a href="#install">Install</a>
+  · <a href="#quick-start">Quick start</a>
   · <a href="docs/DEVELOPMENT.md">Develop</a>
-  · <a href="docs/RELEASING.md">Release</a>
 </p>
 
 ---
 
-## What It Does
+## See LCDiff in action
 
-LCDiff is a desktop workbench for the annoying moment when two Java archives
-look almost the same, except one of them definitely contains the bad afternoon.
+### Compare archives and folders
 
-| Need | LCDiff gives you |
+Load both sides, filter the tree by status, and open any matching entry as a
+source, bytecode, text, metadata, or hex diff.
+
+![LCDiff Compare workspace with two Java archives](docs/images/lcdiff-compare.png)
+
+### Inspect one or many sources
+
+View mode keeps multiple archives or folders open as source tabs and gives each
+source its own entry workspace.
+
+![LCDiff View workspace inspecting a Java archive](docs/images/lcdiff-view.png)
+
+> Screenshots were captured directly from the LCDiff macOS desktop build using
+> small local demo JARs.
+
+## Features
+
+| Area | What LCDiff provides |
 | --- | --- |
-| "What's inside this thing?" | Lazy archive/folder tree, metadata, CRC/SHA-256, text preview, hex preview. |
-| "What changed?" | CRC tree diff, aligned rows, Monaco source/bytecode diff. |
-| "Where did that class/string go?" | Path search, text search, constant-pool search, and deep decompiled-source search. |
-| "Can I copy just this entry?" | Stage original bytes from left to right or right to left, review, then save atomically. |
-| "Is this decompiled code safe to merge?" | No. And LCDiff will not let you. Decompiled Java is a window, not a write path. |
+| Three focused workspaces | **View** for inspection, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
+| Broad source support | Open JAR, ZIP, WAR, EAR, directories, and common text files from pickers, drag-and-drop, or the operating system. |
+| Lazy archive browser | Navigate large archives without eagerly extracting everything; nested archives expand only when requested. |
+| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and filters. |
+| Java decompilation | Read-only Java through Vineflower, CFR, JD-Core, or JD-Core v0, with ASM Textifier bytecode as a separate view. |
+| Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, whitespace controls, font settings, and compact layouts. |
+| Binary inspection | Size, CRC, SHA-256, metadata, and hex previews when an entry is not safely renderable as text. |
+| Deep search | Path, text, constant-pool, and optional decompiled-source search with cancellable background work and clickable results. |
+| Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. |
+| Signed-JAR guard rails | Warnings before rewriting signed archives or discarding staged work. |
+| Native desktop integration | File associations, Finder/Explorer open-with support, keyboard shortcuts, themes, and installed editor fonts. |
+| In-app updates | Automatic checks plus signed native updater artifacts; GitHub Releases remains the fallback when native update is unavailable. |
+
+### The safety contract
+
+- Decompiled Java is a view, never a write path.
+- Archive merges copy original entry bytes.
+- Changes are staged before save.
+- Saves are atomic and can preserve a `.bak` backup.
+- Signed archives and destructive transitions require confirmation.
 
 ## Install
 
-Grab the latest release from
+Download the newest build from
 [GitHub Releases](https://github.com/lyokha113/lcdiff/releases/latest).
 
 ### macOS
 
-Download `LCDiff-<version>-aarch64.dmg`, open it, and install the app.
+Download `LCDiff-<version>-aarch64.dmg`, open it, and move LCDiff to
+Applications.
 
-LCDiff is currently unsigned. If macOS complains that the app is damaged, use
-the release helper:
+LCDiff is currently distributed without Apple Developer ID notarization. If
+macOS reports that the app is damaged, download the matching release helper and
+run:
 
 ```bash
 bash install-macos.sh
@@ -55,101 +87,74 @@ bash install-macos.sh
 
 ### Ubuntu
 
-Use the artifact matching your Ubuntu LTS version. The builds are separated
-because GTK/WebKit desktop dependencies can drift between distro releases.
+Choose the artifact matching the installed Ubuntu LTS release:
 
-| Ubuntu | Pick |
+| Ubuntu | Artifact |
 | --- | --- |
 | 22.04 LTS | `ubuntu22.04-amd64` AppImage or `.deb` |
 | 24.04 LTS | `ubuntu24.04-amd64` AppImage or `.deb` |
 | 26.04 LTS | `ubuntu26.04-amd64` AppImage or `.deb` |
 
 ```bash
-bash install-linux.sh LCDiff_<version>_amd64.AppImage
-bash install-linux.sh LCDiff_<version>_amd64.deb
+bash install-linux.sh LCDiff_<version>_ubuntu22.04_amd64.AppImage
+bash install-linux.sh LCDiff_<version>_ubuntu22.04_amd64.deb
 ```
 
 ### Arch Linux
 
 ```bash
 yay -S lcdiff
+# or
+paru -S lcdiff
 ```
-
-`paru -S lcdiff` works too.
 
 ### Windows
 
-Windows 10/11 support is built by GitHub Actions from release tags. Download
-`LCDiff-<version>-windows-x64-setup.exe` when a release includes it. Unsigned
-builds may show a SmartScreen warning until code signing is configured.
+Download `LCDiff-<version>-windows-x64-setup.exe` on Windows 10 or 11.
+Unsigned builds may display a SmartScreen warning until Authenticode signing is
+configured.
 
-## Use It
+## Automatic updates
 
-### 1. View One Or More Sources
+LCDiff checks for a newer version at startup when automatic checks are enabled.
+You can also open **Preferences → Misc → Updates → Check for updates**.
 
-Drop in a `.jar`, `.zip`, or folder. Use Browse if drag-and-drop is having a
-Wayland day.
+Release builds use per-platform signed updater metadata. If the current package
+cannot complete a native update, LCDiff opens the matching GitHub Release so you
+can install it manually.
 
-Opening a supported archive or text file from Finder, Explorer, or a file
-manager launches LCDiff directly into **View** mode and loads that source.
+## Quick start
 
-In **View** mode, LCDiff is a multi-source inspector:
+### Inspect a source
 
-- open multiple folders, JARs, ZIPs, WARs, or EARs as source tabs;
-- browse the active source tree on the left;
-- open entries as tabs on the right;
-- preview Java source, bytecode, text, binary metadata, and hex;
-- inspect folders with the same mental model as archives.
+1. Choose **View**.
+2. Open a JAR, ZIP, WAR, EAR, folder, or text file.
+3. Expand the tree and select an entry.
+4. Switch between source, bytecode, text, metadata, and hex views when available.
 
-### 2. Compare And Merge Two Things That Claim To Be The Same
+### Compare and merge
 
-Switch to **Compare and Merge**, load a left and right source, then let the tree
-tell the truth.
+1. Choose **Compare**.
+2. Open the left and right sources.
+3. Filter by differences and select an entry.
+4. Inspect the diff, then stage an entry or text hunk in the intended direction.
+5. Review pending changes and save the target.
 
-- Added, removed, and changed entries are grouped by status.
-- Matching files open as source or bytecode diffs.
-- Binary entries still show size, CRC, SHA-256, and hex previews.
-- Nested archives expand lazily when you ask for them.
+### Compare pasted text
 
-### 3. Compare Free Text Without Making Files
+Choose **Free text**, edit both drafts, and confirm the comparison. Confirmed
+results are read-only and kept in bounded local temporary history until cleared.
 
-Switch to **Free text** when you want to paste or type two snippets without
-making files. Edit the left and right drafts, then click Compare to create a
-readonly diff result. Confirmed results stay in local temporary history so you
-can reopen them during the session or after restarting the app.
+### Search
 
-### 4. Search Like You Mean It
+Open Search from the left rail or press `Cmd/Ctrl+F`. Start with fast path or
+text search; use constant-pool or deep decompiled-source search only when the
+surface result is not enough.
 
-Use search from the Files workspace or inside an open diff.
+## Keyboard shortcuts
 
-- Fast path and text search for the loaded source.
-- Constant-pool search for class references and strings.
-- Optional deep decompiled-source search when the surface answer is not enough.
-- Clickable results jump straight to the matching entry or diff tab.
-
-### 5. Stage A Merge Without Lying To Yourself
-
-Use row actions or context menus to copy entries between sides.
-
-LCDiff stages changes first. You can inspect the pending list, clear mistakes,
-and only then save. The save path is atomic and can keep a `.bak` backup.
-
-Important contract: LCDiff merges original entry bytes. It never writes the
-decompiled Java view back into your archive.
-
-### 6. Save With Guard Rails
-
-Before writing, LCDiff warns when:
-
-- staged changes would be discarded;
-- the target is a signed JAR;
-- a backup option affects the output path.
-
-The app is built for careful archive surgery, not speedrunning regret.
-
-## Shortcuts
-
-`Cmd` on macOS and `Ctrl` on Linux are used for command-style shortcuts.
+`Cmd` is used on macOS and `Ctrl` on Linux/Windows for command-style
+shortcuts.
 
 | Action | Shortcut |
 | --- | --- |
@@ -161,39 +166,40 @@ The app is built for careful archive surgery, not speedrunning regret.
 | Save staged target | `Cmd/Ctrl+S` |
 | Preferences | `Cmd/Ctrl+,` |
 | Keyboard shortcuts | `Cmd/Ctrl+/` |
-| Next tab | `Ctrl+Tab` |
-| Previous tab | `Ctrl+Shift+Tab` |
+| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Close active tab | `Cmd/Ctrl+W` |
-| Copy entry to left | `Alt+[` |
-| Copy entry to right | `Alt+]` |
+| Copy entry to left / right | `Alt+[` / `Alt+]` |
 
-The full shortcut reference lives inside the app.
+The complete shortcut reference is available inside LCDiff.
 
-## Notes For Humans
+## Platform notes
 
-- Java source views are read-only by design.
-- Bytecode/decompile views need the bundled JVM sidecar. Release builds include
-  it.
-- On Linux Wayland, Browse and path input are the most reliable open paths. If
-  drag-and-drop misbehaves, launch with `GDK_BACKEND=x11 lcdiff`.
-- AppImage install does not need root. `.deb` install does.
-- Arch uses the AUR package, not a GitHub Linux bundle.
-- Windows installers are built on GitHub-hosted Windows runners for release
-  tags; local macOS/Linux builds do not produce Windows artifacts.
+- Decompile and bytecode views use the bundled Java 17 sidecar.
+- On Linux Wayland, Browse and direct path input are the most reliable open
+  paths. If drag-and-drop misbehaves, try `GDK_BACKEND=x11 lcdiff`.
+- AppImage installation does not require root; `.deb` installation does.
+- Arch uses AUR rather than a GitHub Linux bundle.
+- Windows installers are produced by GitHub-hosted Windows runners.
 
-## Developers
+## Development
 
-Developer setup, architecture notes, checks, source builds, Docker Linux matrix,
-macOS signing/notarization order, and release packaging live in
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-
-Useful deep links:
+Architecture, setup, validation, packaging, and release operations live in:
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Development](docs/DEVELOPMENT.md)
 - [macOS operations](docs/OPERATIONS_MACOS.md)
 - [Platform validation](docs/PLATFORM_VALIDATION.md)
 - [Releasing](docs/RELEASING.md)
+
+The main local umbrella gate is:
+
+```bash
+npm run verify:all
+```
+
+Full release verification also includes the Rust workspace gates, JVM sidecar
+smoke test, and a packaged desktop launch. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for exact commands.
 
 ## License
 
