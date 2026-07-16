@@ -1831,7 +1831,7 @@ main.app-shell {
 
 .workspace-tabs {
   align-items: stretch;
-  min-height: 2.25rem;
+  min-height: 1.9rem;
   gap: 0;
   padding: 0 0.35rem;
   border-bottom: 1px solid var(--line);
@@ -1839,8 +1839,8 @@ main.app-shell {
 }
 .workspace-tabs-files { align-items: stretch; }
 .workspace-tab {
-  min-height: 2.25rem;
-  padding: 0.35rem 0.7rem;
+  min-height: 1.9rem;
+  padding: 0.22rem 0.58rem;
   border: 0;
   border-right: 1px solid var(--line-soft);
   border-radius: 0;
@@ -1854,7 +1854,8 @@ main.app-shell {
   box-shadow: inset 0 -2px var(--brass);
 }
 .workspace-tab-count { border-radius: 0.32rem; background: color-mix(in oklab, var(--brass) 12%, transparent); font-size: 0.58rem; }
-.workspace-tree-filter { align-self: center; width: 8.25rem; height: 1.75rem; margin-inline: 0.35rem; border: 0; border-radius: 0.4rem; background: var(--ink-2); font-size: 0.68rem; }
+.workspace-tree-filter { align-self: center; width: 8rem; height: 1.55rem; margin-inline: 0.28rem; border: 0; border-radius: 0.38rem; background: var(--ink-2); font-size: 0.66rem; }
+.workspace-tree-actions [data-slot="button"] { width: 1.45rem; height: 1.45rem; }
 .workspace-tree-actions { min-height: 100%; }
 .workspace-tabs-scroll { gap: 0; }
 .workspace-tabpanels { background: color-mix(in oklab, var(--ink-0) 26%, transparent); }
@@ -1865,8 +1866,8 @@ main.app-shell {
   border-radius: 0;
   background: transparent;
 }
-.tree-header { min-height: 2rem; padding: 0; background: color-mix(in oklab, var(--ink-1) 98%, transparent); font-size: 0.64rem; }
-.tree-row { min-height: 1.75rem; padding-block: 0.16rem; border-radius: 0; }
+.tree-header { min-height: 1.5rem; padding: 0; background: color-mix(in oklab, var(--ink-1) 98%, transparent); font-size: 0.6rem; }
+.tree-row { height: 1.5rem; min-height: 1.5rem; padding-block: 0; border-radius: 0; }
 .tree-row:hover { background: color-mix(in oklab, var(--ink-3) 68%, transparent); }
 .tree-row.selected { background: color-mix(in oklab, var(--brass) 13%, transparent); box-shadow: inset 2px 0 var(--brass); }
 .tree-mid { border-color: var(--line-soft); }
@@ -1886,14 +1887,14 @@ main.app-shell {
 .tree-empty p { max-width: 30rem; margin: 0; color: var(--text-2); font-size: 0.74rem; line-height: 1.55; text-wrap: pretty; }
 
 .editor-panel { gap: 0; }
-.merge-actions { min-height: 2.55rem; }
+.merge-actions { min-height: 2.15rem; }
 .preview-details { margin: 0.4rem 0.5rem; border-color: var(--line-soft); border-radius: 0.4rem; background: var(--ink-2); }
 .editors > div { border: 0; border-radius: 0; }
 
 .search-surface { top: 7.7rem; }
 .search-results-panel { grid-template-columns: 1fr; gap: 0.35rem; }
 .search-result-group { border: 0; border-radius: 0.5rem; background: color-mix(in oklab, var(--ink-0) 44%, transparent); }
-.search-result-row { min-height: 2rem; border-color: transparent; background: transparent; }
+.search-result-row { min-height: 1.72rem; border-color: transparent; background: transparent; }
 .search-result-row:hover { background: color-mix(in oklab, var(--ink-3) 70%, transparent); }
 
 .zone-label { color: var(--text-1); font-family: var(--font-sans); font-size: 0.78rem; font-weight: 620; letter-spacing: 0; text-transform: none; }
@@ -1979,7 +1980,7 @@ main.app-shell {
 /* ---------- instrument shell: persistent mode rail ---------- */
 main.app-shell {
   display: grid;
-  grid-template-columns: 3.65rem minmax(0, 1fr);
+  grid-template-columns: 3.15rem minmax(0, 1fr);
   gap: 0;
   padding: 0;
   min-height: 100dvh;
@@ -1992,8 +1993,8 @@ main.app-shell {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  gap: 0.48rem;
-  padding: 0.58rem 0.68rem 0.34rem;
+  gap: 0.36rem;
+  padding: 0.42rem 0.52rem 0.22rem;
   overflow: hidden;
   background:
     radial-gradient(circle at 88% -12%, color-mix(in oklab, var(--brass) 8%, transparent), transparent 26rem),
@@ -2007,7 +2008,7 @@ main.app-shell {
   flex-direction: column;
   align-items: center;
   min-height: 0;
-  padding: 0.62rem 0.42rem 0.48rem;
+  padding: 0.46rem 0.32rem 0.36rem;
   border-right: 1px solid color-mix(in oklab, var(--line) 82%, transparent);
   background: color-mix(in oklab, var(--ink-1) 96%, black);
   box-shadow: inset -1px 0 color-mix(in oklab, white 2%, transparent);
@@ -2016,10 +2017,10 @@ main.app-shell {
 .workspace-rail__brand {
   display: grid;
   place-items: center;
-  width: 2.35rem;
-  height: 2.35rem;
-  margin-bottom: 1.15rem;
-  border-radius: 0.72rem;
+  width: 2.05rem;
+  height: 2.05rem;
+  margin-bottom: 0.8rem;
+  border-radius: 0.62rem;
   background: var(--brass);
   color: var(--ink-0);
   box-shadow:
@@ -2036,7 +2037,7 @@ main.app-shell {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.32rem;
+  gap: 0.2rem;
   width: 100%;
 }
 
@@ -2050,11 +2051,11 @@ main.app-shell {
   position: relative;
   display: grid;
   place-items: center;
-  width: 2.55rem;
-  height: 2.55rem;
+  width: 2.2rem;
+  height: 2.2rem;
   padding: 0;
   border: 0;
-  border-radius: 0.76rem;
+  border-radius: 0.62rem;
   background: transparent;
   color: var(--text-2);
   transition:
@@ -2077,7 +2078,7 @@ main.app-shell {
 }
 .workspace-rail__button[data-active="true"]::before {
   position: absolute;
-  left: -0.42rem;
+  left: -0.32rem;
   width: 0.16rem;
   height: 1.35rem;
   border-radius: 0 999px 999px 0;
@@ -2090,7 +2091,7 @@ main.app-shell {
   outline-offset: 2px;
 }
 .workspace-rail__icon,
-.workspace-rail__icon svg { width: 1.18rem; height: 1.18rem; }
+.workspace-rail__icon svg { width: 1.05rem; height: 1.05rem; }
 .workspace-rail__icon svg {
   display: block;
   fill: none;
@@ -2131,16 +2132,17 @@ main.app-shell {
 }
 
 .command-bar {
-  min-height: 3.1rem;
-  padding: 0.38rem 0.48rem 0.38rem 0.78rem;
+  min-height: 2.5rem;
+  padding: 0.24rem 0.38rem 0.24rem 0.62rem;
   border-color: color-mix(in oklab, var(--line) 88%, transparent);
   border-radius: 0.72rem;
   background: color-mix(in oklab, var(--ink-1) 92%, transparent);
 }
 .command-context {
-  display: grid;
-  gap: 0.05rem;
-  min-width: 7.8rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 10rem;
 }
 .command-context__mode {
   color: var(--text-0);
@@ -2153,6 +2155,11 @@ main.app-shell {
   font-family: var(--font-mono);
   font-size: 0.56rem;
 }
+.command-bar [data-slot="button"] { height: 1.8rem; }
+.command-bar [data-slot="button"] svg,
+.source-rail [data-slot="button"] svg,
+.workspace-tabs [data-slot="button"] svg,
+.merge-actions [data-slot="button"] svg { stroke-width: 1.55; }
 .command-group--refresh {
   margin-left: 0.25rem;
   padding-left: 0.48rem;
@@ -2164,9 +2171,15 @@ main.app-shell {
   border-radius: 0.72rem;
 }
 .source-rail {
+  min-height: 2.85rem;
   background: color-mix(in oklab, var(--ink-1) 88%, transparent);
   box-shadow: inset 0 1px color-mix(in oklab, white 3%, transparent);
 }
+.source-slot__trigger { min-height: 2.75rem; padding: 0.34rem 0.62rem; }
+.source-slot__icon { width: 1.72rem; height: 1.72rem; border-radius: 0.42rem; }
+.source-slot__name { font-size: 0.72rem; }
+.source-slot__path { font-size: 0.56rem; }
+.source-rail__bridge { width: 2rem; }
 .work-area {
   flex: 1 1 auto;
   min-height: 0;
@@ -2174,18 +2187,44 @@ main.app-shell {
     inset 0 1px color-mix(in oklab, white 3%, transparent),
     0 0.45rem 0.9rem color-mix(in oklab, black 10%, transparent);
 }
-.status-bar { padding-inline: 0.2rem 0.45rem; border-top-color: transparent; }
+.status-bar { min-height: 1.38rem; padding: 0 0.35rem 0 0.15rem; border-top-color: transparent; font-size: 0.56rem; }
+
+.search-surface__header { min-height: 2.15rem; }
+.search-surface .search-results-panel { padding-block: 0.25rem 0.45rem; }
+.preferences-header { padding-bottom: 0.55rem; }
+.preferences-body { gap: 0.7rem; padding-top: 0.55rem; }
+.preferences-nav button { min-height: 1.9rem; }
+.preference-section { gap: 0.55rem; }
+.preference-control-row { min-height: 2rem; }
+.shortcut-dialog__row { min-height: 1.72rem; }
+.free-text-actions { min-height: 2.1rem; }
+.free-text-actions [data-slot="button"],
+.merge-actions [data-slot="button"] { height: 1.75rem; }
+.free-text-history__item { min-height: 2.75rem; }
+
+button,
+[role="button"],
+.workspace-tab,
+.tree-row,
+.search-result-row {
+  transition:
+    color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 @keyframes instrument-arrive {
   from { opacity: 0; transform: translateY(6px); }
 }
 
 @media (max-width: 720px) {
-  main.app-shell { grid-template-columns: 3.15rem minmax(0, 1fr); }
+  main.app-shell { grid-template-columns: 2.85rem minmax(0, 1fr); }
   .app-workbench { padding-inline: 0.4rem; }
   .workspace-rail { padding-inline: 0.28rem; }
   .workspace-rail__brand,
-  .workspace-rail__button { width: 2.35rem; height: 2.35rem; }
+  .workspace-rail__button { width: 2.1rem; height: 2.1rem; }
   .command-context__detail { display: none; }
   .command-context { min-width: auto; }
 }
@@ -2196,5 +2235,8 @@ main.app-shell {
   .workspace-rail__brand { margin-bottom: 0.55rem; }
   .workspace-rail__modes,
   .workspace-rail__tools { gap: 0.12rem; }
-  .workspace-rail__button { height: 2.2rem; }
+  .workspace-rail__button { height: 2rem; }
+  .command-bar { min-height: 2.25rem; }
+  .source-rail { min-height: 2.55rem; }
+  .source-slot__trigger { min-height: 2.45rem; padding-block: 0.24rem; }
 }

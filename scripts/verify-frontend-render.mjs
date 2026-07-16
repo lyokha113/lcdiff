@@ -783,6 +783,24 @@ try {
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ state: "detached", timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ timeout: 5_000 });
+  const densityGeometry = await mockedPage.evaluate(() => {
+    const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height ?? 0;
+    return {
+      command: height(".command-bar"),
+      source: height(".source-rail"),
+      tabs: height(".workspace-tabs"),
+      treeHeader: height(".tree-header"),
+      treeRow: height(".tree-row"),
+      status: height(".status-bar"),
+    };
+  });
+  const densityLimits = { command: 44, source: 50, tabs: 34, treeHeader: 26, treeRow: 26, status: 26 };
+  for (const [surface, limit] of Object.entries(densityLimits)) {
+    const actual = densityGeometry[surface];
+    if (!actual || actual > limit) {
+      throw new Error(`Dense ${surface} height is ${actual}px; expected at most ${limit}px`);
+    }
+  }
   const populatedLightState = await mockedPage.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const different = document.querySelector(".tree-file.different .status-chip");
