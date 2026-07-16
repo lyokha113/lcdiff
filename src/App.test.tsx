@@ -411,9 +411,7 @@ async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
 
 async function switchMode(mode: "View" | "Compare" | "Text") {
   const user = userEvent.setup();
-  const optionName = mode === "Text" ? "Free text" : mode === "Compare" ? "Compare and Merge" : mode;
-  await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
-  await user.click(await screen.findByRole("option", { name: optionName }));
+  await user.click(screen.getByRole("button", { name: `${mode} mode` }));
 }
 
 async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
@@ -808,11 +806,7 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
     expect(await screen.findByTestId("editor")).toHaveValue("view:/tmp/alpha.jar:alpha.json");
 
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = vi.fn();
-    await user.click(screen.getByRole("combobox", { name: "Workspace mode" }));
-    await user.click(await screen.findByRole("option", { name: "Compare and Merge" }));
-    Element.prototype.scrollIntoView = originalScrollIntoView;
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
 
     expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
     expect(await screen.findByText("Nothing to compare yet")).toBeInTheDocument();
@@ -1044,15 +1038,7 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("group", { name: "Actions into left pane" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Actions into right pane" })).toBeInTheDocument();
 
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = vi.fn();
-    try {
-      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
-      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
-      fireEvent.click(await screen.findByRole("option", { name: "View" }));
-    } finally {
-      Element.prototype.scrollIntoView = originalScrollIntoView;
-    }
+    await user.click(screen.getByRole("button", { name: "View mode" }));
 
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
@@ -1064,15 +1050,7 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByRole("tab", { name: /config\.json/ })).toHaveAttribute("aria-selected", "true");
 
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = vi.fn();
-    try {
-      const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
-      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
-      fireEvent.click(await screen.findByRole("option", { name: "View" }));
-    } finally {
-      Element.prototype.scrollIntoView = originalScrollIntoView;
-    }
+    await user.click(screen.getByRole("button", { name: "View mode" }));
 
     expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();

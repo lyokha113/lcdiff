@@ -25,7 +25,6 @@ merge writes. See [ARCHITECTURE.md](ARCHITECTURE.md) for the boundary rules.
 lcdiff/
   crates/
     lcdiff-core/   Rust archive engine
-    lcdiff-cli/    headless smoke adapter
   src-tauri/       Tauri v2 host and IPC commands
   src/             React + Monaco frontend
   sidecar/         JVM decompiler sidecar
@@ -55,13 +54,6 @@ The sidecar assembly step is required for decompile and bytecode views. The app
 can still inspect, diff, search, and merge archives without it, but JVM-backed
 views degrade.
 
-The headless CLI is useful for quick checks:
-
-```bash
-cargo run -p lcdiff-cli -- list path/to/archive.jar
-cargo run -p lcdiff-cli -- diff path/to/left.jar path/to/right.jar
-```
-
 ## Developer Checks
 
 Run these before shipping changes:
@@ -74,8 +66,8 @@ npm run verify:all
 npm run verify:frontend-render
 ```
 
-`npm run verify:all` runs the frontend build plus packaging, frontend,
-branding, render, and docs invariants. `npm run verify:frontend-render` boots
+`npm run verify:all` runs the frontend build, unit tests, browser render check,
+branding check, and release-doc synchronization. `npm run verify:frontend-render` boots
 the shell under Playwright and fails on browser page errors.
 
 ## Build Linux

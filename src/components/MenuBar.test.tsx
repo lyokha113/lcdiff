@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,9 +8,8 @@ function setup(overrides = {}) {
   const props = {
     mode: "compare" as const, stagedTarget: undefined as "left" | "right" | undefined,
     pendingOps: [] as Array<{ key: string; path: string; side: "left" | "right"; kind: "copy" | "edit" }>,
-    searchOpen: true, drawerOpen: false, canRefresh: true,
-    onChangeMode: vi.fn(), onSave: vi.fn(), onRefresh: vi.fn(), onClearStaged: vi.fn(),
-    onToggleSearch: vi.fn(), onToggleDrawer: vi.fn(), onUnstageOne: vi.fn(),
+    canRefresh: true,
+    onSave: vi.fn(), onRefresh: vi.fn(), onClearStaged: vi.fn(), onUnstageOne: vi.fn(),
     ...overrides,
   };
   render(<TooltipProvider><MenuBar {...props} /></TooltipProvider>);
@@ -21,29 +20,9 @@ describe("MenuBar", () => {
   it("groups commands by workspace intent", () => {
     setup();
     expect(screen.getByRole("banner", { name: "Workspace commands" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Workspace mode" })).toBeInTheDocument();
+    expect(screen.getByText("Compare")).toBeInTheDocument();
+    expect(screen.getByText("Archive workbench")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
-  });
-
-  it("labels the three workspace modes clearly", async () => {
-    setup();
-
-    const modeSelect = screen.getByRole("combobox", { name: "Workspace mode" });
-    expect(modeSelect).toHaveTextContent("Compare and Merge");
-
-    const originalElementScrollIntoView = Element.prototype.scrollIntoView;
-    const originalHtmlElementScrollIntoView = HTMLElement.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = vi.fn();
-    HTMLElement.prototype.scrollIntoView = vi.fn();
-    try {
-      fireEvent.keyDown(modeSelect, { key: "ArrowDown" });
-      expect(await screen.findByRole("option", { name: "View" })).toBeInTheDocument();
-      expect(screen.getByRole("option", { name: "Compare and Merge" })).toBeInTheDocument();
-      expect(screen.getByRole("option", { name: "Free text" })).toBeInTheDocument();
-    } finally {
-      Element.prototype.scrollIntoView = originalElementScrollIntoView;
-      HTMLElement.prototype.scrollIntoView = originalHtmlElementScrollIntoView;
-    }
   });
 
   it("hides merge and staging controls in View mode", () => {
@@ -74,11 +53,6 @@ describe("MenuBar", () => {
   it("hides the unsaved badge when nothing is staged", () => {
     setup({ stagedTarget: undefined, pendingOps: [] });
     expect(screen.queryByText(/unsaved/i)).not.toBeInTheDocument();
-  });
-  it("toggles the drawer", async () => {
-    const props = setup();
-    await userEvent.click(screen.getByLabelText("Preferences"));
-    expect(props.onToggleDrawer).toHaveBeenCalled();
   });
   it("refreshes sources", async () => {
     const props = setup();

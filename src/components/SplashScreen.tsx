@@ -1,13 +1,8 @@
-import { useRef, useState } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
+import { useState } from "react";
 import { ArrowUpRight, Clock3, FileSearch, FileText, GitCompareArrows, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import type { HistoryEntry, Mode } from "@/lib/history";
-import { motionDuration, motionEase, shouldAnimateUi } from "@/lib/motion";
-
-gsap.registerPlugin(useGSAP);
 
 interface SplashScreenProps {
   history: HistoryEntry[];
@@ -31,36 +26,11 @@ export function SplashScreen({
   onClear,
   motion,
 }: SplashScreenProps) {
-  const rootRef = useRef<HTMLElement>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const visibleHistory = historyExpanded ? history : history.slice(0, 5);
 
-  useGSAP(() => {
-    const reduceMotion = typeof window.matchMedia === "function"
-      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (!shouldAnimateUi(motion, reduceMotion)) return;
-
-    const timeline = gsap.timeline({ defaults: { ease: motionEase } });
-    timeline
-      .from(".launch__identity", { y: -10, opacity: 0, duration: motionDuration.base })
-      .from(".launch__headline-word", {
-        yPercent: 36,
-        opacity: 0.08,
-        stagger: 0.045,
-        duration: motionDuration.slow,
-      }, "-=0.18")
-      .from(".launch__intro", { y: 12, opacity: 0, duration: motionDuration.base }, "-=0.35")
-      .from(".launch-card", {
-        scale: 0.8,
-        opacity: 0,
-        transformOrigin: "50% 55%",
-        stagger: 0.08,
-        duration: motionDuration.slow,
-      }, "-=0.25");
-  }, { scope: rootRef, dependencies: [motion] });
-
   return (
-    <main className="launch" aria-label="Start LCDiff" ref={rootRef}>
+    <main className="launch" aria-label="Start LCDiff" data-motion={motion}>
       <header className="launch__identity">
         <span className="launch__wordmark">LCDiff</span>
         <span className="launch__descriptor">Archive diff and merge</span>

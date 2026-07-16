@@ -43,6 +43,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { MenuBar } from "@/components/MenuBar";
+import { WorkspaceRail } from "@/components/WorkspaceRail";
 import { SourceChips } from "@/components/SourceChips";
 import { SearchBar } from "@/components/SearchBar";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
@@ -2058,27 +2059,31 @@ export function App() {
       aria-label={mode === "compare" ? "Comparison workspace" : mode === "text" ? "Free text workspace" : "Source workspace"}
     >
       <a className="skip-link" href="#workspace-canvas">Skip to workspace</a>
+      <WorkspaceRail
+        mode={mode}
+        searchOpen={searchOpen}
+        drawerOpen={drawerOpen}
+        onChangeMode={changeMode}
+        onToggleSearch={() => {
+          if (mode !== "text") setSearchOpen((open) => !open);
+        }}
+        onToggleDrawer={() => setDrawerOpen((open) => !open)}
+      />
+      <div className="app-workbench">
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
         pendingOps={Object.entries(stagedEntries).map(([key, entry]) => ({ key, path: stripSidePrefix(key), side: entry.side, kind: entry.kind }))}
         onUnstageOne={(entryPath) => void unstage(entryPath)}
-        searchOpen={searchOpen}
-        drawerOpen={drawerOpen}
         canRefresh={Boolean(
           mode === "single"
             ? activeViewSource
             : (archives.left && archives.left.metadata.sourceKind !== "text") ||
               (archives.right && archives.right.metadata.sourceKind !== "text"),
         )}
-        onChangeMode={changeMode}
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
         onClearStaged={clearStaged}
-        onToggleSearch={() => {
-          if (mode !== "text") setSearchOpen((o) => !o);
-        }}
-        onToggleDrawer={() => setDrawerOpen((o) => !o)}
       />
 
       {mode !== "text" && (
@@ -2292,6 +2297,7 @@ export function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </main>
     </TooltipProvider>
   );

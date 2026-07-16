@@ -20,11 +20,6 @@ function sliceInclusive(lines: string[], start: number, end: number): string[] {
   return lines.slice(start - 1, end);
 }
 
-/** Replace the entire target buffer with the source buffer. */
-export function takeAll(_target: string, source: string): string {
-  return source;
-}
-
 /** Replace the target's line range with the source's line range. */
 export function applyHunk(target: string, source: string, hunk: Hunk): string {
   const tLines = splitLines(target);

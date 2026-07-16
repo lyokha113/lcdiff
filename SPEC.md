@@ -40,11 +40,11 @@ A cross-platform desktop app that lets a user:
 |---|---|---|
 | Shell / window | **Tauri v2** | WebView per OS (WebKitGTK on Linux) |
 | Backend | **Rust** | Archive I/O, type detection, diff, merge, sidecar management |
-| Frontend | **React + shadcn/ui + Tailwind + Monaco `DiffEditor`** | shadcn gives Resizable split-pane, ContextMenu, Dialog, Tooltip out of the box; Monaco has a built-in side-by-side diff editor |
+| Frontend | **React + shadcn/ui + Tailwind + Monaco `DiffEditor`** | shadcn gives ContextMenu, Dialog, and Tooltip primitives; Monaco has a built-in side-by-side diff editor |
 | Decompiler | **CFR (default) + Vineflower (selectable)** | Both are JVM artifacts (see §6) |
 | JVM runtime | **jlink minimal JRE, bundled** (MVP) → GraalVM native-image (phase 2) | Bundled so users never install Java |
 
-**Frontend rationale (optimized for a non-frontend dev):** shadcn/ui ships the exact primitives this app needs (resizable panels, context menus, dialogs) as copy-in components — no hand-rolled CSS. Monaco's `DiffEditor` renders Beyond-Compare-style diff from two strings with no custom diff-algorithm code. Pico CSS was rejected: it is classless and lacks the heavy components (tree, resizable split, diff) this tool needs. Trade-off: shadcn pins us to React + Tailwind; Monaco is heavier than CodeMirror but ships the diff editor for free — negligible next to a bundled JRE.
+**Frontend rationale (optimized for a non-frontend dev):** shadcn/ui supplies the interactive primitives the app uses as local source components. Monaco's `DiffEditor` renders Beyond-Compare-style diff from two strings with no custom diff-algorithm code. Pico CSS was rejected because it lacks the tree, menus, dialogs, and diff workspace this tool needs. Trade-off: shadcn pins us to React + Tailwind; Monaco is heavier than CodeMirror but ships the diff editor for free — negligible next to a bundled JRE.
 
 > **Verified reference:** Vineflower runs as `java -jar vineflower.jar <args> <source> <destination>` (source = jar/zip/folder/class) and is usable as a library via Maven `org.vineflower:vineflower`. Vineflower 1.9+ requires Java 11+, 1.11+ requires Java 17+. CFR is a single self-contained jar with fewer deps (preferred for the phase-2 native-image experiment). *CFR exact Java-version floor: verify at POC.*
 

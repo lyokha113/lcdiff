@@ -783,6 +783,24 @@ try {
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ state: "detached", timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ timeout: 5_000 });
+  const densityGeometry = await mockedPage.evaluate(() => {
+    const height = (selector) => document.querySelector(selector)?.getBoundingClientRect().height ?? 0;
+    return {
+      command: height(".command-bar"),
+      source: height(".source-rail"),
+      tabs: height(".workspace-tabs"),
+      treeHeader: height(".tree-header"),
+      treeRow: height(".tree-row"),
+      status: height(".status-bar"),
+    };
+  });
+  const densityLimits = { command: 44, source: 50, tabs: 34, treeHeader: 26, treeRow: 26, status: 26 };
+  for (const [surface, limit] of Object.entries(densityLimits)) {
+    const actual = densityGeometry[surface];
+    if (!actual || actual > limit) {
+      throw new Error(`Dense ${surface} height is ${actual}px; expected at most ${limit}px`);
+    }
+  }
   const populatedLightState = await mockedPage.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const different = document.querySelector(".tree-file.different .status-chip");
@@ -1017,8 +1035,7 @@ try {
   await mockedPage.locator("text=00000000  fe ed fa ce").waitFor({ timeout: 5_000 });
 
   // Single-mode switch guard: blocked while staged.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "View" }).click();
+  await mockedPage.getByRole("button", { name: "View mode" }).click();
   await mockedPage.locator("text=Save or clear unsaved changes before switching to View mode.").waitFor({ timeout: 5_000 });
 
   // Clear staged (MenuBar icon button): badges gone.
@@ -1030,8 +1047,7 @@ try {
   await mockedPage.locator("text=copy → right").waitFor({ state: "detached", timeout: 5_000 });
 
   // Now the switch to View succeeds; SourceChips renders only the left chip.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "View" }).click();
+  await mockedPage.getByRole("button", { name: "View mode" }).click();
   await mockedPage.getByRole("button", { name: "Change left source", exact: true }).waitFor({ timeout: 5_000 });
   if (
     await mockedPage.getByRole("group", { name: "Actions into left pane" }).count() ||
@@ -1059,8 +1075,7 @@ try {
   await mockedPage.locator("text=class ViewOnly").waitFor({ timeout: 5_000 });
 
   // Back to Compare: right chip returns.
-  await mockedPage.getByRole("combobox", { name: "Workspace mode" }).click();
-  await mockedPage.getByRole("option", { name: "Compare and Merge" }).click();
+  await mockedPage.getByRole("button", { name: "Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
   await openLeftPopover();
