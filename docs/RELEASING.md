@@ -171,7 +171,27 @@ signing in the workflow.
 ## 3.6 Publish the AUR package
 
 Update `aur/lcdiff/PKGBUILD` and `aur/lcdiff/.SRCINFO` when the version changes,
-then push the AUR repo separately from the GitHub release. Arch users install
+then validate the package on Arch Linux:
+
+```bash
+sudo pacman -Syu --needed base-devel git namcap
+cd aur/lcdiff
+makepkg --verifysource
+makepkg --syncdeps --cleanbuild
+namcap PKGBUILD
+namcap lcdiff-*.pkg.tar.zst
+makepkg --printsrcinfo > .SRCINFO
+```
+
+The `Linux Release` workflow publishes AUR metadata after the Ubuntu release
+matrix succeeds. Its isolated `publish-aur` job checks that `PKGBUILD` and
+`.SRCINFO` match the release tag, builds and audits the package in a clean Arch
+Linux container, then pushes `PKGBUILD`, `.SRCINFO`, and `LICENSE` to the AUR
+`master` branch. Configure the repository secret
+`AUR_SSH_PRIVATE_KEY` with a dedicated private key whose public key is registered
+on the AUR account. A tag-triggered run publishes metadata from that tag; a
+manual dispatch publishes metadata from the selected workflow ref, allowing an
+AUR-only correction without moving an existing release tag. Arch users install
 it with `yay -S lcdiff` or `paru -S lcdiff`.
 
 ## 4. Publish the release

@@ -19,6 +19,8 @@ jobs:
   build-linux:
     name: Build Linux Ubuntu LTS matrix
     runs-on: ubuntu-latest
+    outputs:
+      release-tag: ${{ steps.release.outputs.tag }}
 
     steps:
       - name: Resolve release tag
@@ -120,3 +122,93 @@ jobs:
           tag_name: ${{ steps.release.outputs.tag }}
           body_path: ${{ steps.release.outputs.notes }}
           files: artifacts/release-linux/*
+
+  publish-aur:
+    name: Publish AUR metadata
+    needs: build-linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || needs.build-linux.outputs.release-tag }}
+
+      - name: Verify AUR metadata matches release tag
+        shell: bash
+        run: |
+          tag="${{ needs.build-linux.outputs.release-tag }}"
+          version="${tag#v}"
+          pkgver="$(sed -n 's/^pkgver=//p' aur/lcdiff/PKGBUILD)"
+          srcinfo_pkgver="$(sed -n 's/^\t*pkgver = //p' aur/lcdiff/.SRCINFO)"
+
+          test "$tag" = "v$version"
+          test "$pkgver" = "$version"
+          test "$srcinfo_pkgver" = "$version"
+          test -f aur/lcdiff/LICENSE
+
+      - name: Validate AUR package on Arch Linux
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/aur/lcdiff:/pkg:ro" \
+            archlinux:base-devel \
+            bash -lc '
+              pacman -Syu --needed --noconfirm \
+                cairo gdk-pixbuf2 glib2 gtk3 \
+                hicolor-icon-theme libappindicator-gtk3 librsvg libsoup3 \
+                openssl pango webkit2gtk-4.1 xdotool git jdk17-openjdk \
+                maven nodejs npm rust namcap &&
+              useradd -m builder &&
+              cp -a /pkg /home/builder/lcdiff &&
+              chown -R builder:builder /home/builder/lcdiff &&
+              su - builder -c "
+                cd /home/builder/lcdiff &&
+                makepkg --verifysource &&
+                makepkg --cleanbuild --noconfirm &&
+                namcap PKGBUILD &&
+                namcap lcdiff-*.pkg.tar.zst
+              "
+            '
+
+      - name: Configure AUR SSH key
+        shell: bash
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$AUR_SSH_PRIVATE_KEY"
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          chmod 0600 "$HOME/.ssh/aur"
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$HOME/.ssh/known_hosts"
+          cat >> "$HOME/.ssh/config" <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+          EOF
+          chmod 0600 "$HOME/.ssh/config" "$HOME/.ssh/known_hosts"
+
+      - name: Publish package source to AUR
+        shell: bash
+        run: |
+          aur_checkout="$RUNNER_TEMP/lcdiff-aur"
+          git clone ssh://aur@aur.archlinux.org/lcdiff.git "$aur_checkout"
+          cp aur/lcdiff/PKGBUILD "$aur_checkout/PKGBUILD"
+          cp aur/lcdiff/.SRCINFO "$aur_checkout/.SRCINFO"
+          cp aur/lcdiff/LICENSE "$aur_checkout/LICENSE"
+
+          cd "$aur_checkout"
+          git config user.name "lyokha113"
+          git config user.email "lyokha113@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO LICENSE
+
+          if git diff --cached --quiet; then
+            echo "AUR metadata is already current."
+            exit 0
+          fi
+
+          git commit -m "Update lcdiff to ${{ needs.build-linux.outputs.release-tag }}"
+          git push origin HEAD:master
