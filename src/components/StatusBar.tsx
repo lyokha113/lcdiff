@@ -21,7 +21,7 @@ export function StatusBar({ message, searching, pendingCount, updatePrompt }: St
   const showFallback = updatePrompt?.status !== "readyToRestart" && updatePrompt?.fallbackLabel && updatePrompt.onFallbackAction;
 
   return (
-    <footer className="status-bar">
+    <footer className="status-bar" data-tour="status">
       <p role="status" aria-live="polite">
         <span className={`status-bar__pulse${searching ? " active" : ""}`} aria-hidden="true" />
         {message}

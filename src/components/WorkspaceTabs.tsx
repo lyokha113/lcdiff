@@ -57,7 +57,7 @@ export function WorkspaceTabs({
   onShowBytecode,
 }: WorkspaceTabsProps) {
   return (
-    <nav className="workspace-tabs" aria-label="Open files">
+    <nav className="workspace-tabs" aria-label="Open files" data-tour="workspace-tabs">
       <div className="workspace-tabs-files" role="tablist" aria-label="Files workspace view">
         <button
           type="button"

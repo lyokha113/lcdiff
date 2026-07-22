@@ -45,11 +45,12 @@ export function WorkspaceRail({
         <span>LD</span>
       </div>
 
-      <div className="workspace-rail__modes" role="group" aria-label="Workspace mode">
+      <div className="workspace-rail__modes" role="group" aria-label="Workspace mode" data-tour="workspace-modes">
         {modes.map((item) => (
           <button
             key={item.id}
             type="button"
+            data-tour={item.id === "single" ? "view" : item.id}
             className="workspace-rail__button"
             data-active={mode === item.id}
             aria-label={`${item.label} mode`}
@@ -65,12 +66,13 @@ export function WorkspaceRail({
         ))}
       </div>
 
-      <div className="workspace-rail__tools">
+      <div className="workspace-rail__tools" data-tour="workspace-tools">
         {mode !== "text" && (
           <button
             type="button"
             className="workspace-rail__button"
             data-active={searchOpen}
+            data-tour="search"
             aria-label="Toggle search"
             aria-pressed={searchOpen}
             onClick={onToggleSearch}
@@ -83,6 +85,7 @@ export function WorkspaceRail({
           type="button"
           className="workspace-rail__button"
           data-active={drawerOpen}
+          data-tour="preferences"
           aria-label="Preferences"
           aria-pressed={drawerOpen}
           onClick={onToggleDrawer}

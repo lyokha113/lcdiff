@@ -79,6 +79,16 @@ describe("ConfigDrawer", () => {
     expect(within(nav).queryByRole("button", { name: "Updates" })).not.toBeInTheDocument();
   });
 
+  it("can replay the quick tour from Misc preferences", async () => {
+    const onReplayTour = vi.fn();
+    setup({ onReplayTour });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Replay quick tour" }));
+
+    expect(onReplayTour).toHaveBeenCalledOnce();
+  });
+
   it("changes Appearance color pattern", async () => {
     const props = setup();
 

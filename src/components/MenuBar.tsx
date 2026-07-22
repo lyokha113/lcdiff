@@ -20,7 +20,7 @@ export function MenuBar({
   onSave, onRefresh, onClearStaged, onUnstageOne,
 }: MenuBarProps) {
   return (
-    <header className="command-bar" aria-label="Workspace commands">
+    <header className="command-bar" aria-label="Workspace commands" data-tour="merge-save">
       <div className="command-context">
         <span className="command-context__mode">{mode === "single" ? "View" : mode === "compare" ? "Compare" : "Text"}</span>
         <span className="command-context__detail">{mode === "single" ? "Source inspector" : mode === "compare" ? "Archive workbench" : "Draft comparison"}</span>

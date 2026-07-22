@@ -23,6 +23,7 @@ interface MiscPreferencesProps {
   onDownloadAndInstallUpdate?: () => void;
   onRestartToUpdate?: () => void;
   onOpenUpdateFallback?: () => void;
+  onReplayTour?: () => void;
 }
 
 type Panel = "search" | "decompiler" | "save" | "updates";
@@ -44,6 +45,7 @@ export function MiscPreferences({
   onDownloadAndInstallUpdate,
   onRestartToUpdate,
   onOpenUpdateFallback,
+  onReplayTour,
 }: MiscPreferencesProps) {
   const updateMisc = (misc: UiPreferences["misc"]) =>
     onPreferencesChange({ ...preferences, misc });
@@ -247,6 +249,13 @@ export function MiscPreferences({
             )}
           </div>
         </>
+      )}
+
+      {onReplayTour && (
+        <div className="preference-tour-action">
+          <span>Need a refresher on the main workspaces?</span>
+          <Button type="button" variant="outline" size="sm" onClick={onReplayTour}>Replay quick tour</Button>
+        </div>
       )}
     </section>
   );
