@@ -1005,13 +1005,114 @@ h1 {
 .search-input { font-family: var(--font-mono); font-size: 0.82rem; }
 
 .platform-hint {
+  position: fixed;
+  right: 12px;
+  bottom: 34px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, calc(100vw - 24px));
   margin: 0;
   padding: 9px 13px;
   font-size: 0.8rem;
   color: #e7c884;
-  background: rgba(217, 176, 102, 0.08);
+  background: color-mix(in srgb, var(--popover) 94%, var(--brass));
   border: 1px solid rgba(217, 176, 102, 0.22);
   border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.platform-hint button {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: currentColor;
+  font-size: 1rem;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.platform-hint button:hover {
+  background: rgba(217, 176, 102, 0.12);
+}
+
+[data-tour-active="true"] {
+  position: relative;
+  z-index: 91;
+  outline: 2px solid var(--brass);
+  outline-offset: 3px;
+  background: var(--tree-selected-bg) !important;
+}
+
+.onboarding-tour {
+  position: fixed;
+  right: 16px;
+  bottom: 34px;
+  z-index: 92;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px;
+  color: var(--text-0);
+  background: var(--popover);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.onboarding-tour > header,
+.onboarding-tour > footer,
+.onboarding-tour footer span {
+  display: flex;
+  align-items: center;
+}
+
+.onboarding-tour > header,
+.onboarding-tour > footer {
+  justify-content: space-between;
+}
+
+.onboarding-tour > header {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.onboarding-tour h2 {
+  margin: 14px 0 5px;
+  font-size: 1rem;
+}
+
+.onboarding-tour p {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.onboarding-tour > footer {
+  margin-top: 18px;
+}
+
+.onboarding-tour footer span {
+  gap: 6px;
+}
+
+.preference-tour-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  color: var(--text-1);
+  font-size: 0.78rem;
+  border-top: 1px solid var(--line-soft);
 }
 
 .message {

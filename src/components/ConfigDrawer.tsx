@@ -25,6 +25,7 @@ interface ConfigDrawerProps {
   onDownloadAndInstallUpdate?: () => void;
   onRestartToUpdate?: () => void;
   onOpenUpdateFallback?: () => void;
+  onReplayTour?: () => void;
   onClose: () => void;
 }
 
@@ -47,6 +48,7 @@ export function ConfigDrawer({
   onDownloadAndInstallUpdate,
   onRestartToUpdate,
   onOpenUpdateFallback,
+  onReplayTour,
   onClose,
 }: ConfigDrawerProps) {
   const [section, setSection] = useState<Section>("appearance");
@@ -114,6 +116,7 @@ export function ConfigDrawer({
               onDownloadAndInstallUpdate={onDownloadAndInstallUpdate}
               onRestartToUpdate={onRestartToUpdate}
               onOpenUpdateFallback={onOpenUpdateFallback}
+              onReplayTour={onReplayTour}
             />
           )}
         </div>

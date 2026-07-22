@@ -70,7 +70,7 @@ export function SourceChips({
   };
 
   return (
-    <div className="source-rail" data-mode={mode}>
+    <div className="source-rail" data-mode={mode} data-tour="source-open">
       {renderSlot("left")}
       {mode === "compare" && (
         <span className="source-rail__bridge" aria-hidden="true"><ArrowLeftRight /></span>

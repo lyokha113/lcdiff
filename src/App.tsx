@@ -45,6 +45,7 @@ import { ConfigDrawer } from "@/components/ConfigDrawer";
 import { MenuBar } from "@/components/MenuBar";
 import { WorkspaceRail } from "@/components/WorkspaceRail";
 import { SourceChips } from "@/components/SourceChips";
+import { onboardingKeyForMode, OnboardingTour } from "@/components/OnboardingTour";
 import { SearchBar } from "@/components/SearchBar";
 import { SearchResultsPanel } from "@/components/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/components/DiffView";
@@ -280,6 +281,9 @@ export function App() {
   const [editBuffer, setEditBuffer] = useState<string>("");
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
+  const [tourStep, setTourStep] = useState<number | null>(() =>
+    localStorage.getItem(onboardingKeyForMode("compare")) ? null : 0,
+  );
   const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
   const [pendingOpen, setPendingOpen] = useState<{ side: Side; path: string }>();
   const [suppressSignedWarningForFile, setSuppressSignedWarningForFile] = useState(false);
@@ -691,6 +695,7 @@ export function App() {
     setSearching(false);
     setSearchOpen(false);
     setMode("text");
+    setTourStep(localStorage.getItem(onboardingKeyForMode("text")) ? null : 0);
     setView("workspace");
     setPaths(emptyPaths);
     setPathErrors({});
@@ -794,6 +799,12 @@ export function App() {
       .then((hints) => setDropHint(hints.dropHint ?? ""))
       .catch(() => setDropHint(""));
   }, []);
+
+  useEffect(() => {
+    if (!dropHint || view === "splash" || tourStep !== null) return;
+    const timeout = window.setTimeout(() => setDropHint(""), 8_000);
+    return () => window.clearTimeout(timeout);
+  }, [dropHint, tourStep, view]);
 
   useEffect(() => {
     if (!stagedTarget || !isTauriRuntime()) return;
@@ -1363,6 +1374,7 @@ export function App() {
       setSelectedSearchResult(undefined);
     }
     setMode(next);
+    setTourStep(localStorage.getItem(onboardingKeyForMode(next)) ? null : 0);
   }
 
   async function copy(from: Side, to: Side, pair = selected) {
@@ -2121,7 +2133,14 @@ export function App() {
           />
         </aside>
       )}
-      {dropHint && <p className="platform-hint">{dropHint}</p>}
+      {dropHint && tourStep === null && (
+        <aside className="platform-hint" role="status" aria-live="polite">
+          <span>{dropHint}</span>
+          <button type="button" aria-label="Dismiss platform notice" onClick={() => setDropHint("")}>
+            ×
+          </button>
+        </aside>
+      )}
       <div className="work-area">
         <section className="workspace">
           {mode === "single" && (
@@ -2164,6 +2183,7 @@ export function App() {
             id="workspace-canvas"
             role="region"
             aria-label="Workspace canvas"
+            data-tour="workspace-canvas"
           >
             {mode === "text" ? (
               <div className="workspace-tabpanel" role="tabpanel">
@@ -2240,6 +2260,10 @@ export function App() {
           onDownloadAndInstallUpdate={installUpdate}
           onRestartToUpdate={restartUpdate}
           onOpenUpdateFallback={openUpdateRelease}
+          onReplayTour={() => {
+            setDrawerOpen(false);
+            setTourStep(0);
+          }}
           onClose={() => setDrawerOpen(false)}
         />
       </div>
@@ -2297,6 +2321,9 @@ export function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {tourStep !== null && (
+        <OnboardingTour mode={mode} step={tourStep} onStep={setTourStep} onClose={() => setTourStep(null)} />
+      )}
       </div>
     </main>
     </TooltipProvider>

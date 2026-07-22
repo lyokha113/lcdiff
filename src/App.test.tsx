@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateState } from "@/lib/update-client";
+import { onboardingKeyForMode } from "@/components/OnboardingTour";
 
 // ---------------------------------------------------------------------------
 // Tauri / Monaco mocks.
@@ -78,7 +79,12 @@ function entryKind(path: string) {
 const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
   switch (cmd) {
     case "platform_hints":
-      return { os: "linux", sessionType: null, wayland: false, dropHint: null };
+      return {
+        os: "linux",
+        sessionType: null as string | null,
+        wayland: false,
+        dropHint: null as string | null,
+      };
     case "pending_open_paths":
       return [];
     case "list_system_fonts":
@@ -483,6 +489,106 @@ describe("App file-merge wiring", () => {
     });
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     localStorage.clear();
+    for (const mode of ["single", "compare", "text"] as const) {
+      localStorage.setItem(onboardingKeyForMode(mode), "seen");
+    }
+  });
+
+  it("shows the Wayland hint as a dismissible temporary notice", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "platform_hints") {
+        return Promise.resolve({
+          os: "linux",
+          sessionType: "wayland",
+          wayland: true,
+          dropHint: "Wayland drop hint",
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+
+    const hint = await screen.findByText("Wayland drop hint");
+    expect(hint.closest("[role=status]")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Dismiss platform notice" }));
+
+    expect(screen.queryByText("Wayland drop hint")).not.toBeInTheDocument();
+  });
+
+  it("offers the LCFiBe-style tour on first launch and remembers dismissal", async () => {
+    localStorage.removeItem(onboardingKeyForMode("compare"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+
+    expect(await screen.findByRole("dialog", { name: "Choose the right workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Workspace mode" })).toHaveAttribute("data-tour-active", "true");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("dialog", { name: "Load files and folders" })).toBeInTheDocument();
+    expect(document.querySelector("[data-tour=source-open]")).toHaveAttribute("data-tour-active", "true");
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    expect(screen.queryByRole("dialog", { name: "Load files and folders" })).not.toBeInTheDocument();
+    expect(localStorage.getItem(onboardingKeyForMode("compare"))).toBe("seen");
+  });
+
+  it("tracks first-run tour completion independently for each workspace mode", async () => {
+    localStorage.removeItem(onboardingKeyForMode("text"));
+    localStorage.removeItem(onboardingKeyForMode("single"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    expect(screen.queryByRole("dialog", { name: "Choose the right workspace" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Text mode" }));
+    expect(await screen.findByRole("dialog", { name: "Choose the right workspace" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Skip" }));
+
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
+    expect(screen.queryByRole("dialog", { name: "Choose the right workspace" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "View mode" }));
+    expect(await screen.findByRole("dialog", { name: "Choose the right workspace" })).toBeInTheDocument();
+  });
+
+  it("skips tour topics that are unavailable in the current workspace", async () => {
+    localStorage.removeItem(onboardingKeyForMode("text"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+    await user.click(await screen.findByRole("button", { name: "Next" }));
+
+    expect(screen.getByRole("dialog", { name: "Read the useful representation" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Load files and folders" })).not.toBeInTheDocument();
+  });
+
+  it("resets a late tour step when switching modes instead of closing on Next", async () => {
+    localStorage.removeItem(onboardingKeyForMode("compare"));
+    localStorage.removeItem(onboardingKeyForMode("text"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    for (let step = 0; step < 9; step += 1) {
+      await user.click(screen.getByRole("button", { name: "Next" }));
+    }
+    expect(screen.getByRole("button", { name: "Finish" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Text mode" }));
+    expect(await screen.findByRole("dialog", { name: "Choose the right workspace" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(screen.getByRole("dialog", { name: "Read the useful representation" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Finish" })).not.toBeInTheDocument();
   });
 
   it("renders a landmark-based comparison workspace", async () => {
