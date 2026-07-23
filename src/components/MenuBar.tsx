@@ -43,11 +43,15 @@ export function MenuBar({
 
       <div className="command-spacer" />
 
-      {mode === "compare" && <div className="command-divider" aria-hidden="true" />}
+      {mode !== "text" && <div className="command-divider" aria-hidden="true" />}
 
-      {mode === "compare" && (
+      {mode !== "text" && (
         <div className="command-group command-group--save" role="group" aria-label="Save changes">
-          {stagedTarget && <span className="pending-summary">{pendingOps.length} unsaved → {stagedTarget}</span>}
+          {stagedTarget && (
+            <span className="pending-summary">
+              {pendingOps.length} unsaved{mode === "compare" ? ` → ${stagedTarget}` : ""}
+            </span>
+          )}
           <Button
             variant="default"
             size="sm"
@@ -64,7 +68,9 @@ export function MenuBar({
               </Button>
             </PopoverTrigger>
             <PopoverContent className="pending-popover">
-              <p className="pending-header">Pending changes → {stagedTarget ?? "—"}</p>
+              <p className="pending-header">
+                Pending changes{mode === "compare" ? ` → ${stagedTarget ?? "—"}` : ""}
+              </p>
               <ul>
                 {pendingOps.map((op) => (
                   <li key={op.key}>

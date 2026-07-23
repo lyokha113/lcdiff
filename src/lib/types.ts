@@ -33,6 +33,7 @@ export interface ViewSourceSummary {
   path: string;
   name: string;
   kind: "archive" | "directory" | "file";
+  signed?: boolean;
   entryCount: number;
 }
 

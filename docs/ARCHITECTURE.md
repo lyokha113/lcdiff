@@ -81,8 +81,12 @@ the contextual surface cannot block the Files navigator.
 
 View mode is a multi-source inspector with source tabs, a single-column tree
 for the active source, and per-source entry tabs. It uses View-specific state
-and backend source handles instead of the Compare left/right slots. Compare-only
-tree filters, merge staging, and save controls do not render in View.
+and backend source handles instead of the Compare left/right slots. Root-level
+UTF-8 text entries use a View-owned merge plan, so edits stay staged until Save
+and preserve the same atomic rewrite/backup contract as Compare. Decompiled
+classes, binary entries, signed archives, and entries inside nested archives
+remain read-only. Compare-only tree filters and cross-side merge controls do not
+render in View.
 
 Free text mode is a frontend workspace for ad hoc paste/type comparison. It
 keeps editable left/right draft buffers separate from readonly confirmed diff

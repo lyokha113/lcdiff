@@ -59,10 +59,26 @@ describe("ConfigDrawer", () => {
     expect(body?.querySelector(".preferences-content")).toBeInTheDocument();
   });
 
-  it("requests system fonts when Preferences opens in the idle state", () => {
+  it("defers system font loading until Editor opens", async () => {
     const props = setup({ fontStatus: "idle" });
 
+    expect(props.onLoadSystemFonts).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
     expect(props.onLoadSystemFonts).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the selected editor font while installed fonts are loading", async () => {
+    setup({
+      fontStatus: "loading",
+      systemFonts: [],
+      preferences: {
+        ...DEFAULT_UI_PREFERENCES,
+        editor: { ...DEFAULT_UI_PREFERENCES.editor, fontFamily: "Monaco" },
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }));
+    expect(screen.getByLabelText("Editor font family")).toHaveTextContent("Monaco");
   });
 
   it("renders only Appearance, Editor, and Misc as top-level sections", () => {

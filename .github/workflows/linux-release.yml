@@ -50,7 +50,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
+        run: >-
+          docker/build-linux-matrix.sh
+          --arch amd64
+          --ubuntu 22.04
+          --ubuntu 24.04
+          --bundles appimage,deb
 
       - name: Stage Linux release assets
         shell: bash
@@ -78,12 +83,6 @@ jobs:
           cp \
             "artifacts/linux/ubuntu24.04-amd64/deb/LCDiff_${version}_amd64.deb" \
             "$out/LCDiff_${version}_ubuntu24.04_amd64.deb"
-          cp \
-            "artifacts/linux/ubuntu26.04-amd64/appimage/LCDiff_${version}_amd64.AppImage" \
-            "$out/LCDiff_${version}_ubuntu26.04_amd64.AppImage"
-          cp \
-            "artifacts/linux/ubuntu26.04-amd64/deb/LCDiff_${version}_amd64.deb" \
-            "$out/LCDiff_${version}_ubuntu26.04_amd64.deb"
           export LCDIFF_VERSION="$version"
           export LCDIFF_TAG="$tag"
           export LCDIFF_UPDATER_ASSET="LCDiff_${version}_ubuntu22.04_amd64.AppImage"

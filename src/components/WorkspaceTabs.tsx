@@ -1,8 +1,5 @@
 import { Binary, ChevronsDown, ChevronsUp, Code, FileDiff, ListTree, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import type { Mode, PairStatus, TreeFilter, ViewMode } from "@/lib/types";
 import { statusPresentation } from "@/lib/status";
 
@@ -72,18 +69,23 @@ export function WorkspaceTabs({
       </div>
       {mode === "compare" && (
         <>
-          <Select value={treeFilter} onValueChange={(v) => onFilterChange(v as TreeFilter)}>
-            <SelectTrigger className="workspace-tree-filter" aria-label="Tree filter">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="all">Show all</SelectItem>
-                <SelectItem value="diff">Differences</SelectItem>
-                <SelectItem value="same">Identical</SelectItem>
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+          <div className="workspace-tree-filter" role="group" aria-label="Tree filter">
+            {([
+              ["all", "All"],
+              ["diff", "Differences"],
+              ["same", "Identical"],
+            ] as const).map(([value, label]) => (
+              <Button
+                key={value}
+                variant={treeFilter === value ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={treeFilter === value}
+                onClick={() => onFilterChange(value)}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
           <div className="workspace-tree-actions" role="group" aria-label="Tree expansion">
             <Button variant="ghost" size="icon-sm" aria-label="Expand all folders" onClick={onExpandTree}>
               <ChevronsDown />

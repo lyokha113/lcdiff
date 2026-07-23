@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 mvn -f "$ROOT/sidecar/pom.xml" clean package -DskipTests
 mkdir -p "$ROOT/src-tauri/resources/sidecar"
 cp \
-  "$ROOT/sidecar/target/lcdiff-sidecar-0.3.7.jar" \
+  "$ROOT/sidecar/target/lcdiff-sidecar-0.3.8.jar" \
   "$ROOT/src-tauri/resources/sidecar/lcdiff-sidecar.jar"
 
 "$ROOT/scripts/build-jlink-runtime.sh"

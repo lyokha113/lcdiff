@@ -248,6 +248,7 @@ impl AppState {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| archive.path().display().to_string()),
             kind: archive.metadata().source_kind,
+            signed: archive.metadata().signed,
             entry_count: archive.entries().count(),
         };
         self.view_sources.insert(
@@ -257,6 +258,7 @@ impl AppState {
                 nested: Arc::new(Mutex::new(
                     NestedArchiveCache::new().map_err(|error| error.to_string())?,
                 )),
+                plan: MergePlan::new(),
             },
         );
         Ok(summary)
@@ -275,6 +277,7 @@ impl AppState {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| source.archive.path().display().to_string()),
                 kind: source.archive.metadata().source_kind,
+                signed: source.archive.metadata().signed,
                 entry_count: source.archive.entries().count(),
             })
             .collect()
@@ -300,6 +303,13 @@ impl AppState {
     }
 
     fn close_view_source(&mut self, source_id: &str) -> Result<(), String> {
+        if self
+            .view_sources
+            .get(source_id)
+            .is_some_and(|source| !source.plan.is_empty())
+        {
+            return Err("save or clear unsaved changes before closing this source".to_owned());
+        }
         self.view_sources
             .remove(source_id)
             .map(|_| ())
@@ -333,7 +343,82 @@ impl AppState {
     }
 
     fn any_pending(&self) -> bool {
-        !self.plan(Side::Left).is_empty() || !self.plan(Side::Right).is_empty()
+        !self.plan(Side::Left).is_empty()
+            || !self.plan(Side::Right).is_empty()
+            || self
+                .view_sources
+                .values()
+                .any(|source| !source.plan.is_empty())
+    }
+
+    fn stage_view_write(
+        &mut self,
+        source_id: &str,
+        entry_path: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        if entry_path.contains("!/") {
+            return Err("editing entries inside nested archives is not supported".to_owned());
+        }
+        let source = self
+            .view_sources
+            .get_mut(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))?;
+        if source.archive.metadata().signed {
+            return Err("signed archives must be edited in Compare mode".to_owned());
+        }
+        let entry = source
+            .archive
+            .entry(entry_path)
+            .ok_or("entry is not indexed")?
+            .clone();
+        let original = source
+            .archive
+            .read_entry(entry_path)
+            .map_err(|error| error.to_string())?;
+        if !edit::editable_text(&entry, &original) {
+            return Err("entry is not an editable text file".to_owned());
+        }
+        let encoding = edit::detect_encoding(&original);
+        source
+            .plan
+            .stage_write(entry_path, edit::encode_text(content, &encoding))
+            .map_err(|error| error.to_string())
+    }
+
+    fn unstage_view_write(&mut self, source_id: &str, entry_path: &str) -> Result<(), String> {
+        let source = self
+            .view_sources
+            .get_mut(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))?;
+        if source
+            .plan
+            .unstage(entry_path)
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(());
+        }
+        Err("staged entry is not found".to_owned())
+    }
+
+    fn commit_view(&mut self, source_id: &str, backup: bool) -> Result<CommitResult, String> {
+        let source = self
+            .view_sources
+            .get_mut(source_id)
+            .ok_or_else(|| format!("view source is not loaded: {source_id}"))?;
+        if source.archive.metadata().signed {
+            return Err("signed archives must be edited in Compare mode".to_owned());
+        }
+        let result = source
+            .plan
+            .commit(&source.archive, CommitOptions { backup })
+            .map_err(|error| error.to_string())?;
+        source.archive = Archive::open(result.rewritten_path.to_string_lossy())
+            .map_err(|error| error.to_string())?;
+        source.nested = Arc::new(Mutex::new(
+            NestedArchiveCache::new().map_err(|error| error.to_string())?,
+        ));
+        Ok(result)
     }
 
     /// Legacy single-target lock: only one side may carry pending ops unless both
@@ -445,6 +530,9 @@ impl AppState {
     fn clear_staged(&mut self) {
         self.plan_mut(Side::Left).clear();
         self.plan_mut(Side::Right).clear();
+        for source in self.view_sources.values_mut() {
+            source.plan.clear();
+        }
     }
 
     fn unstage(&mut self, entry_path: &str, side: Option<Side>) -> Result<(), String> {
@@ -481,12 +569,14 @@ struct ViewSourceSummary {
     path: String,
     name: String,
     kind: ArchiveSourceKind,
+    signed: bool,
     entry_count: usize,
 }
 
 struct ViewSourceState {
     archive: Archive,
     nested: Arc<Mutex<NestedArchiveCache>>,
+    plan: MergePlan,
 }
 
 #[derive(Clone)]
@@ -929,6 +1019,48 @@ fn stage_write(
         .lock()
         .map_err(|_| "state lock is poisoned".to_owned())?;
     state.stage_write(side, &entry_path, &content)
+}
+
+#[tauri::command]
+fn stage_view_write(
+    source_id: String,
+    entry_path: String,
+    content: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .stage_view_write(&source_id, &entry_path, &content)
+}
+
+#[tauri::command]
+fn unstage_view_write(
+    source_id: String,
+    entry_path: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .unstage_view_write(&source_id, &entry_path)
+}
+
+#[tauri::command]
+async fn commit_view(
+    source_id: String,
+    backup: bool,
+    state: State<'_, SharedState>,
+) -> Result<CommitResult, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?
+            .commit_view(&source_id, backup)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1798,6 +1930,9 @@ fn main() {
             disassemble_view_entry,
             stage_copy,
             stage_write,
+            stage_view_write,
+            unstage_view_write,
+            commit_view,
             commit_merge,
             clear_staged,
             unstage,
@@ -2224,6 +2359,7 @@ mod tests {
             path: "/tmp/app.jar".to_owned(),
             name: "app.jar".to_owned(),
             kind: ArchiveSourceKind::Archive,
+            signed: false,
             entry_count: 7,
         };
 
@@ -2234,6 +2370,7 @@ mod tests {
                 "path": "/tmp/app.jar",
                 "name": "app.jar",
                 "kind": "archive",
+                "signed": false,
                 "entryCount": 7
             })
         );
@@ -2310,6 +2447,32 @@ mod tests {
         assert_eq!(diff.pairs[0].path, "root.txt");
         assert!(diff.pairs[0].left.is_some());
         assert!(diff.pairs[0].right.is_none());
+    }
+
+    #[test]
+    fn view_source_stages_and_commits_editable_text() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let archive_path = dir.path().join("editable.jar");
+        write_zip(&archive_path, &[("config.json", b"{\"v\":1}\n")]);
+
+        let mut state = AppState::new(None);
+        let source = state
+            .open_view_source(archive_path.display().to_string())
+            .expect("open view source");
+        state
+            .stage_view_write(&source.id, "config.json", "{\"v\":2}\n")
+            .expect("stage view edit");
+        assert!(state.close_view_source(&source.id).is_err());
+
+        state
+            .commit_view(&source.id, false)
+            .expect("commit view edit");
+        let bytes = state
+            .view_source_archive(&source.id)
+            .expect("view source archive")
+            .read_entry("config.json")
+            .expect("read committed entry");
+        assert_eq!(bytes, b"{\"v\":2}\n");
     }
 
     #[test]

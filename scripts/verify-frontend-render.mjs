@@ -397,7 +397,7 @@ try {
   if (await textPage.locator(".free-text-result-panel .monaco-diff-editor").count()) {
     throw new Error("Free text rendered a diff result before the user confirmed comparison");
   }
-  if (await textPage.getByRole("combobox", { name: "Tree filter" }).count()) {
+  if (await textPage.getByRole("group", { name: "Tree filter" }).count()) {
     throw new Error("Free text rendered the compare-only tree filter");
   }
   await textPage.close();
@@ -556,6 +556,14 @@ try {
           return undefined;
         }
         if (cmd === "platform_hints") return {};
+        if (cmd === "pending_open_paths") return [];
+        if (cmd === "list_system_fonts") {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve([
+              { family: "Monaco", monospaceLikely: true },
+            ]), 1_500);
+          });
+        }
         if (cmd === "validate_path") {
           if (args.raw === "/fixtures/not-a-zip.jar") {
             throw new Error("not a valid zip/jar");
@@ -573,6 +581,8 @@ try {
         }
         if (cmd === "list_view_sources") return [];
         if (cmd === "close_view_source") return undefined;
+        if (cmd === "stage_view_write") return undefined;
+        if (cmd === "unstage_view_write") return undefined;
         if (cmd === "compute_view_nested_entries") {
           return { pairs: viewPairs[args.sourceId] ?? [] };
         }
@@ -649,6 +659,7 @@ try {
           return args.side === "right" ? [{ entryPath: "right-only.txt", kind: "path" }] : [];
         }
         if (cmd === "stage_copy") return undefined;
+        if (cmd === "stage_write") return undefined;
         if (cmd === "unstage") return undefined;
         if (cmd === "clear_staged") return undefined;
         if (cmd === "commit_merge") {
@@ -678,6 +689,7 @@ try {
   await mockedPage.evaluate(() => {
     localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
+      editor: { fontFamily: "Monaco" },
       misc: { updates: { autoCheck: true } },
     }));
   });
@@ -686,6 +698,8 @@ try {
   await mockedPage.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Preferences", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Editor", exact: true }).click();
+  await mockedPage.getByLabel("Editor font family").getByText("Monaco").waitFor({ timeout: 500 });
   await mockedPage.getByRole("button", { name: "Misc", exact: true }).click();
   await mockedPage.getByRole("button", { name: "Updates", exact: true }).click();
   await mockedPage.evaluate(() => {
@@ -764,15 +778,13 @@ try {
   await closePopover(rightSourceTrigger);
 
   // Tree filter in the workspace tab strip: Identical hides non-identical rows.
-  await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
-  await mockedPage.getByRole("option", { name: "Identical" }).click();
+  await mockedPage.getByRole("button", { name: "Identical" }).click();
   await mockedPage.locator(".tree-file", { hasText: "right-only.txt" }).waitFor({ state: "detached", timeout: 5_000 });
   if (await mockedPage.locator(".tree-file", { hasText: "left-only.txt" }).count()) {
     throw new Error("Identical filter still showed left-only row");
   }
   // Restore the differences view for the subsequent search assertions.
-  await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
-  await mockedPage.getByRole("option", { name: "Differences" }).click();
+  await mockedPage.getByRole("button", { name: "Differences" }).click();
   await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ timeout: 5_000 });
   if (await mockedPage.locator(".tree-file", { hasText: "App.class" }).count()) {
     throw new Error("Populated Files tree showed nested files before Expand all");
@@ -860,8 +872,7 @@ try {
   await mockedPage.locator("text=right text content for right-only.txt").waitFor({ timeout: 5_000 });
 
   await showFilesTab();
-  await mockedPage.getByRole("combobox", { name: "Tree filter" }).click();
-  await mockedPage.getByRole("option", { name: "Differences" }).click();
+  await mockedPage.getByRole("button", { name: "Differences" }).click();
   await mockedPage.getByRole("button", { name: "Toggle search" }).click();
   await mockedPage.getByText("Clear results", { exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Clear results" }).click();
@@ -898,6 +909,19 @@ try {
   if (populatedCompareText.includes("Left Target") || populatedCompareText.includes("Right Target")) {
     throw new Error("Diff toolbar rendered obsolete target labels");
   }
+
+  // A Compare edit must stage immediately; switching tabs must not be required
+  // to trigger Monaco's blur event and preserve the edit.
+  const compareModifiedEditor = mockedPage.locator(".monaco-diff-editor .editor.modified");
+  const compareModifiedTextarea = compareModifiedEditor.locator("textarea");
+  if (!(await compareModifiedTextarea.isEditable())) {
+    throw new Error("Compare modified editor is read-only");
+  }
+  await compareModifiedEditor.locator(".view-lines").click({ position: { x: 80, y: 20 } });
+  await mockedPage.keyboard.type(" E2E_COMPARE_EDIT");
+  await mockedPage.getByRole("button", { name: "Save to archive (1)" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
 
   // Compact-width regression: a populated Diff keeps a usable tab-scroll lane
   // beside the fixed Source/Bytecode switch instead of collapsing to zero.
@@ -1058,7 +1082,7 @@ try {
   if (await mockedPage.getByRole("button", { name: "Change right source", exact: true }).count()) {
     throw new Error("View mode still rendered the right source chip");
   }
-  if (await mockedPage.getByRole("combobox", { name: "Tree filter" }).count()) {
+  if (await mockedPage.getByRole("group", { name: "Tree filter" }).count()) {
     throw new Error("View mode still rendered the compare-only tree filter");
   }
   await openLeftPopover();
@@ -1073,11 +1097,26 @@ try {
   await viewEntryRow.click();
   await mockedPage.getByRole("tab", { name: /ViewOnly\.class/ }).waitFor({ timeout: 5_000 });
   await mockedPage.locator("text=class ViewOnly").waitFor({ timeout: 5_000 });
+  await showFilesTab();
+  const viewTextRow = mockedPage.locator(".tree-file", { hasText: "readme.txt" });
+  await viewTextRow.click();
+  await mockedPage.getByRole("tab", { name: /readme\.txt/ }).waitFor({ timeout: 5_000 });
+  const viewTextEditor = mockedPage.locator(".monaco-editor textarea").last();
+  await viewTextEditor.waitFor({ state: "visible", timeout: 5_000 });
+  if (!(await viewTextEditor.isEditable())) {
+    throw new Error("View text editor is read-only");
+  }
+  await mockedPage.locator(".monaco-editor .view-lines").last().click({ position: { x: 80, y: 20 } });
+  await mockedPage.keyboard.type(" E2E_VIEW_EDIT");
+  await showFilesTab();
+  await mockedPage.getByRole("button", { name: "Save to archive (1)" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
+  await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
 
   // Back to Compare: right chip returns.
   await mockedPage.getByRole("button", { name: "Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
-  await mockedPage.getByRole("combobox", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("group", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
   await openLeftPopover();
   await archiveInput().fill("/fixtures/left.jar");
   await archiveInput().press("Enter");

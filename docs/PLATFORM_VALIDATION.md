@@ -34,10 +34,10 @@ artifact, and attaches the installer to the matching GitHub Release.
 
 Linux release assets are built by `.github/workflows/linux-release.yml` on
 GitHub-hosted `ubuntu-latest` runners for future `v*` tags. The workflow calls
-`docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb`, uploads the
-staged Ubuntu 22.04, Ubuntu 24.04, and Ubuntu 26.04 AppImage/deb assets as a
-workflow artifact, and attaches uniquely named assets to the matching GitHub
-Release.
+`docker/build-linux-matrix.sh` for Ubuntu 22.04 and Ubuntu 24.04, uploads those
+staged AppImage/deb assets as a workflow artifact, and attaches uniquely named
+assets to the matching GitHub Release. Ubuntu 26.04 remains available as a
+local Docker build target.
 
 ## macOS Release Builder
 
@@ -88,9 +88,9 @@ Pass evidence:
 
 ## Linux Display Matrix
 
-Release artifacts are built separately for Ubuntu 24.04 LTS and Ubuntu 26.04
-LTS. Run display validation against each Ubuntu artifact set because the
-GTK/WebKit dependency stack is linked against the build floor.
+Linux artifacts can be built separately for each supported Ubuntu target. Run
+display validation against each artifact set because the GTK/WebKit dependency
+stack is linked against the build floor.
 
 Run the same Tauri bundle on:
 
