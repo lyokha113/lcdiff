@@ -74,7 +74,8 @@ the shell under Playwright and fails on browser page errors.
 
 For release artifacts, prefer Docker from any host. Future `v*` tags run the
 `Linux Release` workflow, which calls the same matrix script on
-`ubuntu-latest` and uploads the staged release assets.
+`ubuntu-latest` for Ubuntu 22.04 and Ubuntu 24.04, then uploads the staged
+release assets.
 
 ```bash
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
@@ -184,8 +185,8 @@ Future release tags build and upload platform assets through:
 Current release focus:
 
 - macOS Apple Silicon DMG.
+- Linux x86_64 Ubuntu 22.04 LTS AppImage/deb.
 - Linux x86_64 Ubuntu 24.04 LTS AppImage/deb.
-- Linux x86_64 Ubuntu 26.04 LTS AppImage/deb.
 - Windows 10/11 x64 NSIS installer from GitHub Actions.
 - Arch Linux AUR package via `aur/lcdiff`.
 

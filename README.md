@@ -93,7 +93,6 @@ Choose the artifact matching the installed Ubuntu LTS release:
 | --- | --- |
 | 22.04 LTS | `ubuntu22.04-amd64` AppImage or `.deb` |
 | 24.04 LTS | `ubuntu24.04-amd64` AppImage or `.deb` |
-| 26.04 LTS | `ubuntu26.04-amd64` AppImage or `.deb` |
 
 ```bash
 bash install-linux.sh LCDiff_<version>_ubuntu22.04_amd64.AppImage

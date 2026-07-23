@@ -6,8 +6,7 @@ build and upload platform assets automatically. The local commands below are
 the same build paths, kept for debugging and manual fallback releases.
 
 Targets the current build focus: **macOS (Apple Silicon)**, **Linux (x86_64,
-Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, and Ubuntu 26.04 LTS)**, and **Windows
-10/11 x64**.
+Ubuntu 22.04 LTS and Ubuntu 24.04 LTS)**, and **Windows 10/11 x64**.
 
 ## Artifacts per release
 
@@ -18,8 +17,6 @@ Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, and Ubuntu 26.04 LTS)**, and **Windows
 | Linux x86_64 / Ubuntu 22.04 LTS | `LCDiff_<version>_ubuntu22.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:22.04`) or local Docker |
 | Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
 | Linux x86_64 / Ubuntu 24.04 LTS | `LCDiff_<version>_ubuntu24.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:24.04`) or local Docker |
-| Linux x86_64 / Ubuntu 26.04 LTS | `LCDiff_<version>_ubuntu26.04_amd64.AppImage` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:26.04`) or local Docker |
-| Linux x86_64 / Ubuntu 26.04 LTS | `LCDiff_<version>_ubuntu26.04_amd64.deb` | GitHub Actions (`ubuntu-latest` + Docker `ubuntu:26.04`) or local Docker |
 | Windows 10/11 x64 | `LCDiff-<version>-windows-x64-setup.exe` | GitHub Actions (`windows-latest`) |
 | Arch Linux | `aur/lcdiff/PKGBUILD` | AUR (`yay` / `paru`) |
 | Installers | `install-macos.sh`, `install-linux.sh` | committed in `scripts/` |
@@ -113,8 +110,6 @@ LCDiff_<version>_ubuntu22.04_amd64.AppImage
 LCDiff_<version>_ubuntu22.04_amd64.deb
 LCDiff_<version>_ubuntu24.04_amd64.AppImage
 LCDiff_<version>_ubuntu24.04_amd64.deb
-LCDiff_<version>_ubuntu26.04_amd64.AppImage
-LCDiff_<version>_ubuntu26.04_amd64.deb
 install-linux.sh
 ```
 
@@ -124,11 +119,12 @@ For a local/manual Linux build:
 docker/build-linux-matrix.sh --arch amd64 --bundles appimage,deb
 ```
 
-This builds separately inside `ubuntu:22.04`, `ubuntu:24.04`, and
+By default this builds separately inside `ubuntu:22.04`, `ubuntu:24.04`, and
 `ubuntu:26.04`, giving the GTK, WebKit, OpenSSL, and glibc-linked desktop stack
-its own dependency floor per supported Ubuntu LTS version. The bundled jlink JRE
-is built inside each Linux container, so it matches Linux x86_64 instead of the
-host. The matrix script copies artifacts to:
+its own dependency floor per supported local build target. GitHub Actions
+explicitly limits the release matrix to Ubuntu 22.04 and Ubuntu 24.04. The
+bundled jlink JRE is built inside each Linux container, so it matches Linux
+x86_64 instead of the host. The matrix script copies artifacts to:
 
 ```bash
 artifacts/linux/ubuntu22.04-amd64/
@@ -214,8 +210,6 @@ gh release create v<version> \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.AppImage.sig \
   artifacts/release-linux/LCDiff_<version>_ubuntu24.04_amd64.deb \
-  artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.AppImage \
-  artifacts/release-linux/LCDiff_<version>_ubuntu26.04_amd64.deb \
   artifacts/windows/LCDiff-<version>-windows-x64-setup.exe \
   artifacts/windows/LCDiff-<version>-windows-x64-setup.exe.sig \
   artifacts/macos/latest-darwin-aarch64.json \
@@ -251,8 +245,8 @@ gh release create v<version> \
   for the GitHub Actions workflow; unsigned builds may trigger SmartScreen.
 - Arch Linux uses the AUR package, not a GitHub release asset.
 - Ubuntu release assets are intentionally split by LTS floor. Do not collapse
-  22.04, 24.04, and 26.04 artifacts into one Linux directory because linked
-  GTK/WebKit dependencies can drift across distro releases.
+  22.04 and 24.04 artifacts into one Linux directory because linked GTK/WebKit
+  dependencies can drift across distro releases.
 - ARM Linux is not a release target — build from source with
   `docker/build-linux-docker.sh --arch arm64 --ubuntu 26.04` if needed.
 - Run the developer checks (`npm run verify:all`,
