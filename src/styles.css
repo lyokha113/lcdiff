@@ -184,12 +184,16 @@ main.app-shell {
 .workspace-tabs-files { display: flex; flex: 0 0 auto; }
 .workspace-tab-files { flex: 0 0 auto; }
 .workspace-tree-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
   flex: 0 0 auto;
-  width: 9.5rem;
+  width: auto;
   height: 32px;
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }
+.workspace-tree-filter [data-slot="button"] { height: 1.65rem; padding-inline: 0.45rem; }
 .workspace-tree-actions {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1955,7 +1959,8 @@ main.app-shell {
   box-shadow: inset 0 -2px var(--brass);
 }
 .workspace-tab-count { border-radius: 0.32rem; background: color-mix(in oklab, var(--brass) 12%, transparent); font-size: 0.58rem; }
-.workspace-tree-filter { align-self: center; width: 8rem; height: 1.55rem; margin-inline: 0.28rem; border: 0; border-radius: 0.38rem; background: var(--ink-2); font-size: 0.66rem; }
+.workspace-tree-filter { align-self: center; width: auto; height: 1.55rem; margin-inline: 0.28rem; border: 0; border-radius: 0.38rem; background: var(--ink-2); font-size: 0.66rem; }
+.workspace-tree-filter [data-slot="button"] { height: 1.35rem; padding-inline: 0.38rem; font-size: 0.62rem; }
 .workspace-tree-actions [data-slot="button"] { width: 1.45rem; height: 1.45rem; }
 .workspace-tree-actions { min-height: 100%; }
 .workspace-tabs-scroll { gap: 0; }

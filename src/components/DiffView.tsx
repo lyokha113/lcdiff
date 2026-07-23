@@ -1,6 +1,6 @@
 import Editor, { DiffEditor, type DiffOnMount, type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
@@ -62,10 +62,8 @@ export function DiffView({
   const resolvedDiffEditable = diffEditable ?? hunkMerge;
   const diffEditableRef = useRef(resolvedDiffEditable);
   const onDiffEditEitherRef = useRef(onDiffEditEither);
-  useEffect(() => {
-    diffEditableRef.current = resolvedDiffEditable;
-    onDiffEditEitherRef.current = onDiffEditEither;
-  }, [resolvedDiffEditable, onDiffEditEither]);
+  diffEditableRef.current = resolvedDiffEditable;
+  onDiffEditEitherRef.current = onDiffEditEither;
 
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
   const editorFontFamily = editorFontFamilyForCss(preferences.editor.fontFamily);
@@ -195,10 +193,12 @@ export function DiffView({
               onDiffMount(editor, monaco);
               const orig = editor.getOriginalEditor();
               const mod = editor.getModifiedEditor();
-              const d1 = orig.onDidBlurEditorText(() => {
+              const d1 = orig.onDidChangeModelContent((event) => {
+                if (event.isFlush) return;
                 if (diffEditableRef.current) onDiffEditEitherRef.current("left", orig.getValue());
               });
-              const d2 = mod.onDidBlurEditorText(() => {
+              const d2 = mod.onDidChangeModelContent((event) => {
+                if (event.isFlush) return;
                 if (diffEditableRef.current) onDiffEditEitherRef.current("right", mod.getValue());
               });
               editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });

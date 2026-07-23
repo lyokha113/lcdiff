@@ -316,6 +316,7 @@ export function App() {
   const modeRef = useRef(mode);
   const activeViewSourceIdRef = useRef<string | undefined>(undefined);
   const viewRequestGenerationRef = useRef(0);
+  const editStageGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const singleSearchDecorations = useRef<string[]>([]);
   const leftSearchDecorations = useRef<string[]>([]);
@@ -615,6 +616,10 @@ export function App() {
   }, [activeViewSource, loadViewPairs, mode]);
 
   const openViewPath = useCallback(async (path: string) => {
+    if (stagedTarget) {
+      setMessage("Save or clear unsaved changes before opening another View source.");
+      return undefined;
+    }
     const generation = viewRequestGenerationRef.current + 1;
     viewRequestGenerationRef.current = generation;
     try {
@@ -648,7 +653,7 @@ export function App() {
       setMessage(message);
       return message;
     }
-  }, [loadViewPairs]);
+  }, [loadViewPairs, stagedTarget]);
 
   const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
     try {
@@ -988,6 +993,10 @@ export function App() {
   }
 
   function selectViewSource(sourceId: string) {
+    if (stagedTarget && sourceId !== activeViewSource?.id) {
+      setMessage("Save or clear unsaved changes before switching View sources.");
+      return;
+    }
     viewRequestGenerationRef.current += 1;
     activeViewSourceIdRef.current = sourceId;
     clearViewSearchState(cancelableSearchActiveRef.current);
@@ -1046,6 +1055,10 @@ export function App() {
   }
 
   function closeViewSourceTab(sourceId: string) {
+    if (stagedTarget && sourceId === activeViewSource?.id) {
+      setMessage("Save or clear unsaved changes before closing this View source.");
+      return;
+    }
     viewRequestGenerationRef.current += 1;
     void invoke("close_view_source", { sourceId }).catch(() => undefined);
     const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
@@ -1390,6 +1403,23 @@ export function App() {
   }
 
   async function save(targetSide: Side, signedConfirmed = false) {
+    if (mode === "single") {
+      if (!activeViewSource) return;
+      try {
+        const result = await invoke<CommitResult>("commit_view", {
+          sourceId: activeViewSource.id,
+          backup: backupEnabled,
+        });
+        setStagedTarget(undefined);
+        setStagedEntries({});
+        await loadViewPairs(activeViewSource.id);
+        if (selected) await inspectViewEntry(selected, true);
+        setMessage(`Saved ${result.copiedEntries} entries to ${result.rewrittenPath}`);
+      } catch (error) {
+        setMessage(String(error));
+      }
+      return;
+    }
     if (isFileMerge) {
       const dirty = (["left", "right"] as Side[]).filter((s) =>
         Object.values(stagedEntries).some((e) => e.side === s),
@@ -1454,6 +1484,7 @@ export function App() {
   }
 
   async function clearStaged() {
+    editStageGenerationRef.current += 1;
     await invoke("clear_staged");
     setStagedTarget(undefined);
     setStagedEntries({});
@@ -1481,7 +1512,14 @@ export function App() {
     try {
       const entry = stagedEntries[key];
       const bare = stripSidePrefix(key);
-      await invoke("unstage", { entryPath: bare, side: entry?.side });
+      if (mode === "single" && activeViewSource) {
+        await invoke("unstage_view_write", {
+          sourceId: activeViewSource.id,
+          entryPath: bare,
+        });
+      } else {
+        await invoke("unstage", { entryPath: bare, side: entry?.side });
+      }
       setStagedEntries((current) => {
         const next = { ...current };
         delete next[key];
@@ -1495,10 +1533,15 @@ export function App() {
   }
 
   async function stageEdit(entryPath: string, content: string) {
+    const generation = ++editStageGenerationRef.current;
     const original = preview.left?.content ?? "";
     if (content === original) {
       if (stagedEntries[entryPath]?.kind === "edit") {
-        await invoke("unstage", { entryPath });
+        if (!activeViewSource) return;
+        await invoke("unstage_view_write", {
+          sourceId: activeViewSource.id,
+          entryPath,
+        });
         setStagedEntries((current) => {
           const next = { ...current };
           delete next[entryPath];
@@ -1509,11 +1552,24 @@ export function App() {
       return;
     }
     try {
-      await invoke("stage_write", { side: "left", entryPath, content });
+      if (!activeViewSource) return;
       setStagedEntries((current) => ({ ...current, [entryPath]: { side: "left", kind: "edit" } }));
       setStagedTarget("left");
+      await invoke("stage_view_write", {
+        sourceId: activeViewSource.id,
+        entryPath,
+        content,
+      });
+      if (generation !== editStageGenerationRef.current) return;
       setMessage(`Edited ${entryPath} (unsaved)`);
     } catch (error) {
+      if (generation !== editStageGenerationRef.current) return;
+      setStagedEntries((current) => {
+        const next = { ...current };
+        delete next[entryPath];
+        if (Object.keys(next).length === 0) setStagedTarget(undefined);
+        return next;
+      });
       setMessage(String(error));
     }
   }
@@ -1526,12 +1582,21 @@ export function App() {
       if (stagedEntries[key]?.kind === "edit") await unstage(key);
       return;
     }
+    const generation = ++editStageGenerationRef.current;
     try {
-      await invoke("stage_write", { side, entryPath: selected.path, content });
       setStagedEntries((current) => ({ ...current, [key]: { side, kind: "edit" } }));
       setStagedTarget(side);
+      await invoke("stage_write", { side, entryPath: selected.path, content });
+      if (generation !== editStageGenerationRef.current) return;
       setMessage(`Edited ${selected.path} on ${side} (unsaved)`);
     } catch (error) {
+      if (generation !== editStageGenerationRef.current) return;
+      setStagedEntries((current) => {
+        const next = { ...current };
+        delete next[key];
+        if (Object.keys(next).length === 0) setStagedTarget(undefined);
+        return next;
+      });
       setMessage(String(error));
     }
   }
@@ -1833,7 +1898,13 @@ export function App() {
     mode === "compare" && sideEditableText(preview.left) && sideEditableText(preview.right);
   const isDiffEditable = isTextMerge;
 
-  const isEditableEntry = false;
+  const isEditableEntry =
+    mode === "single" &&
+    viewMode === "source" &&
+    !!preview.left &&
+    activeViewSource?.signed !== true &&
+    !preview.left.path.includes("!/") &&
+    sideEditableText(preview.left);
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
   const leftLabel = mode === "single"
@@ -2037,7 +2108,11 @@ export function App() {
       onDiffMount={handleDiffMount}
       editable={isEditableEntry}
       editValue={editBuffer}
-      onEditChange={(value) => setEditBuffer(value ?? "")}
+      onEditChange={(value) => {
+        const content = value ?? "";
+        setEditBuffer(content);
+        if (selected) void stageEdit(selected.path, content);
+      }}
       onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
       fileMerge={isFileMerge}
       entryCopyEnabled={mode === "compare"}

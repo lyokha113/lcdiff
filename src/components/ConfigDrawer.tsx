@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { X } from "lucide-react";
 import { AppearancePreferences } from "@/components/preferences/AppearancePreferences";
 import { EditorPreferences } from "@/components/preferences/EditorPreferences";
@@ -53,12 +53,6 @@ export function ConfigDrawer({
 }: ConfigDrawerProps) {
   const [section, setSection] = useState<Section>("appearance");
   const [miscPanel, setMiscPanel] = useState<MiscPanel>("search");
-
-  useEffect(() => {
-    if (open && fontStatus === "idle") {
-      onLoadSystemFonts();
-    }
-  }, [fontStatus, onLoadSystemFonts, open]);
 
   if (!open) return null;
 

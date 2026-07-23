@@ -73,7 +73,7 @@ describe("WorkspaceTabs", () => {
     const props = setup();
     const workspaceTabs = document.querySelector(".workspace-tabs");
     const filesTab = screen.getByRole("tab", { name: /Files/ });
-    const treeFilter = screen.getByRole("combobox", { name: "Tree filter" });
+    const treeFilter = screen.getByRole("group", { name: "Tree filter" });
     const expandAll = screen.getByRole("button", { name: "Expand all folders" });
     const collapseAll = screen.getByRole("button", { name: "Collapse all folders" });
 
@@ -85,15 +85,14 @@ describe("WorkspaceTabs", () => {
       expect(tab.closest('[role="tablist"]')).toBeInTheDocument();
     }
     expect(treeFilter.closest('[role="tablist"]')).toBeNull();
-    expect(screen.getByText("Differences")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Differences" })).toHaveAttribute("aria-pressed", "true");
     expect(workspaceTabs?.children[0]).toBe(document.querySelector(".workspace-tabs-files"));
     expect(within(workspaceTabs?.children[0] as HTMLElement).getByRole("tab", { name: /Files/ })).toBe(filesTab);
     expect(workspaceTabs?.children[1]).toBe(treeFilter);
     expect(workspaceTabs?.children[2]).toBe(document.querySelector(".workspace-tree-actions"));
     expect(workspaceTabs?.children[3]).toBe(document.querySelector(".workspace-tabs-scroll"));
 
-    await userEvent.click(treeFilter);
-    await userEvent.click(screen.getByRole("option", { name: "Identical" }));
+    await userEvent.click(screen.getByRole("button", { name: "Identical" }));
     await userEvent.click(expandAll);
     await userEvent.click(collapseAll);
 
@@ -103,7 +102,7 @@ describe("WorkspaceTabs", () => {
   });
   it("hides the tree filter and expand controls in View mode", () => {
     setup({ mode: "single" });
-    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Tree filter" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Expand all folders" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Collapse all folders" })).not.toBeInTheDocument();
   });

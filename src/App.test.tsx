@@ -76,7 +76,7 @@ function entryKind(path: string) {
   return path.endsWith(".class") ? "class" as const : "text" as const;
 }
 
-const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
+const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
   switch (cmd) {
     case "platform_hints":
       return {
@@ -147,11 +147,14 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>) => {
     case "cancel_deep_search":
       return undefined;
     case "stage_write":
+    case "stage_view_write":
+    case "unstage_view_write":
     case "prefetch_siblings":
     case "clear_staged":
     case "close_view_source":
       return undefined;
     case "commit_merge":
+    case "commit_view":
       return {
         rewrittenPath: "/tmp/config.json",
         signatureInvalidated: false,
@@ -290,20 +293,13 @@ const MODIFY_LINE_2 = {
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
 let diffEditorMounted = false;
 let diffEditorProps: { original?: string; modified?: string; options?: { readOnly?: boolean; originalEditable?: boolean } } = {};
-let blurOriginalEditor: (() => void) | undefined;
-let blurModifiedEditor: (() => void) | undefined;
-
 function makeFakeDiffEditor() {
   // App's search-highlight effect calls deltaDecorations/revealLineInCenter on
   // each sub-editor whenever preview changes, so the fakes must expose them.
   const subEditor = (buf: "left" | "right", set: typeof setOriginal, reveal: typeof revealOriginal) => ({
     getValue: () => buffers[buf],
     setValue: set,
-    onDidBlurEditorText: vi.fn((handler: () => void) => {
-      if (buf === "left") blurOriginalEditor = handler;
-      else blurModifiedEditor = handler;
-      return { dispose: vi.fn() };
-    }),
+    onDidChangeModelContent: vi.fn(() => ({ dispose: vi.fn() })),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     onDidFocusEditorText: vi.fn((handler: () => void) => {
       if (buf === "left") focusOriginalEditor = handler;
@@ -341,11 +337,12 @@ vi.mock("@monaco-editor/react", () => ({
   default: (props: {
     value?: string;
     onChange?: (value: string | undefined) => void;
-    options?: { ariaLabel?: string };
+    options?: { ariaLabel?: string; readOnly?: boolean };
   }) => (
     <textarea
       data-testid="editor"
       aria-label={props.options?.ariaLabel}
+      readOnly={props.options?.readOnly}
       value={props.value}
       onChange={(event) => props.onChange?.(event.target.value)}
     />
@@ -440,8 +437,6 @@ describe("App file-merge wiring", () => {
     revealOriginal.mockClear();
     revealModified.mockClear();
     focusOriginalEditor = undefined;
-    blurOriginalEditor = undefined;
-    blurModifiedEditor = undefined;
     diffEditorProps = {};
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
@@ -900,6 +895,19 @@ describe("App file-merge wiring", () => {
     expect(screen.getByTestId("editor")).toBeInTheDocument();
   });
 
+  it("opens editable View text entries in a writable editor", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+
+    expect(await screen.findByTestId("editor")).not.toHaveAttribute("readonly");
+    expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
+  });
+
   it("clears inspected View preview state when switching to Compare and Merge", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
@@ -918,6 +926,42 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByText("Nothing to compare yet")).toBeInTheDocument();
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
     expect(screen.queryByText("view:/tmp/alpha.jar:alpha.json")).not.toBeInTheDocument();
+  });
+
+  it("filters Compare files by differences and identical status", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "same.txt",
+              status: "identical" as const,
+              left: { path: "same.txt", kind: "text" as const },
+              right: { path: "same.txt", kind: "text" as const },
+            },
+          ],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+
+    expect(screen.getAllByText("config.json").length).toBeGreaterThan(0);
+    expect(screen.queryByText("same.txt")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Identical" }));
+    expect(await screen.findAllByText("same.txt")).toHaveLength(2);
+    expect(
+      Array.from(document.querySelectorAll(".tree-file"))
+        .some((row) => row.textContent?.includes("config.json")),
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect((await screen.findAllByText("same.txt")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("config.json").length).toBeGreaterThan(0);
   });
 
   it("ignores a stale View entry read after switching sources", async () => {
@@ -973,16 +1017,14 @@ describe("App file-merge wiring", () => {
     await browseViewSource(user);
 
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "Tree filter" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Tree filter" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to right")).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Save changes" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Save to archive/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Show pending changes" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Clear staged" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Save to archive/i })).toBeDisabled();
   });
 
   it("enables bytecode for class entries in View mode", async () => {
@@ -1233,6 +1275,10 @@ describe("App file-merge wiring", () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
 
+    expect(diffEditorProps.options).toMatchObject({
+      readOnly: false,
+      originalEditable: true,
+    });
     await user.click(screen.getByLabelText("Take all into right"));
 
     // Right buffer is replaced with left's value, then staged to the right side.
@@ -1292,9 +1338,11 @@ describe("App file-merge wiring", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await user.click(screen.getByLabelText("Preferences"));
+    expect(invoke).not.toHaveBeenCalledWith("list_system_fonts");
     await user.click(screen.getByRole("button", { name: "Editor" }));
 
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_system_fonts"));
+    expect(screen.getByLabelText("Editor font family")).toHaveTextContent("JetBrains Mono · default");
     await user.click(screen.getByLabelText("Editor font family"));
     expect(await screen.findByText(/Menlo/)).toBeInTheDocument();
   });

@@ -25,12 +25,15 @@ describe("system font helpers", () => {
     const normalized = normalizeSystemFonts(fonts);
 
     expect(normalized.map((font) => font.family)).toEqual([
+      DEFAULT_EDITOR_FONT_FAMILY,
       "Menlo",
+      "ui-monospace, monospace",
       "Arial",
       "Helvetica Neue",
+      "ui-sans-serif, system-ui, sans-serif",
     ]);
-    expect(normalized[0]?.localNames).toEqual(["Menlo-Regular", "Menlo"]);
-    expect(normalized[0]?.fontFile).toBe("/System/Library/Fonts/Menlo.ttc");
+    expect(normalized[1]?.localNames).toEqual(["Menlo-Regular", "Menlo"]);
+    expect(normalized[1]?.fontFile).toBe("/System/Library/Fonts/Menlo.ttc");
   });
 
   it("uses fallback choices when native enumeration returns nothing", () => {

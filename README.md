@@ -46,7 +46,7 @@ source its own entry workspace.
 
 | Area | What LCDiff provides |
 | --- | --- |
-| Three focused workspaces | **View** for inspection, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
+| Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
 | Broad source support | Open JAR, ZIP, WAR, EAR, directories, and common text files from pickers, drag-and-drop, or the operating system. |
 | Lazy archive browser | Navigate large archives without eagerly extracting everything; nested archives expand only when requested. |
 | Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and filters. |
@@ -129,7 +129,8 @@ can install it manually.
 1. Choose **View**.
 2. Open a JAR, ZIP, WAR, EAR, folder, or text file.
 3. Expand the tree and select an entry.
-4. Switch between source, bytecode, text, metadata, and hex views when available.
+4. Edit supported text entries, review the pending change, then save when ready.
+5. Decompiled source, bytecode, metadata, and binary views remain read-only.
 
 ### Compare and merge
 
