@@ -7,6 +7,7 @@ import {
   type CodeEditor,
   type CommitResult,
   type ComparePair,
+  type ContentFilter,
   type DecorationRef,
   type DiffCodeEditor,
   type EntryKind,
@@ -255,6 +256,7 @@ export function App() {
   const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
+  const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
   const [treeExpandAllVersion, setTreeExpandAllVersion] = useState(0);
   const [treeCollapseAllVersion, setTreeCollapseAllVersion] = useState(0);
   const [preferences, setPreferences] = useState(loadUiPreferences);
@@ -2103,6 +2105,8 @@ export function App() {
       preferences={preferences}
       effectiveColorPattern={activeColorPattern}
       ignoreTrimWhitespace={ignoreTrimWhitespace}
+      contentFilter={contentFilter}
+      onContentFilterChange={setContentFilter}
       onCopy={(from, to) => void copy(from, to)}
       onEditorMount={handleEditorMount}
       onDiffMount={handleDiffMount}

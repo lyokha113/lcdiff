@@ -26,7 +26,9 @@ Dedicated deep-search and
 low-priority prefetch JVM workers share that cache without blocking interactive
 class navigation. The desktop view renders a hierarchical foldable file tree
 with per-node status, a multi-tab diff workspace (capped at 10 tabs with LRU
-eviction and per-tab view-mode/preview state), a Preferences drawer organized
+eviction and per-tab view-mode/preview state), a workspace-level Compare
+content filter that switches Monaco between all lines and collapsed unchanged
+regions with three context lines, a Preferences drawer organized
 into Appearance, Editor, and Misc sections, where Appearance controls
 Light/Dark/System color pattern, Editor controls Monaco-only font/display
 settings, and Misc groups Search, Decompiler, and Save defaults, contextual
@@ -85,8 +87,10 @@ and backend source handles instead of the Compare left/right slots. Root-level
 UTF-8 text entries use a View-owned merge plan, so edits stay staged until Save
 and preserve the same atomic rewrite/backup contract as Compare. Decompiled
 classes, binary entries, signed archives, and entries inside nested archives
-remain read-only. Compare-only tree filters and cross-side merge controls do not
-render in View.
+remain read-only. Compare-only tree filters, the Compare content-line filter,
+and cross-side merge controls do not render in View. The content filter is
+display-only: it leaves Monaco's original models, line coordinates, navigation,
+and staged merge operations intact.
 
 Free text mode is a frontend workspace for ad hoc paste/type comparison. It
 keeps editable left/right draft buffers separate from readonly confirmed diff

@@ -28,7 +28,8 @@
 ### Compare archives and folders
 
 Load both sides, filter the tree by status, and open any matching entry as a
-source, bytecode, text, metadata, or hex diff.
+source, bytecode, text, metadata, or hex diff. In a Compare tab, switch line
+display between all content and differences to collapse long unchanged regions.
 
 ![LCDiff Compare workspace with two Java archives](docs/images/lcdiff-compare.png)
 
@@ -49,9 +50,9 @@ source its own entry workspace.
 | Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
 | Broad source support | Open JAR, ZIP, WAR, EAR, directories, and common text files from pickers, drag-and-drop, or the operating system. |
 | Lazy archive browser | Navigate large archives without eagerly extracting everything; nested archives expand only when requested. |
-| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and filters. |
+| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and file-status filters. |
 | Java decompilation | Read-only Java through Vineflower, CFR, JD-Core, or JD-Core v0, with ASM Textifier bytecode as a separate view. |
-| Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, whitespace controls, font settings, and compact layouts. |
+| Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, **All / Differences** line display, whitespace controls, font settings, and compact layouts. Differences keeps local context and lets Monaco reveal collapsed unchanged regions on demand. |
 | Binary inspection | Size, CRC, SHA-256, metadata, and hex previews when an entry is not safely renderable as text. |
 | Deep search | Path, text, constant-pool, and optional decompiled-source search with cancellable background work and clickable results. |
 | Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. |
@@ -136,9 +137,11 @@ can install it manually.
 
 1. Choose **Compare**.
 2. Open the left and right sources.
-3. Filter by differences and select an entry.
-4. Inspect the diff, then stage an entry or text hunk in the intended direction.
-5. Review pending changes and save the target.
+3. Filter the file tree by differences and select an entry.
+4. Use **All** to inspect full content or **Differences** to focus on changed
+   blocks with nearby context; expand a collapsed region when you need it.
+5. Inspect the diff, then stage an entry or text hunk in the intended direction.
+6. Review pending changes and save the target.
 
 ### Compare pasted text
 

@@ -910,6 +910,36 @@ try {
     throw new Error("Diff toolbar rendered obsolete target labels");
   }
 
+  const contentLineFilter = mockedPage.getByRole("group", { name: "Content line filter" });
+  await contentLineFilter.waitFor({ timeout: 5_000 });
+  const showAllLines = contentLineFilter.getByRole("button", { name: "Show all content lines" });
+  const showDiffLines = contentLineFilter.getByRole("button", { name: "Show differences only" });
+  if (await showAllLines.getAttribute("aria-pressed") !== "true") {
+    throw new Error("Compare content filter did not default to All");
+  }
+  await showDiffLines.click();
+  if (await showDiffLines.getAttribute("aria-pressed") !== "true") {
+    throw new Error("Compare content filter did not select Differences");
+  }
+
+  const centerCluster = mockedPage.locator(".diff-toolbar-center");
+  const centerOwnsFilter = await centerCluster
+    .getByRole("group", { name: "Content line filter" })
+    .count();
+  const centerOwnsNavigator = await centerCluster
+    .getByRole("group", { name: "Diff block navigation" })
+    .count();
+  if (centerOwnsFilter !== 1 || centerOwnsNavigator !== 1) {
+    throw new Error("Compare toolbar center does not own the line filter and diff navigator");
+  }
+  const centerLayout = await centerCluster.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { display: style.display, overflowX: style.overflowX };
+  });
+  if (centerLayout.display !== "flex" || centerLayout.overflowX !== "auto") {
+    throw new Error(`Compare toolbar center layout is not protected: ${JSON.stringify(centerLayout)}`);
+  }
+
   // A Compare edit must stage immediately; switching tabs must not be required
   // to trigger Monaco's blur event and preserve the edit.
   const compareModifiedEditor = mockedPage.locator(".monaco-diff-editor .editor.modified");
@@ -926,6 +956,20 @@ try {
   // Compact-width regression: a populated Diff keeps a usable tab-scroll lane
   // beside the fixed Source/Bytecode switch instead of collapsing to zero.
   await assertViewportFits(mockedPage, 720, 520, "populated compact diff");
+  const compactContentFilter = mockedPage.getByRole("group", { name: "Content line filter" });
+  const [contentFilterBox, centerClusterBox] = await Promise.all([
+    compactContentFilter.boundingBox(),
+    mockedPage.locator(".diff-toolbar-center").boundingBox(),
+  ]);
+  if (!contentFilterBox || contentFilterBox.width <= 0) {
+    throw new Error("Compact Compare content filter is not visible");
+  }
+  if (!centerClusterBox || centerClusterBox.width < contentFilterBox.width) {
+    throw new Error(`Compact toolbar center clipped the content filter: ${JSON.stringify({
+      contentFilterBox,
+      centerClusterBox,
+    })}`);
+  }
   const compactTabScroll = mockedPage.locator(".workspace-tabs-scroll");
   const compactViewSwitch = mockedPage.getByRole("group", { name: "Diff view mode" });
   const [tabScrollBox, viewSwitchBox, tabScrollMinWidth] = await Promise.all([

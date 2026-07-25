@@ -4,7 +4,7 @@ import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
-import type { ComparePair, EntryPreview, Mode, Side } from "@/lib/types";
+import type { ComparePair, ContentFilter, EntryPreview, Mode, Side } from "@/lib/types";
 
 export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
@@ -17,6 +17,8 @@ interface DiffViewProps {
   preferences: UiPreferences;
   effectiveColorPattern: EffectiveColorPattern;
   ignoreTrimWhitespace: boolean;
+  contentFilter: ContentFilter;
+  onContentFilterChange: (filter: ContentFilter) => void;
   onCopy: (from: Side, to: Side) => void;
   onEditorMount: OnMount;
   onDiffMount: DiffOnMount;
@@ -54,6 +56,7 @@ const emptyDiffNavigator: DiffNavigatorProps = {
 
 export function DiffView({
   mode, selected, preview, preferences, effectiveColorPattern, ignoreTrimWhitespace,
+  contentFilter, onContentFilterChange,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
   fileMerge, entryCopyEnabled = true, diffEditable, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
@@ -148,6 +151,35 @@ export function DiffView({
     );
   };
 
+  const renderContentLineFilter = () => {
+    if (mode !== "compare") return null;
+    const options: Array<{
+      value: ContentFilter;
+      label: string;
+      ariaLabel: string;
+    }> = [
+      { value: "all", label: "All", ariaLabel: "Show all content lines" },
+      { value: "diff", label: "Differences", ariaLabel: "Show differences only" },
+    ];
+
+    return (
+      <div className="content-line-filter" role="group" aria-label="Content line filter">
+        {options.map(({ value, label, ariaLabel }) => (
+          <Button
+            key={value}
+            variant={contentFilter === value ? "secondary" : "ghost"}
+            size="sm"
+            aria-label={ariaLabel}
+            aria-pressed={contentFilter === value}
+            onClick={() => onContentFilterChange(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div className="editor-panel">
       {mode === "compare" && (
@@ -157,7 +189,10 @@ export function DiffView({
             {hunkMerge && renderTakeAllButton("left")}
             {hunkMerge && renderMoveHunkButton("left")}
           </div>
-          {renderDiffNavigator()}
+          <div className="diff-toolbar-center">
+            {renderContentLineFilter()}
+            {renderDiffNavigator()}
+          </div>
           <div className="pane-actions pane-actions-right" role="group" aria-label="Actions into right pane">
             {hunkMerge && renderMoveHunkButton("right")}
             {hunkMerge && renderTakeAllButton("right")}
@@ -188,6 +223,10 @@ export function DiffView({
               renderSideBySide: true,
               useInlineViewWhenSpaceIsLimited: false,
               ignoreTrimWhitespace,
+              hideUnchangedRegions:
+                mode === "compare" && contentFilter === "diff"
+                  ? { enabled: true, contextLineCount: 3 }
+                  : { enabled: false },
             }}
             onMount={(editor, monaco) => {
               onDiffMount(editor, monaco);

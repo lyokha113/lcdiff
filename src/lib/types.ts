@@ -12,6 +12,7 @@ export type Engine = "cfr" | "jdCore" | "jdCoreV0" | "vineflower";
 export const DEFAULT_ENGINE: Engine = "vineflower";
 export type Mode = "single" | "compare" | "text";
 export type TreeFilter = "all" | "diff" | "same";
+export type ContentFilter = "all" | "diff";
 export type SearchTier = "T2" | "T3";
 export type SearchHitKind = "path" | "text" | "constantPool" | "source";
 export type SearchContext = "files" | "diff";

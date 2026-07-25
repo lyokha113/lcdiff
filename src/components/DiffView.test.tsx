@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { DiffView } from "@/components/DiffView";
 import { DEFAULT_UI_PREFERENCES, type EffectiveColorPattern, type UiPreferences } from "@/lib/preferences";
-import type { ComparePair, Mode } from "@/lib/types";
+import type { ComparePair, ContentFilter, Mode } from "@/lib/types";
 
 const editorMock = vi.hoisted(() => vi.fn((_props: unknown) => <div data-testid="editor" />));
 const diffEditorMock = vi.hoisted(() => vi.fn((_props: unknown) => <div data-testid="diff-editor" />));
@@ -32,21 +32,17 @@ type DiffNavigatorTestProps = {
   onNext: () => void;
 };
 
-// Task 6 must move diffNavigator into DiffViewProps; keep this helper tied to
-// the current component props while documenting the future contract under test.
-type FutureDiffViewTestProps = React.ComponentProps<typeof DiffView> & {
-  diffNavigator: DiffNavigatorTestProps;
-};
-
 type RenderDiffViewOverrides = Partial<
   Pick<
-    FutureDiffViewTestProps,
+    React.ComponentProps<typeof DiffView>,
+    | "contentFilter"
     | "editable"
     | "editValue"
     | "fileMerge"
     | "hunkMerge"
     | "ignoreTrimWhitespace"
     | "diffNavigator"
+    | "onContentFilterChange"
   >
 >;
 
@@ -63,6 +59,8 @@ function renderDiffView(
     preferences,
     effectiveColorPattern,
     ignoreTrimWhitespace: true,
+    contentFilter: "all" as ContentFilter,
+    onContentFilterChange: vi.fn(),
     onCopy: vi.fn(),
     onEditorMount: vi.fn(),
     onDiffMount: vi.fn(),
@@ -84,7 +82,7 @@ function renderDiffView(
       onNext: vi.fn(),
     },
     ...overrides,
-  } satisfies FutureDiffViewTestProps;
+  } satisfies React.ComponentProps<typeof DiffView>;
 
   render(
     <TooltipProvider>
@@ -101,6 +99,63 @@ beforeEach(() => {
 });
 
 describe("DiffView", () => {
+  it("renders a controlled content line filter in Compare mode", async () => {
+    const user = userEvent.setup();
+    const props = renderDiffView("compare", DEFAULT_UI_PREFERENCES);
+
+    const filter = screen.getByRole("group", { name: "Content line filter" });
+    expect(within(filter).getByRole("button", { name: "Show all content lines" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(within(filter).getByRole("button", { name: "Show differences only" }))
+      .toHaveAttribute("aria-pressed", "false");
+
+    await user.click(within(filter).getByRole("button", { name: "Show differences only" }));
+    expect(props.onContentFilterChange).toHaveBeenCalledWith("diff");
+  });
+
+  it("maps Differences to Monaco hidden unchanged regions with three context lines", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      contentFilter: "diff",
+    });
+
+    expect(diffEditorMock.mock.calls[0]?.[0]).toMatchObject({
+      options: {
+        hideUnchangedRegions: {
+          enabled: true,
+          contextLineCount: 3,
+        },
+      },
+    });
+  });
+
+  it("keeps unchanged regions visible for All", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES);
+
+    expect(diffEditorMock.mock.calls[0]?.[0]).toMatchObject({
+      options: {
+        hideUnchangedRegions: {
+          enabled: false,
+        },
+      },
+    });
+  });
+
+  it("hides the content line filter and unchanged-region filtering outside Compare", () => {
+    renderDiffView("text", DEFAULT_UI_PREFERENCES, "dark", {
+      contentFilter: "diff",
+    });
+
+    expect(screen.queryByRole("group", { name: "Content line filter" }))
+      .not.toBeInTheDocument();
+    expect(diffEditorMock.mock.calls[0]?.[0]).toMatchObject({
+      options: {
+        hideUnchangedRegions: {
+          enabled: false,
+        },
+      },
+    });
+  });
+
   it("passes editor preferences to the single editor Monaco instance", () => {
     const preferences: UiPreferences = {
       ...DEFAULT_UI_PREFERENCES,

@@ -1338,6 +1338,34 @@ h1 {
   border-bottom: 1px solid var(--line-soft);
   background: color-mix(in oklab, var(--ink-1) 94%, transparent);
 }
+.diff-toolbar-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-width: 0;
+  max-width: 100%;
+  padding-inline: 0.35rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.diff-toolbar-center > * { flex: 0 0 auto; }
+.content-line-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.12rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.38rem;
+  background: var(--ink-2);
+}
+.content-line-filter [data-slot="button"] {
+  height: 1.65rem;
+  padding-inline: 0.45rem;
+  border: 0;
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
 .diff-navigator {
   display: inline-grid;
   grid-template-columns: 1.75rem minmax(2.6rem, auto) 1.75rem;

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppUpdateState } from "@/lib/update-client";
@@ -1177,6 +1177,96 @@ describe("App file-merge wiring", () => {
 
     await user.click(screen.getByRole("tab", { name: /files/i }));
     expect(screen.queryByRole("group", { name: "Diff view mode" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the content line filter across Compare tabs and source/bytecode views", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "App.class",
+              status: "different" as const,
+              left: { path: "App.class", kind: "class" as const },
+              right: { path: "App.class", kind: "class" as const },
+            },
+          ],
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "App.class") {
+        const side = args.side as "left" | "right";
+        return Promise.resolve({
+          path: "App.class",
+          kind: "class" as const,
+          language: "java",
+          content: side === "left" ? "class App { int v = 1; }" : "class App { int v = 2; }",
+        });
+      }
+      if (cmd === "disassemble") {
+        return Promise.resolve(`${args?.side}: bytecode`);
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    const filter = screen.getByRole("group", { name: "Content line filter" });
+    expect(within(filter).getByRole("button", { name: "Show all content lines" }))
+      .toHaveAttribute("aria-pressed", "true");
+    await user.click(within(filter).getByRole("button", { name: "Show differences only" }));
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    const classCells = await screen.findAllByText("App.class");
+    const classRow = classCells.find((element) => element.closest("button.tree-file"));
+    expect(classRow).toBeDefined();
+    await user.click(classRow!);
+
+    expect(screen.getByRole("button", { name: "Show differences only" }))
+      .toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Show bytecode" }));
+    expect(screen.getByRole("button", { name: "Show differences only" }))
+      .toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("tab", { name: /config\.json/ }));
+    expect(screen.getByRole("button", { name: "Show differences only" }))
+      .toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the content line filter only on an active Compare diff tab", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    expect(screen.getByRole("group", { name: "Content line filter" }))
+      .toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    expect(screen.queryByRole("group", { name: "Content line filter" }))
+      .not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Text mode" }));
+    expect(screen.queryByRole("group", { name: "Content line filter" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("keeps the content line filter after replacing a Compare source", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("button", { name: "Show differences only" }));
+
+    await user.click(screen.getByRole("button", { name: "Change left source" }));
+    await user.click(await screen.findByText("Browse file"));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "left" },
+    ));
+
+    const cells = await screen.findAllByText("config.json");
+    const row = cells.find((element) => element.closest("button.tree-file"));
+    expect(row).toBeDefined();
+    await user.click(row!.closest("button.tree-file")!);
+
+    expect(screen.getByRole("button", { name: "Show differences only" }))
+      .toHaveAttribute("aria-pressed", "true");
   });
 
   it("renders pane-specific actions in Compare mode and removes them in View mode", async () => {
