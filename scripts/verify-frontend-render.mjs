@@ -61,6 +61,100 @@ function colorAlpha(color) {
   return 1;
 }
 
+function relativeLuminance(color) {
+  const channels = color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length !== 3) throw new Error(`unparseable color: ${color}`);
+  return channels
+    .map((channel) => channel / 255)
+    .map((channel) => channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+}
+
+function contrastRatio(first, second) {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+async function assertSplashTheme(page, pattern, screenshotPath) {
+  await page.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
+  await page.waitForFunction(
+    (expectedPattern) => document.documentElement.dataset.effectiveColorPattern === expectedPattern,
+    pattern,
+    { timeout: 5_000 },
+  );
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+
+  const theme = await page.evaluate(() => {
+    const resolveRootToken = (token) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    };
+    const launch = document.querySelector(".launch");
+    const recent = document.querySelector(".launch-recent");
+    const title = document.querySelector(".launch h1");
+    const intro = document.querySelector(".launch__intro");
+    if (!launch || !recent || !title || !intro) throw new Error("startup splash theme targets are unavailable");
+    const launchStyle = getComputedStyle(launch);
+    const recentStyle = getComputedStyle(recent);
+    const badges = Object.fromEntries([...document.querySelectorAll(".launch-history__mode")].map((badge) => {
+      const style = getComputedStyle(badge);
+      return [badge.getAttribute("data-mode"), {
+        background: style.backgroundColor,
+        foreground: style.color,
+      }];
+    }));
+    return {
+      actual: {
+        canvas: launchStyle.backgroundColor,
+        surface: recentStyle.backgroundColor,
+        text: getComputedStyle(title).color,
+        muted: getComputedStyle(intro).color,
+        line: recentStyle.borderTopColor,
+        badges,
+      },
+      expected: {
+        canvas: resolveRootToken("--ink-0"),
+        surface: resolveRootToken("--ink-1"),
+        text: resolveRootToken("--text-0"),
+        muted: resolveRootToken("--text-1"),
+        line: resolveRootToken("--line"),
+        badges: {
+          compare: { background: resolveRootToken("--status-diff-bg"), foreground: resolveRootToken("--status-diff-text") },
+          single: { background: resolveRootToken("--status-meta-bg"), foreground: resolveRootToken("--status-meta-text") },
+          text: { background: resolveRootToken("--status-left-bg"), foreground: resolveRootToken("--status-left-text") },
+        },
+      },
+    };
+  });
+
+  const failures = [];
+  for (const key of ["canvas", "surface", "text", "muted", "line"]) {
+    if (theme.actual[key] !== theme.expected[key]) {
+      failures.push(`startup ${pattern} ${key} does not follow root semantic token: actual=${theme.actual[key]}, expected=${theme.expected[key]}`);
+    }
+  }
+  for (const mode of ["compare", "single", "text"]) {
+    const actualBadge = theme.actual.badges[mode];
+    const expectedBadge = theme.expected.badges[mode];
+    if (!actualBadge || actualBadge.background !== expectedBadge.background || actualBadge.foreground !== expectedBadge.foreground) {
+      failures.push(`startup ${pattern} ${mode} badge does not follow root semantic tokens: actual=${JSON.stringify(actualBadge)}, expected=${JSON.stringify(expectedBadge)}`);
+    }
+  }
+  for (const [surface, color] of [["canvas", theme.actual.canvas], ["surface", theme.actual.surface]]) {
+    const contrast = contrastRatio(theme.actual.muted, color);
+    if (contrast < 4.5) {
+      failures.push(`startup ${pattern} muted text contrast is below AA on ${surface}: ${contrast.toFixed(2)}`);
+    }
+  }
+  return { actual: theme.actual, failures };
+}
+
 async function assertBoxInside(containerLocator, childLocator, label, tolerance = 1) {
   const [containerBox, childBox] = await Promise.all([
     containerLocator.boundingBox(),
@@ -171,17 +265,43 @@ try {
     localStorage.setItem("lcdiff.history", JSON.stringify([
       { id: "render-1", mode: "compare", paths: ["/fixtures/left.jar", "/fixtures/right.jar"], openedAt },
       { id: "render-2", mode: "single", paths: ["/fixtures/view.jar"], openedAt: openedAt - 60_000 },
-      { id: "render-3", mode: "single", paths: ["/fixtures/third.jar"], openedAt: openedAt - 120_000 },
+      { id: "render-3", mode: "text", paths: ["/fixtures/third.txt"], openedAt: openedAt - 120_000 },
       { id: "render-4", mode: "single", paths: ["/fixtures/fourth.jar"], openedAt: openedAt - 180_000 },
       { id: "render-5", mode: "single", paths: ["/fixtures/fifth.jar"], openedAt: openedAt - 240_000 },
       { id: "render-6", mode: "single", paths: ["/fixtures/sixth.jar"], openedAt: openedAt - 300_000 },
     ]));
+    if (!localStorage.getItem("lcdiff.uiPreferences.v1")) {
+      localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+        appearance: { colorPattern: "light" },
+        misc: { updates: { autoCheck: false } },
+      }));
+    }
+  });
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await disableAnimations(page);
+  const lightSplash = await assertSplashTheme(page, "light", "/tmp/lcdiff-splash-light.png");
+  await page.evaluate(() => {
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "dark" },
+      misc: { updates: { autoCheck: false } },
+    }));
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await disableAnimations(page);
+  const darkSplash = await assertSplashTheme(page, "dark", "/tmp/lcdiff-splash-dark.png");
+  if (lightSplash.failures.length > 0 || darkSplash.failures.length > 0) {
+    throw new Error([...lightSplash.failures, ...darkSplash.failures].join("\n"));
+  }
+  if (lightSplash.actual.canvas === darkSplash.actual.canvas || lightSplash.actual.surface === darkSplash.actual.surface || lightSplash.actual.text === darkSplash.actual.text) {
+    throw new Error(`startup Light and Dark themes are not materially different: light=${JSON.stringify(lightSplash.actual)}, dark=${JSON.stringify(darkSplash.actual)}`);
+  }
+  await page.evaluate(() => {
     localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
       misc: { updates: { autoCheck: false } },
     }));
   });
-  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.reload({ waitUntil: "domcontentloaded" });
   await disableAnimations(page);
   await page.getByRole("main", { name: "Start LCDiff" }).waitFor({ timeout: 5_000 });
   await page.getByRole("button", { name: "Open Compare mode" }).waitFor({ timeout: 5_000 });
@@ -232,32 +352,10 @@ try {
     page.locator(".launch-history").boundingBox(),
     page.getByRole("button", { name: /reopen/i }).nth(4).boundingBox(),
     page.locator(".launch").evaluate((launch) => {
-      const parseColor = (color) => {
-        const trimmed = color.trim();
-        if (/^#[\da-f]{6}$/i.test(trimmed)) {
-          return [0, 2, 4].map((index) => Number.parseInt(trimmed.slice(index + 1, index + 3), 16));
-        }
-        return trimmed.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
-      };
-      const relativeLuminance = (color) => {
-        const channels = parseColor(color);
-        if (!channels || channels.length !== 3) throw new Error(`unparseable color: ${color}`);
-        return channels
-          .map((channel) => channel / 255)
-          .map((channel) => channel <= 0.04045
-            ? channel / 12.92
-            : ((channel + 0.055) / 1.055) ** 2.4)
-          .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
-      };
-      const style = getComputedStyle(launch);
-      const ratio = (first, second) => {
-        const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
-        return (lighter + 0.05) / (darker + 0.05);
-      };
-      const muted = style.getPropertyValue("--launch-muted");
+      const muted = getComputedStyle(launch.querySelector(".launch__intro")).color;
       return {
-        canvas: ratio(muted, style.getPropertyValue("--launch-canvas")),
-        surface: ratio(muted, style.getPropertyValue("--launch-surface")),
+        canvas: [muted, getComputedStyle(launch).backgroundColor],
+        surface: [muted, getComputedStyle(launch.querySelector(".launch-recent")).backgroundColor],
       };
     }),
   ]);
@@ -279,9 +377,13 @@ try {
       );
     }
   }
-  if (mutedContrast.canvas < 4.5 || mutedContrast.surface < 4.5) {
+  const renderedMutedContrast = {
+    canvas: contrastRatio(...mutedContrast.canvas),
+    surface: contrastRatio(...mutedContrast.surface),
+  };
+  if (renderedMutedContrast.canvas < 4.5 || renderedMutedContrast.surface < 4.5) {
     splashFailures.push(
-      `launch muted contrast is below AA: canvas=${mutedContrast.canvas.toFixed(2)}, surface=${mutedContrast.surface.toFixed(2)}`,
+      `launch muted contrast is below AA: canvas=${renderedMutedContrast.canvas.toFixed(2)}, surface=${renderedMutedContrast.surface.toFixed(2)}`,
     );
   }
   if (splashFailures.length > 0) {

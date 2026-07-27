@@ -1432,18 +1432,18 @@ h1 {
 
 /* ---------- launch: minimalist resume-first surface ---------- */
 .launch {
-  --launch-canvas: #f7f6f3;
-  --launch-surface: #ffffff;
-  --launch-surface-muted: #fbfbfa;
-  --launch-text: #2f3437;
-  --launch-muted: #72716e;
-  --launch-line: #eaeaea;
-  --launch-blue-bg: #e1f3fe;
-  --launch-blue-text: #1f6c9f;
-  --launch-green-bg: #edf3ec;
-  --launch-green-text: #346538;
-  --launch-yellow-bg: #fbf3db;
-  --launch-yellow-text: #956400;
+  --launch-canvas: var(--ink-0);
+  --launch-surface: var(--ink-1);
+  --launch-surface-muted: var(--ink-2);
+  --launch-text: var(--text-0);
+  --launch-muted: var(--text-1);
+  --launch-line: var(--line);
+  --launch-blue-bg: var(--status-meta-bg);
+  --launch-blue-text: var(--status-meta-text);
+  --launch-green-bg: var(--status-left-bg);
+  --launch-green-text: var(--status-left-text);
+  --launch-yellow-bg: var(--status-diff-bg);
+  --launch-yellow-text: var(--status-diff-text);
   position: relative;
   isolation: isolate;
   display: grid;
