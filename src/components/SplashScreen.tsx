@@ -24,7 +24,11 @@ function modeLabel(mode: Mode) {
 }
 
 function reopenLabel(entry: HistoryEntry) {
-  return `Reopen ${modeLabel(entry.mode)} ${entry.paths.map(basename).join(" and ")}`;
+  if (entry.mode === "compare") {
+    const [left = "", right = ""] = entry.paths;
+    return `Reopen Compare, Left ${left}, Right ${right}`;
+  }
+  return `Reopen ${modeLabel(entry.mode)} ${entry.paths.join(" and ")}`;
 }
 
 export function SplashScreen({

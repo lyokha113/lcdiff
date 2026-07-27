@@ -1436,7 +1436,7 @@ h1 {
   --launch-surface: #ffffff;
   --launch-surface-muted: #fbfbfa;
   --launch-text: #2f3437;
-  --launch-muted: #787774;
+  --launch-muted: #72716e;
   --launch-line: #eaeaea;
   --launch-blue-bg: #e1f3fe;
   --launch-blue-text: #1f6c9f;
@@ -1593,7 +1593,7 @@ h1 {
   align-items: center;
   gap: 1rem;
   width: 100%;
-  min-height: 4.35rem;
+  min-height: 3.65rem;
   padding: 0.65rem 1rem;
   border: 0;
   border-radius: 0;

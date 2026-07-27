@@ -228,6 +228,65 @@ try {
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 5) {
     throw new Error("startup did not render exactly five collapsed history rows");
   }
+  const [historyScrollportBox, fifthHistoryRowBox, mutedContrast] = await Promise.all([
+    page.locator(".launch-history").boundingBox(),
+    page.getByRole("button", { name: /reopen/i }).nth(4).boundingBox(),
+    page.locator(".launch").evaluate((launch) => {
+      const parseColor = (color) => {
+        const trimmed = color.trim();
+        if (/^#[\da-f]{6}$/i.test(trimmed)) {
+          return [0, 2, 4].map((index) => Number.parseInt(trimmed.slice(index + 1, index + 3), 16));
+        }
+        return trimmed.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
+      };
+      const relativeLuminance = (color) => {
+        const channels = parseColor(color);
+        if (!channels || channels.length !== 3) throw new Error(`unparseable color: ${color}`);
+        return channels
+          .map((channel) => channel / 255)
+          .map((channel) => channel <= 0.04045
+            ? channel / 12.92
+            : ((channel + 0.055) / 1.055) ** 2.4)
+          .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      };
+      const style = getComputedStyle(launch);
+      const ratio = (first, second) => {
+        const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+        return (lighter + 0.05) / (darker + 0.05);
+      };
+      const muted = style.getPropertyValue("--launch-muted");
+      return {
+        canvas: ratio(muted, style.getPropertyValue("--launch-canvas")),
+        surface: ratio(muted, style.getPropertyValue("--launch-surface")),
+      };
+    }),
+  ]);
+  const splashFailures = [];
+  if (!historyScrollportBox || !fifthHistoryRowBox) {
+    splashFailures.push("collapsed history geometry is unavailable");
+  } else {
+    if (
+      fifthHistoryRowBox.y < historyScrollportBox.y - 1 ||
+      fifthHistoryRowBox.y + fifthHistoryRowBox.height > historyScrollportBox.y + historyScrollportBox.height + 1
+    ) {
+      splashFailures.push(
+        `fifth collapsed history row is not fully visible in its scrollport: row=${formatBox(fifthHistoryRowBox)}, scrollport=${formatBox(historyScrollportBox)}`,
+      );
+    }
+    if (fifthHistoryRowBox.y < -1 || fifthHistoryRowBox.y + fifthHistoryRowBox.height > 721) {
+      splashFailures.push(
+        `fifth collapsed history row is not fully visible in the 1280x720 viewport: row=${formatBox(fifthHistoryRowBox)}`,
+      );
+    }
+  }
+  if (mutedContrast.canvas < 4.5 || mutedContrast.surface < 4.5) {
+    splashFailures.push(
+      `launch muted contrast is below AA: canvas=${mutedContrast.canvas.toFixed(2)}, surface=${mutedContrast.surface.toFixed(2)}`,
+    );
+  }
+  if (splashFailures.length > 0) {
+    throw new Error(splashFailures.join("\n"));
+  }
   await page.getByRole("button", { name: "View all history" }).click();
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 6) {
     throw new Error("startup history did not expand to the stored list");

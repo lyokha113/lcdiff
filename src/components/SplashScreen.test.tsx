@@ -102,7 +102,7 @@ describe("SplashScreen", () => {
   it("calls onOpenEntry with the entry when a row is clicked", async () => {
     const props = setup();
     await userEvent.click(
-      screen.getByRole("button", { name: "Reopen View commons.jar" }),
+      screen.getByRole("button", { name: "Reopen View ~/libs/commons.jar" }),
     );
     expect(props.onOpenEntry).toHaveBeenCalledWith(history[1]);
   });
@@ -121,10 +121,26 @@ describe("SplashScreen", () => {
     expect(screen.getAllByRole("button", { name: /reopen/i })).toHaveLength(5);
   });
 
-  it("includes mode and both source names in a compare row accessible name", () => {
+  it("includes compare sides and full source paths in a row accessible name", () => {
     setup();
     expect(
-      screen.getByRole("button", { name: "Reopen Compare a.jar and b.jar" }),
+      screen.getByRole("button", {
+        name: "Reopen Compare, Left /work/releases/a.jar, Right /work/fixes/b.jar",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("includes full source paths in a text row accessible name", () => {
+    setup({
+      history: [{
+        id: "text-1",
+        mode: "text",
+        paths: ["/drafts/left.txt", "/drafts/right.txt"],
+        openedAt: NOW - 60_000,
+      }],
+    });
+    expect(
+      screen.getByRole("button", { name: "Reopen Text /drafts/left.txt and /drafts/right.txt" }),
     ).toBeInTheDocument();
   });
 
