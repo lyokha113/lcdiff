@@ -7,8 +7,18 @@ import type { HistoryEntry } from "@/lib/history";
 const NOW = 1_000_000_000_000;
 
 const history: HistoryEntry[] = [
-  { id: "k1", mode: "compare", paths: ["a.jar", "b.jar"], openedAt: NOW - 60_000 },
-  { id: "k2", mode: "single", paths: ["~/libs/commons.jar"], openedAt: NOW - 60_000 },
+  {
+    id: "k1",
+    mode: "compare",
+    paths: ["/work/releases/a.jar", "/work/fixes/b.jar"],
+    openedAt: NOW - 60_000,
+  },
+  {
+    id: "k2",
+    mode: "single",
+    paths: ["~/libs/commons.jar"],
+    openedAt: NOW - 60_000,
+  },
 ];
 
 const sixHistoryEntries: HistoryEntry[] = [
@@ -35,14 +45,18 @@ function setup(overrides = {}) {
 }
 
 describe("SplashScreen", () => {
-  it("presents a task-first startup hierarchy", () => {
+  it("presents recent work before secondary new-task actions", () => {
     setup();
-    expect(screen.getByRole("main", { name: "Start LCDiff" })).toBeInTheDocument();
+    const recent = screen.getByRole("navigation", { name: "Recent sessions" });
+    const newTask = screen.getByRole("region", { name: "Start a new task" });
+
+    expect(recent.parentElement).toHaveClass("launch__desk");
+    expect(recent.parentElement?.firstElementChild).toBe(recent);
+    expect(recent.nextElementSibling).toBe(newTask);
     expect(screen.getByRole("button", { name: "Open Compare mode" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open View mode" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Text mode" })).toBeInTheDocument();
     expect(screen.queryByText("Desktop workspace")).not.toBeInTheDocument();
-    expect(screen.getByRole("navigation", { name: "Recent sessions" })).toBeInTheDocument();
   });
 
   it("renders the three mode buttons", () => {
@@ -65,21 +79,31 @@ describe("SplashScreen", () => {
     expect(props.onPickMode).toHaveBeenCalledWith("text");
   });
 
-  it("renders a compare entry with both paths", () => {
+  it("renders compare sources as distinct left and right values", () => {
     setup();
-    expect(screen.getByText("a.jar ↔ b.jar", { selector: ".launch-history__name" })).toBeInTheDocument();
-    expect(screen.getByTitle("a.jar ↔ b.jar")).toBeInTheDocument();
+    const left = document.querySelector('.launch-history__source[data-side="left"]');
+    const right = document.querySelector('.launch-history__source[data-side="right"]');
+    expect(left).toHaveTextContent("a.jar");
+    expect(left).toHaveTextContent("/work/releases/a.jar");
+    expect(left).toHaveAttribute("title", "/work/releases/a.jar");
+    expect(right).toHaveTextContent("b.jar");
+    expect(right).toHaveTextContent("/work/fixes/b.jar");
+    expect(right).toHaveAttribute("title", "/work/fixes/b.jar");
   });
 
-  it("renders a single entry path", () => {
+  it("presents a single basename separately from its full path", () => {
     setup();
-    expect(screen.getByText("commons.jar", { selector: ".launch-history__name" })).toBeInTheDocument();
-    expect(screen.getByTitle("~/libs/commons.jar")).toBeInTheDocument();
+    const source = document.querySelector('.launch-history__source[data-side="single"]');
+    expect(source).toHaveTextContent("commons.jar");
+    expect(source).toHaveTextContent("~/libs/commons.jar");
+    expect(source).toHaveAttribute("title", "~/libs/commons.jar");
   });
 
   it("calls onOpenEntry with the entry when a row is clicked", async () => {
     const props = setup();
-    await userEvent.click(screen.getByRole("button", { name: /reopen view.*commons\.jar/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reopen View commons.jar" }),
+    );
     expect(props.onOpenEntry).toHaveBeenCalledWith(history[1]);
   });
 
@@ -88,18 +112,20 @@ describe("SplashScreen", () => {
     expect(screen.getByText("History appears after you open a source.")).toBeInTheDocument();
   });
 
-  it("shows five recent sessions and expands to the stored list", async () => {
+  it("shows five recent sessions, expands, and collapses the stored list", async () => {
     setup({ history: sixHistoryEntries });
     expect(screen.getAllByRole("button", { name: /reopen/i })).toHaveLength(5);
     await userEvent.click(screen.getByRole("button", { name: "View all history" }));
     expect(screen.getAllByRole("button", { name: /reopen/i })).toHaveLength(6);
-    expect(screen.getByRole("button", { name: "Show less history" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show less history" }));
+    expect(screen.getAllByRole("button", { name: /reopen/i })).toHaveLength(5);
   });
 
-  it("presents basenames separately from source paths", () => {
+  it("includes mode and both source names in a compare row accessible name", () => {
     setup();
-    expect(screen.getByText("a.jar ↔ b.jar", { selector: ".launch-history__name" })).toBeInTheDocument();
-    expect(screen.getByTitle("a.jar ↔ b.jar")).toHaveClass("launch-history__path");
+    expect(
+      screen.getByRole("button", { name: "Reopen Compare a.jar and b.jar" }),
+    ).toBeInTheDocument();
   });
 
   it("calls onClear when Clear is clicked", async () => {

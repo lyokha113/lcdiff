@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { ArrowUpRight, Clock3, FileSearch, FileText, GitCompareArrows, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import type { HistoryEntry, Mode } from "@/lib/history";
@@ -16,6 +15,16 @@ interface SplashScreenProps {
 function basename(path: string) {
   const normalized = path.replace(/\\/g, "/").replace(/\/$/, "");
   return normalized.split("/").pop() || path;
+}
+
+function modeLabel(mode: Mode) {
+  if (mode === "compare") return "Compare";
+  if (mode === "text") return "Text";
+  return "View";
+}
+
+function reopenLabel(entry: HistoryEntry) {
+  return `Reopen ${modeLabel(entry.mode)} ${entry.paths.map(basename).join(" and ")}`;
 }
 
 export function SplashScreen({
@@ -36,117 +45,119 @@ export function SplashScreen({
         <span className="launch__descriptor">Archive diff and merge</span>
       </header>
 
-      <section className="launch__hero" aria-labelledby="launch-title">
+      <section className="launch__content" aria-labelledby="launch-title">
         <div className="launch__copy">
-          <p className="launch__kicker">Precision for compiled archives</p>
+          <p className="launch__kicker">Local archive workspace</p>
           <h1 id="launch-title">
-            {["See every change.", "Move only what", "belongs."].map((line) => (
-              <span className="launch__headline-line" key={line}>
-                {line.split(" ").map((word) => (
-                  <span className="launch__headline-word" key={`${line}-${word}`}>{word}&nbsp;</span>
-                ))}
-              </span>
-            ))}
+            {history.length > 0
+              ? "Continue where you left off."
+              : "Start a precise inspection."}
           </h1>
           <p className="launch__intro">
-            Compare archives and folders, inspect source, stage exact changes, and save deliberately.
+            Reopen recent work, or choose a focused task for JARs, ZIPs, folders, and text.
           </p>
         </div>
 
-        <div className="launch__actions">
-          <div className="launch__grid">
-            <button
-              type="button"
-              className="launch-card launch-card--text"
-              onClick={() => onPickMode("text")}
-              aria-label="Open Text mode"
-            >
-              <span className="launch-card__icon"><FileText aria-hidden="true" /></span>
-              <span className="launch-card__content">
-                <span className="launch-card__title">Text</span>
-                <span className="launch-card__description">
-                  Paste or type drafts, then confirm when you want a diff result.
-                </span>
-              </span>
-              <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              className="launch-card launch-card--view"
-              onClick={() => onPickMode("single")}
-              aria-label="Open View mode"
-            >
-              <span className="launch-card__icon"><FileSearch aria-hidden="true" /></span>
-              <span className="launch-card__content">
-                <span className="launch-card__title">View</span>
-                <span className="launch-card__description">Open one JAR, ZIP, folder, or text file for source inspection.</span>
-              </span>
-              <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              className="launch-card launch-card--compare"
-              onClick={() => onPickMode("compare")}
-              aria-label="Open Compare mode"
-            >
-              <span className="launch-card__icon"><GitCompareArrows aria-hidden="true" /></span>
-              <span className="launch-card__content">
-                <span className="launch-card__title">Compare</span>
-                <span className="launch-card__description">
-                  Open two sources, inspect differences, stage changes, and save deliberately.
-                </span>
-              </span>
-              <ArrowUpRight className="launch-card__arrow" aria-hidden="true" />
-            </button>
-          </div>
-
-          <nav className="launch-card launch-card--recent" aria-label="Recent sessions">
+        <div className="launch__desk">
+          <nav className="launch-recent" aria-label="Recent sessions">
             <div className="launch-recent__header">
-              <span><Clock3 aria-hidden="true" /> Recent work</span>
+              <div>
+                <span className="launch-recent__eyebrow">Recent work</span>
+                <strong>{history.length} {history.length === 1 ? "session" : "sessions"}</strong>
+              </div>
               <div className="launch-recent__actions">
                 {history.length > 5 && (
-                  <Button variant="ghost" size="sm" onClick={() => setHistoryExpanded((expanded) => !expanded)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setHistoryExpanded((expanded) => !expanded)}
+                  >
                     {historyExpanded ? "Show less history" : "View all history"}
                   </Button>
                 )}
                 {history.length > 0 && (
-                  <Button variant="ghost" size="icon" onClick={onClear} aria-label="Clear recent sessions">
-                    <Trash2 />
+                  <Button variant="ghost" size="sm" onClick={onClear}>
+                    Clear history
                   </Button>
                 )}
               </div>
             </div>
+
             {history.length === 0 ? (
-              <p className="launch-recent__empty">History appears after you open a source.</p>
+              <div className="launch-recent__empty">
+                <strong>No recent sessions yet.</strong>
+                <span>History appears after you open a source.</span>
+              </div>
             ) : (
               <ul className="launch-history">
-                {visibleHistory.map((entry) => {
-                  const pathLabel = entry.paths.join(" ↔ ");
-                  return (
+                {visibleHistory.map((entry) => (
                   <li key={entry.id}>
                     <button
                       type="button"
-                      aria-label={`Reopen ${entry.mode === "compare" ? "comparison" : "view"} ${entry.paths.join(" and ")}`}
+                      aria-label={reopenLabel(entry)}
                       onClick={() => onOpenEntry(entry)}
                     >
-                      <span className="launch-history__mode">
-                        {entry.mode === "compare" ? "Compare" : entry.mode === "text" ? "Text" : "View"}
+                      <span
+                        className="launch-history__mode"
+                        data-mode={entry.mode}
+                      >
+                        {modeLabel(entry.mode)}
                       </span>
                       <span className="launch-history__sources">
-                        <span className="launch-history__name">{entry.paths.map(basename).join(" ↔ ")}</span>
-                        <span className="launch-history__path" title={pathLabel}>{pathLabel}</span>
+                        {entry.paths.map((path, index) => (
+                          <span
+                            className="launch-history__source"
+                            data-side={
+                              entry.mode === "compare"
+                                ? index === 0 ? "left" : "right"
+                                : "single"
+                            }
+                            title={path}
+                            key={`${entry.id}-${index}`}
+                          >
+                            <span className="launch-history__name">{basename(path)}</span>
+                            <span className="launch-history__path">{path}</span>
+                          </span>
+                        ))}
                       </span>
-                      <span className="launch-history__time">{timeAgo(entry.openedAt, now)}</span>
-                      <ArrowUpRight aria-hidden="true" />
+                      <span className="launch-history__meta">
+                        <time dateTime={new Date(entry.openedAt).toISOString()}>
+                          {timeAgo(entry.openedAt, now)}
+                        </time>
+                        <span aria-hidden="true">Reopen</span>
+                      </span>
                     </button>
                   </li>
-                  );
-                })}
+                ))}
               </ul>
             )}
           </nav>
+
+          <section className="launch-new-task" aria-label="Start a new task">
+            <span className="launch-new-task__eyebrow">New task</span>
+            {([
+              ["compare", "Compare", "Open two sources"],
+              ["single", "View", "Inspect one source"],
+              ["text", "Text", "Compare two drafts"],
+            ] as const).map(([mode, title, description]) => (
+              <button
+                type="button"
+                className="launch-mode"
+                onClick={() => onPickMode(mode)}
+                aria-label={`Open ${title} mode`}
+                key={mode}
+              >
+                <span className="launch-mode__index" aria-hidden="true">
+                  {mode === "compare" ? "01" : mode === "single" ? "02" : "03"}
+                </span>
+                <span className="launch-mode__copy">
+                  <strong className="launch-card__title">{title}</strong>
+                  <span>{description}</span>
+                </span>
+                <span className="launch-mode__arrow" aria-hidden="true">↗</span>
+              </button>
+            ))}
+          </section>
         </div>
       </section>
 
