@@ -187,7 +187,44 @@ try {
   await page.getByRole("button", { name: "Open Compare mode" }).waitFor({ timeout: 5_000 });
   await page.getByRole("button", { name: "Open View mode" }).waitFor({ timeout: 5_000 });
   await page.getByRole("button", { name: "Open Text mode" }).waitFor({ timeout: 5_000 });
-  await page.locator(".launch-card--recent").waitFor({ timeout: 5_000 });
+  await page.locator(".launch-recent").waitFor({ timeout: 5_000 });
+  const recentPanel = page.locator(".launch-recent");
+  const newTaskPanel = page.locator(".launch-new-task");
+  const [wideRecentBox, wideNewTaskBox] = await Promise.all([
+    recentPanel.boundingBox(),
+    newTaskPanel.boundingBox(),
+  ]);
+  if (!wideRecentBox || !wideNewTaskBox) {
+    throw new Error("resume-first splash geometry is unavailable");
+  }
+  if (wideRecentBox.width <= wideNewTaskBox.width * 2) {
+    throw new Error(
+      `recent history is not dominant: recent=${formatBox(wideRecentBox)}, newTask=${formatBox(wideNewTaskBox)}`,
+    );
+  }
+
+  await page.setViewportSize({ width: 700, height: 900 });
+  const narrowMetrics = await page.evaluate(() => ({
+    bodyWidth: document.body.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  const [narrowRecentBox, narrowNewTaskBox] = await Promise.all([
+    recentPanel.boundingBox(),
+    newTaskPanel.boundingBox(),
+  ]);
+  if (narrowMetrics.bodyWidth > narrowMetrics.viewportWidth + 1) {
+    throw new Error(
+      `resume-first splash overflows horizontally: body=${narrowMetrics.bodyWidth}, viewport=${narrowMetrics.viewportWidth}`,
+    );
+  }
+  if (
+    !narrowRecentBox ||
+    !narrowNewTaskBox ||
+    narrowRecentBox.y >= narrowNewTaskBox.y
+  ) {
+    throw new Error("recent history does not precede new-task actions at narrow width");
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
   if (await page.getByRole("button", { name: /reopen/i }).count() !== 5) {
     throw new Error("startup did not render exactly five collapsed history rows");
   }
