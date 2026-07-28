@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import ts from 'typescript';
 
 const backendCommandNames = [
@@ -575,6 +576,145 @@ export function verifyPhaseThreeArchitecture({ frontendSources }) {
   return violations;
 }
 
+function importedModuleSpecifiers(sourcePath, source) {
+  const scriptKind = sourcePath.endsWith('.tsx')
+    ? ts.ScriptKind.TSX
+    : sourcePath.endsWith('.jsx')
+      ? ts.ScriptKind.JSX
+      : sourcePath.endsWith('.js') || sourcePath.endsWith('.mjs') || sourcePath.endsWith('.cjs')
+        ? ts.ScriptKind.JS
+        : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(
+    sourcePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind,
+  );
+  const specifiers = [];
+  const visit = (node) => {
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      specifiers.push(node.arguments[0].text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specifiers;
+}
+
+function resolvedFrontendImport(sourcePath, specifier, frontendSources) {
+  let base;
+  if (specifier.startsWith('@/')) {
+    base = `src/${specifier.slice(2)}`;
+  } else if (specifier.startsWith('.')) {
+    base = path.posix.normalize(
+      path.posix.join(path.posix.dirname(sourcePath), specifier),
+    );
+  } else {
+    return undefined;
+  }
+
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}/index.ts`,
+    `${base}/index.tsx`,
+    `${base}/index.js`,
+    `${base}/index.jsx`,
+  ];
+  return candidates.find((candidate) => candidate in frontendSources);
+}
+
+function featureName(sourcePath) {
+  return sourcePath.match(/^src\/features\/([^/]+)\//)?.[1];
+}
+
+function isForbiddenLibImport(sourcePath, specifier) {
+  const resolved = specifier.startsWith('.')
+    ? path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), specifier))
+    : specifier.startsWith('@/')
+      ? `src/${specifier.slice(2)}`
+      : undefined;
+  return (
+    specifier === 'react' ||
+    specifier.startsWith('react/') ||
+    specifier === 'react-dom' ||
+    specifier.startsWith('react-dom/') ||
+    specifier === 'monaco-editor' ||
+    specifier.startsWith('monaco-editor/') ||
+    specifier === '@monaco-editor/react' ||
+    specifier.startsWith('@tauri-apps/') ||
+    resolved?.startsWith('src/features/')
+  );
+}
+
+export function verifyPhaseFourArchitecture({ frontendSources }) {
+  const violations = [];
+  const productionSources = Object.entries(frontendSources)
+    .filter(([sourcePath]) => !isFrontendTest(sourcePath));
+
+  for (const sourcePath of Object.keys(frontendSources)) {
+    if (
+      sourcePath.startsWith('src/components/') &&
+      !sourcePath.startsWith('src/components/ui/')
+    ) {
+      violations.push(
+        `${sourcePath} must move to a feature; only src/components/ui primitives may remain`,
+      );
+    }
+  }
+
+  for (const [sourcePath, source] of productionSources) {
+    const specifiers = importedModuleSpecifiers(sourcePath, source);
+    if (
+      sourcePath.startsWith('src/lib/') &&
+      specifiers.some((specifier) => isForbiddenLibImport(sourcePath, specifier))
+    ) {
+      violations.push(
+        `${sourcePath} must remain React-free, Monaco-free, Tauri-free, and feature-free`,
+      );
+    }
+
+    const owner = featureName(sourcePath);
+    if (!owner) {
+      continue;
+    }
+    for (const specifier of specifiers) {
+      const importedPath = resolvedFrontendImport(
+        sourcePath,
+        specifier,
+        frontendSources,
+      );
+      const importedOwner = importedPath && featureName(importedPath);
+      if (
+        importedPath?.endsWith('.tsx') &&
+        importedOwner &&
+        importedOwner !== owner
+      ) {
+        violations.push(
+          `${sourcePath} must not import React component ${importedPath} from another feature`,
+        );
+      }
+    }
+  }
+
+  return violations;
+}
+
 function readTrackedSource(path) {
   execFileSync('git', ['ls-files', '--error-unmatch', path], { stdio: 'ignore' });
   return readFileSync(path, 'utf8');
@@ -651,6 +791,7 @@ export function verifyRepository() {
       nonCommandSources,
     }),
     ...verifyPhaseThreeArchitecture({ frontendSources }),
+    ...verifyPhaseFourArchitecture({ frontendSources }),
   ];
 }
 

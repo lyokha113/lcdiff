@@ -1,5 +1,3 @@
-import type { DiffOnMount, OnMount } from "@monaco-editor/react";
-
 export type Side = "left" | "right";
 export type StagedKind = "copy" | "edit";
 export interface StagedEntry {
@@ -16,10 +14,6 @@ export type ContentFilter = "all" | "diff";
 export type SearchTier = "T2" | "T3";
 export type SearchHitKind = "path" | "text" | "constantPool" | "source";
 export type SearchContext = "files" | "diff";
-export type CodeEditor = Parameters<OnMount>[0];
-export type DiffCodeEditor = Parameters<DiffOnMount>[0];
-export type MonacoApi = Parameters<OnMount>[1];
-export type DecorationRef = { current: string[] };
 export type ViewMode = "source" | "bytecode";
 
 export interface ViewEntryTab {

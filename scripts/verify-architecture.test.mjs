@@ -498,3 +498,73 @@ test('ignores import and command text in comments and unrelated string literals'
 
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
 });
+
+const cleanPhaseFourSources = {
+  frontendSources: {
+    'src/lib/format.ts': 'export const format = (value) => String(value);\n',
+    'src/components/ui/button.tsx': 'import type { ButtonHTMLAttributes } from "react";\n',
+    'src/features/search/SearchBar.tsx': 'import { Button } from "@/components/ui/button";\n',
+    'src/features/workspace/DiffView.tsx': 'import type { ComparePair } from "@/lib/types";\n',
+    'src/app/App.tsx': 'import { SearchBar } from "@/features/search/SearchBar";\n',
+  },
+};
+
+function verifyPhaseFourArchitecture(sources) {
+  assert.equal(
+    typeof architecture.verifyPhaseFourArchitecture,
+    'function',
+    'verifyPhaseFourArchitecture must be implemented',
+  );
+  return architecture.verifyPhaseFourArchitecture(sources);
+}
+
+test('accepts a Phase-4 compliant frontend ownership boundary', () => {
+  assert.deepEqual(verifyPhaseFourArchitecture(cleanPhaseFourSources), []);
+});
+
+test('rejects React, Monaco, Tauri, and feature imports from src/lib', () => {
+  const invalidImports = [
+    'import { useMemo } from "react";\n',
+    'import { createRoot } from "react-dom/client";\n',
+    'import Editor from "@monaco-editor/react";\n',
+    'import type { editor } from "monaco-editor";\n',
+    'import { invoke } from "@tauri-apps/api/core";\n',
+    'import { SearchBar } from "@/features/search/SearchBar";\n',
+  ];
+
+  for (const invalidImport of invalidImports) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/lib/format.ts'] = invalidImport;
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/lib/format.ts must remain React-free, Monaco-free, Tauri-free, and feature-free',
+    ]);
+  }
+});
+
+test('rejects feature-to-feature React component imports', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/search/SearchBar.tsx'] =
+    'import { DiffView } from "@/features/workspace/DiffView";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/SearchBar.tsx must not import React component src/features/workspace/DiffView.tsx from another feature',
+  ]);
+});
+
+test('allows cross-feature imports of non-component contracts', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/search/search.ts'] =
+    'import type { UiPreferences } from "@/features/preferences/preferences";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('rejects non-primitive files under src/components', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/components/LegacyPanel.tsx'] =
+    'export function LegacyPanel() { return null; }\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/components/LegacyPanel.tsx must move to a feature; only src/components/ui primitives may remain',
+  ]);
+});

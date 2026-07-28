@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "@fontsource-variable/bricolage-grotesque";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/jetbrains-mono";
-import { App } from "./App";
+import { App } from "./app/App";
 import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
