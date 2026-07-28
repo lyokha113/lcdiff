@@ -104,6 +104,16 @@ function hasTauriDependency(coreCargoToml) {
 
 export const phaseOneRules = [
   {
+    message:
+      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+    violates: ({ mainSource }) => {
+      const code = stripRustCommentsAndLiterals(mainSource);
+      return !/^\s*fn\s+main\s*\(\s*\)\s*\{\s*lcdiff_desktop\s*::\s*run\s*\(\s*\)\s*;\s*}\s*$/.test(
+        code,
+      );
+    },
+  },
+  {
     message: 'src-tauri/src/main.rs must not define struct AppState',
     violates: ({ mainSource }) => /\bstruct\s+AppState\b/.test(mainSource),
   },
@@ -280,6 +290,40 @@ function dependsOnCommands(source) {
   );
 }
 
+function commandModuleName(sourcePath) {
+  return sourcePath.match(/^src-tauri\/src\/commands\/([^/]+)\.rs$/)?.[1];
+}
+
+function dependsOnSiblingCommandModule(sourcePath, source) {
+  const owner = commandModuleName(sourcePath);
+  if (!owner || owner === 'mod') {
+    return false;
+  }
+
+  const code = stripRustCommentsAndLiterals(source).replace(/\s+/g, '');
+  const siblings = ['app', 'archive', 'merge', 'preview', 'search']
+    .filter((moduleName) => moduleName !== owner);
+  const commandRootAliases = [
+    /\buse(?:crate::commands|super)as([A-Za-z_][A-Za-z0-9_]*);/g,
+    /\busecrate::\{[^;]*commandsas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
+    /\busecrate::commands::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
+    /\busesuper::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
+  ].flatMap((pattern) => [...code.matchAll(pattern)].map((match) => match[1]));
+
+  return siblings.some((sibling) => {
+    const directDependencies = [
+      new RegExp(`(?:^|use|[({;=])crate::commands::(?:\\{)?${sibling}(?:\\b|as)`),
+      new RegExp(`crate::\\{[^;]*commands::(?:\\{)?${sibling}(?:\\b|as)`),
+      new RegExp(`(?:^|use|[({;=])super::(?:\\{)?${sibling}(?:\\b|as)`),
+      ...commandRootAliases.map(
+        (alias) =>
+          new RegExp(`(?:^|use|[({;=])${alias}::(?:\\{)?${sibling}(?:\\b|as)`),
+      ),
+    ];
+    return directDependencies.some((pattern) => pattern.test(code));
+  });
+}
+
 function sameOrderedValues(actual, expected) {
   return (
     actual.length === expected.length &&
@@ -303,6 +347,14 @@ export function verifyPhaseTwoArchitecture({
   nonCommandSources = {},
 }) {
   const violations = [];
+
+  for (const [path, source] of Object.entries(commandSources)) {
+    if (dependsOnSiblingCommandModule(path, source)) {
+      violations.push(
+        `${path} must not depend on sibling command submodules`,
+      );
+    }
+  }
 
   for (const [path, source] of Object.entries(protectedSources)) {
     if (dependsOnCommands(source)) {
@@ -533,6 +585,27 @@ function accessesTauriInternals(path, source) {
   return found;
 }
 
+function hasNonLiteralDynamicImport(path, source) {
+  const sourceFile = frontendSourceFile(path, source);
+  let found = false;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      (
+        node.arguments.length === 0 ||
+        !ts.isStringLiteralLike(unwrapStaticExpression(node.arguments[0]))
+      )
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
 function isFrontendTest(path) {
   return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
 }
@@ -553,6 +626,11 @@ export function verifyPhaseThreeArchitecture({ frontendSources }) {
     if (!isFrontendIpc(path) && accessesTauriInternals(path, source)) {
       violations.push(
         `${path} must not access __TAURI_INTERNALS__ outside src/ipc`,
+      );
+    }
+    if (!isFrontendIpc(path) && hasNonLiteralDynamicImport(path, source)) {
+      violations.push(
+        `${path} must not use a non-literal dynamic import outside src/ipc`,
       );
     }
     if (
@@ -627,6 +705,18 @@ function importedModuleSpecifiers(sourcePath, source) {
   };
   visit(sourceFile);
   return specifiers;
+}
+
+function exportedModuleSpecifiers(sourcePath, source) {
+  const sourceFile = frontendSourceFile(sourcePath, source);
+  return sourceFile.statements
+    .filter(
+      (statement) =>
+        ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier &&
+        ts.isStringLiteralLike(statement.moduleSpecifier),
+    )
+    .map((statement) => statement.moduleSpecifier.text);
 }
 
 function normalizedFrontendModulePath(sourcePath, specifier) {
@@ -713,6 +803,36 @@ function featureName(sourcePath) {
   return sourcePath.match(/^src\/features\/([^/]+)\//)?.[1];
 }
 
+function resolvedDependencyGraph(frontendSources, specifierReader) {
+  return new Map(
+    Object.entries(frontendSources).map(([sourcePath, source]) => [
+      sourcePath,
+      specifierReader(sourcePath, source)
+        .map((specifier) =>
+          resolvedFrontendImport(sourcePath, specifier, frontendSources),
+        )
+        .filter(Boolean),
+    ]),
+  );
+}
+
+function graphReaches(graph, startPath, predicate) {
+  const pending = [...(graph.get(startPath) ?? [])];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+    if (predicate(current)) {
+      return true;
+    }
+    pending.push(...(graph.get(current) ?? []));
+  }
+  return false;
+}
+
 function isForbiddenLibImport(sourcePath, specifier) {
   const resolved = normalizedFrontendModulePath(sourcePath, specifier);
   return (
@@ -733,6 +853,15 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
   const violations = [];
   const productionSources = Object.entries(frontendSources)
     .filter(([sourcePath]) => !isFrontendTest(sourcePath));
+  const productionSourceMap = Object.fromEntries(productionSources);
+  const dependencyGraph = resolvedDependencyGraph(
+    productionSourceMap,
+    importedModuleSpecifiers,
+  );
+  const reexportGraph = resolvedDependencyGraph(
+    productionSourceMap,
+    exportedModuleSpecifiers,
+  );
 
   for (const [sourcePath] of productionSources) {
     if (
@@ -829,6 +958,15 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
     if (!owner) {
       continue;
     }
+    if (
+      graphReaches(
+        dependencyGraph,
+        sourcePath,
+        (dependencyPath) => dependencyPath.startsWith('src/app/'),
+      )
+    ) {
+      violations.push(`${sourcePath} must not depend on src/app`);
+    }
     for (const specifier of specifiers) {
       const importedPath = resolvedFrontendImport(
         sourcePath,
@@ -843,6 +981,21 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
       ) {
         violations.push(
           `${sourcePath} must not import React component ${importedPath} from another feature`,
+        );
+      } else if (
+        importedPath &&
+        importedOwner &&
+        importedOwner !== owner &&
+        graphReaches(
+          reexportGraph,
+          importedPath,
+          (dependencyPath) =>
+            dependencyPath.endsWith('.tsx') &&
+            featureName(dependencyPath) === importedOwner,
+        )
+      ) {
+        violations.push(
+          `${sourcePath} must not import React components through ${importedPath} from another feature`,
         );
       }
     }

@@ -12,10 +12,7 @@ pub(crate) use archive::{
     list_view_sources, open_archive, open_view_source,
 };
 #[cfg(test)]
-pub(crate) use archive::{
-    compute_nested_diff_from_archives, one_sided_diff, resolve_optional_side_nested_archive,
-    resolve_view_entry, resolve_view_nested_archive,
-};
+pub(crate) use archive::{compute_nested_diff_from_archives, one_sided_diff};
 pub(crate) use merge::{
     clear_staged, commit_merge, commit_view, stage_copy, stage_view_write, stage_write, unstage,
     unstage_view_write,

@@ -37,6 +37,7 @@ src-tauri/src/
   state.rs                AppState storage and lifecycle invariants
   events.rs               four stable event names, payloads and emit helpers
   menu.rs                 menu, accelerators, single instance and OS-open handoff
+  archive_access.rs       validated/canonical opens and nested-entry resolution
   commands/
     app.rs                path validation, platform hints, pending paths, fonts
     archive.rs            archive/diff/nested/View-source lifecycle
@@ -51,7 +52,9 @@ src-tauri/src/
 existing single `Arc<Mutex<AppState>>`. `state.rs` stores archives, per-source
 nested caches, View sources, merge plans, sidecar workers, cancellation
 generations, engine selection, and pending open paths. Command modules own
-workflow orchestration; stored state owns lifecycle invariants.
+workflow orchestration; `archive_access.rs` provides neutral, reusable
+archive-opening and nested-resolution operations; stored state owns lifecycle
+invariants.
 
 ### Frontend
 
@@ -99,7 +102,8 @@ Allowed arrows are:
 
 ```text
 feature intent -> src/ipc -> stable command/event
-command module -> state | events | sidecar_process | system_fonts | lcdiff-core
+command module -> archive_access | state | events | sidecar_process | system_fonts | lcdiff-core
+archive_access -> state snapshots | Tauri async runtime | lcdiff-core
 menu -> events -> frontend IPC subscriptions
 src/app -> feature controllers/components + typed IPC orchestration
 feature -> same-feature files + non-component feature contracts
@@ -109,13 +113,19 @@ feature -> same-feature files + non-component feature contracts
 The reverse arrows are forbidden:
 
 - only `src/ipc/**` may import `@tauri-apps/*` or access Tauri internals;
+- non-literal dynamic imports are forbidden outside `src/ipc/**` production
+  files because their dependency target cannot be verified statically;
 - `src/lib/**` may not import React, Monaco, Tauri, or a feature;
 - a feature may not import a React component owned by another feature;
+- a feature may not depend on `src/app/**`, directly or through re-export
+  barrels;
 - non-primitive components may not live under `src/components`;
+- a command submodule may not import another command submodule; shared archive
+  access belongs in `archive_access.rs`;
 - `state.rs`, `events.rs`, `menu.rs`, `sidecar_process.rs`, and
   `system_fonts.rs` may not depend on command modules;
 - Tauri command annotations belong only under `src-tauri/src/commands`;
-- `main.rs` owns no state, command, event, menu, or workflow logic;
+- `main.rs` is exactly the thin `lcdiff_desktop::run()` entrypoint;
 - `lcdiff-core` has no Tauri dependency.
 
 ## Wire Contract Authority
@@ -133,11 +143,13 @@ contracts. Rust serialization fixtures and frontend facade tests lock them.
 ## Executable Architecture Guard
 
 `npm run verify:architecture` runs `scripts/verify-architecture.mjs` against the
-tracked source tree. Its independent rules enforce the thin entrypoint and
-Tauri-free core, backend command/event allowlists and dependency direction,
-frontend Tauri/command/event ownership, pure-lib and feature ownership, and the
+tracked source tree. Its independent rules enforce the exact thin entrypoint
+and Tauri-free core; backend command/event allowlists, reverse dependencies,
+and sibling-command isolation; frontend Tauri/command/event ownership,
+including conservative non-literal dynamic-import rejection; pure-lib,
+feature-to-app, and graph-aware cross-feature component ownership; and the
 workspace/merge controller boundaries. `scripts/verify-architecture.test.mjs`
-contains focused fixtures for each rule.
+contains focused mutation and allowance fixtures for each rule.
 
 The guard is phase-independent after standardization: it is the first step of
 `npm run verify:all` and each release workflow has an explicit architecture

@@ -6,7 +6,7 @@ use tauri::State;
 
 use crate::{
     EntryPreview, Side,
-    commands::archive::{resolve_side_entry, resolve_view_entry},
+    archive_access::{resolve_side_entry, resolve_view_entry},
     sidecar_process::SidecarClient,
     state::{SharedState, side_snapshot},
 };

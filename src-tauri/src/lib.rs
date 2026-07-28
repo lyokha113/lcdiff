@@ -4,6 +4,7 @@ use lcdiff_core::EntryKind;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+mod archive_access;
 mod commands;
 mod events;
 #[cfg(test)]
@@ -13,6 +14,10 @@ mod sidecar_process;
 mod state;
 mod system_fonts;
 
+#[cfg(test)]
+use archive_access::{
+    resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
+};
 use commands::{
     cancel_deep_search, clear_staged, close_view_source, commit_merge, commit_view, compute_diff,
     compute_nested_diff, compute_view_nested_entries, deep_search, deep_search_view_source,
@@ -24,9 +29,7 @@ use commands::{
 #[cfg(test)]
 use commands::{
     class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
-    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview,
-    resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
-    search_archive,
+    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview, search_archive,
 };
 use menu::{
     handle_menu_event, handle_run_event, install_app_menu, open_paths_from_args, path_strings,
@@ -202,6 +205,7 @@ mod tests {
     use tempfile::tempdir;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
+    use super::archive_access::{open_archive_from_path, open_view_archive_from_path};
     use super::events::AppActionPayload;
     use super::menu::{MENU_ACTIONS, close_window_placement, store_and_emit_open_paths};
     #[cfg(not(target_os = "macos"))]
@@ -599,17 +603,17 @@ mod tests {
         write_zip(&archive_path, &[("entry.txt", b"before")]);
 
         let mut state = AppState::new(None);
-        let first = state
-            .open_view_source(archive_path.display().to_string())
-            .expect("open first view source");
+        let first =
+            open_view_source_through_production(&mut state, archive_path.display().to_string())
+                .expect("open first view source");
         let first_cache = state
             .view_source_snapshot(&first.id)
             .expect("first snapshot")
             .nested;
 
-        let replacement = state
-            .open_view_source(archive_path.display().to_string())
-            .expect("replace view source");
+        let replacement =
+            open_view_source_through_production(&mut state, archive_path.display().to_string())
+                .expect("replace view source");
         let replacement_cache = state
             .view_source_snapshot(&replacement.id)
             .expect("replacement snapshot")
@@ -663,12 +667,12 @@ mod tests {
         write_zip(&second_path, &[("a.txt", b"second")]);
 
         let mut state = AppState::new(None);
-        let first = state
-            .open_view_source(first_path.display().to_string())
-            .expect("open first view source");
-        let second = state
-            .open_view_source(second_path.display().to_string())
-            .expect("open second view source");
+        let first =
+            open_view_source_through_production(&mut state, first_path.display().to_string())
+                .expect("open first view source");
+        let second =
+            open_view_source_through_production(&mut state, second_path.display().to_string())
+                .expect("open second view source");
 
         assert_ne!(first.id, second.id);
         assert_eq!(first.name, "first.jar");
@@ -703,12 +707,12 @@ mod tests {
         let alias_path = archive_alias_path(&archive_path);
 
         let mut state = AppState::new(None);
-        let first = state
-            .open_view_source(archive_path.display().to_string())
-            .expect("first open");
-        let second = state
-            .open_view_source(alias_path.display().to_string())
-            .expect("second open");
+        let first =
+            open_view_source_through_production(&mut state, archive_path.display().to_string())
+                .expect("first open");
+        let second =
+            open_view_source_through_production(&mut state, alias_path.display().to_string())
+                .expect("second open");
 
         assert_ne!(
             archive_path.display().to_string(),
@@ -727,12 +731,12 @@ mod tests {
         write_zip(&second_path, &[("b.txt", b"second")]);
 
         let mut state = AppState::new(None);
-        let first = state
-            .open_view_source(first_path.display().to_string())
-            .expect("open first");
-        let second = state
-            .open_view_source(second_path.display().to_string())
-            .expect("open second");
+        let first =
+            open_view_source_through_production(&mut state, first_path.display().to_string())
+                .expect("open first");
+        let second =
+            open_view_source_through_production(&mut state, second_path.display().to_string())
+                .expect("open second");
 
         let listed = state.list_view_sources();
         assert_eq!(listed.len(), 2);
@@ -780,9 +784,9 @@ mod tests {
         let outer_path = create_nested_view_archive(dir.path());
 
         let mut state = AppState::new(None);
-        let source = state
-            .open_view_source(outer_path.display().to_string())
-            .expect("open nested view source");
+        let source =
+            open_view_source_through_production(&mut state, outer_path.display().to_string())
+                .expect("open nested view source");
         let snapshot = state
             .view_source_snapshot(&source.id)
             .expect("nested source snapshot");
@@ -807,9 +811,9 @@ mod tests {
         let outer_path = create_nested_view_archive(dir.path());
 
         let mut state = AppState::new(None);
-        let source = state
-            .open_view_source(outer_path.display().to_string())
-            .expect("open nested view source");
+        let source =
+            open_view_source_through_production(&mut state, outer_path.display().to_string())
+                .expect("open nested view source");
         let snapshot = state
             .view_source_snapshot(&source.id)
             .expect("nested source snapshot");
@@ -831,9 +835,9 @@ mod tests {
         write_zip(&archive_path, &[("root.txt", b"root-content")]);
 
         let mut state = AppState::new(None);
-        let source = state
-            .open_view_source(archive_path.display().to_string())
-            .expect("open view source");
+        let source =
+            open_view_source_through_production(&mut state, archive_path.display().to_string())
+                .expect("open view source");
         let snapshot = state
             .view_source_snapshot(&source.id)
             .expect("view source snapshot");
@@ -854,9 +858,9 @@ mod tests {
         write_zip(&archive_path, &[("config.json", b"{\"v\":1}\n")]);
 
         let mut state = AppState::new(None);
-        let source = state
-            .open_view_source(archive_path.display().to_string())
-            .expect("open view source");
+        let source =
+            open_view_source_through_production(&mut state, archive_path.display().to_string())
+                .expect("open view source");
         state
             .stage_view_write(&source.id, "config.json", "{\"v\":2}\n")
             .expect("stage view edit");
@@ -879,9 +883,9 @@ mod tests {
         let outer_path = create_nested_view_archive(dir.path());
 
         let mut state = AppState::new(None);
-        let first = state
-            .open_view_source(outer_path.display().to_string())
-            .expect("first open");
+        let first =
+            open_view_source_through_production(&mut state, outer_path.display().to_string())
+                .expect("first open");
         let first_snapshot = state
             .view_source_snapshot(&first.id)
             .expect("first snapshot");
@@ -894,9 +898,9 @@ mod tests {
             .expect("close first source");
         assert!(state.view_sources.is_empty());
 
-        let second = state
-            .open_view_source(outer_path.display().to_string())
-            .expect("reopen source");
+        let second =
+            open_view_source_through_production(&mut state, outer_path.display().to_string())
+                .expect("reopen source");
         let second_snapshot = state
             .view_source_snapshot(&second.id)
             .expect("second snapshot");
@@ -923,11 +927,9 @@ mod tests {
         create_zip(&right_path, &[("plain.txt", b"right-only")]);
 
         let mut state = AppState::default();
-        state
-            .load_archive(left_path.to_str().unwrap(), Side::Left)
+        load_archive_through_production(&mut state, left_path.to_str().unwrap(), Side::Left)
             .expect("load left");
-        state
-            .load_archive(right_path.to_str().unwrap(), Side::Right)
+        load_archive_through_production(&mut state, right_path.to_str().unwrap(), Side::Right)
             .expect("load right");
 
         let left = side_snapshot(&state, Side::Left).expect("left snapshot");
@@ -980,12 +982,8 @@ mod tests {
         create_zip(&left, &[("pkg/A.class", b"left")]);
         create_zip(&right, &[("pkg/A.class", b"right")]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
-        state
-            .load_archive(right.to_str().unwrap(), Side::Right)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
+        load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
 
         state
             .stage_copy(Side::Left, Side::Right, "pkg/A.class")
@@ -1000,8 +998,7 @@ mod tests {
                 .contains("other side")
         );
         assert!(
-            state
-                .load_archive(left.to_str().unwrap(), Side::Left)
+            load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left)
                 .unwrap_err()
                 .contains("save staged copies")
         );
@@ -1015,20 +1012,14 @@ mod tests {
         create_zip(&left, &[("a.txt", b"left")]);
         create_zip(&right, &[("a.txt", b"right")]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
-        state
-            .load_archive(right.to_str().unwrap(), Side::Right)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
+        load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
         state.stage_copy(Side::Left, Side::Right, "a.txt").unwrap();
 
         state.clear_staged();
 
         assert!(!state.any_pending());
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
     }
 
     #[test]
@@ -1039,20 +1030,14 @@ mod tests {
         create_zip(&left, &[("a.txt", b"left")]);
         create_zip(&right, &[("a.txt", b"right")]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
-        state
-            .load_archive(right.to_str().unwrap(), Side::Right)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
+        load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
         state.stage_copy(Side::Left, Side::Right, "a.txt").unwrap();
 
         state.unstage("a.txt", None).unwrap();
 
         assert!(!state.any_pending());
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
     }
 
     #[test]
@@ -1071,12 +1056,8 @@ mod tests {
             ],
         );
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
-        state
-            .load_archive(right.to_str().unwrap(), Side::Right)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
+        load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
         state
             .stage_copy(Side::Left, Side::Right, "pkg/A.class")
             .unwrap();
@@ -1417,6 +1398,23 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn load_archive_through_production(
+        state: &mut AppState,
+        path: &str,
+        side: Side,
+    ) -> Result<super::state::ArchiveSummary, String> {
+        let archive = tauri::async_runtime::block_on(open_archive_from_path(path.to_owned()))?;
+        state.install_archive(archive, side)
+    }
+
+    fn open_view_source_through_production(
+        state: &mut AppState,
+        path: String,
+    ) -> Result<ViewSourceSummary, String> {
+        let archive = tauri::async_runtime::block_on(open_view_archive_from_path(path))?;
+        state.insert_view_source(archive)
+    }
+
     fn write_zip(path: &Path, entries: &[(&str, &[u8])]) {
         create_zip(path, entries);
     }
@@ -1464,14 +1462,10 @@ mod tests {
         let left = dir.path().join("left.jar");
         create_zip(&left, &[("config.xml", b"<old/>")]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
         let right = dir.path().join("right.jar");
         create_zip(&right, &[("config.xml", b"<r/>")]);
-        state
-            .load_archive(right.to_str().unwrap(), Side::Right)
-            .unwrap();
+        load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
 
         state
             .stage_write(Side::Left, "config.xml", "<new/>")
@@ -1593,9 +1587,7 @@ mod tests {
         let left = dir.path().join("b.jar");
         create_zip(&left, &[("blob.bin", &[0u8, 1, 2, 3])]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
         let err = state
             .stage_write(Side::Left, "blob.bin", "text")
             .unwrap_err();
@@ -1608,9 +1600,7 @@ mod tests {
         let left = dir.path().join("left.jar");
         create_zip(&left, &[("a.txt", b"old")]);
         let mut state = AppState::default();
-        state
-            .load_archive(left.to_str().unwrap(), Side::Left)
-            .unwrap();
+        load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
         state.stage_write(Side::Left, "a.txt", "new").unwrap();
 
         state.unstage("a.txt", None).unwrap();

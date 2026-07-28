@@ -4,8 +4,6 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicU64},
 };
 
-#[cfg(test)]
-use lcdiff_core::validate_path as validate_archive_path;
 use lcdiff_core::{
     Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions, CommitResult,
     DEFAULT_DECOMPILE_ENGINE, DecompileEngine, MergePlan, NestedArchiveCache, edit,
@@ -74,31 +72,8 @@ impl AppState {
         std::mem::take(&mut self.pending_open_paths)
     }
 
-    #[cfg(test)]
-    fn canonical_view_source_path(path: &std::path::Path) -> Result<PathBuf, String> {
-        std::fs::canonicalize(path).map_err(|error| {
-            format!(
-                "failed to canonicalize view source path {}: {error}",
-                path.display()
-            )
-        })
-    }
-
     fn format_view_source_id(path: &std::path::Path) -> String {
         format!("view:{}", path.display())
-    }
-
-    #[cfg(test)]
-    fn open_view_archive(path: String) -> Result<Archive, String> {
-        let validated = validate_archive_path(&path).map_err(|error| error.to_string())?;
-        let canonical = Self::canonical_view_source_path(&validated)?;
-        Archive::open_validated(canonical).map_err(|error| error.to_string())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_view_source(&mut self, path: String) -> Result<ViewSourceSummary, String> {
-        let archive = Self::open_view_archive(path)?;
-        self.insert_view_source(archive)
     }
 
     pub(crate) fn insert_view_source(
@@ -184,16 +159,6 @@ impl AppState {
             .remove(source_id)
             .map(|_| ())
             .ok_or_else(|| format!("view source is not loaded: {source_id}"))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn load_archive(
-        &mut self,
-        path: &str,
-        side: Side,
-    ) -> Result<ArchiveSummary, String> {
-        let archive = Archive::open(path).map_err(|error| error.to_string())?;
-        self.install_archive(archive, side)
     }
 
     pub(crate) fn plan_mut(&mut self, side: Side) -> &mut MergePlan {

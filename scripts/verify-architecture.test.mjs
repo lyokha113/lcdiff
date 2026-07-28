@@ -5,7 +5,7 @@ import * as architecture from './verify-architecture.mjs';
 
 const { verifyPhaseOneArchitecture } = architecture;
 
-const cleanMain = 'fn main() {}\n';
+const cleanMain = 'fn main() {\n    lcdiff_desktop::run();\n}\n';
 const cleanCoreCargoToml = '[dependencies]\nserde = "1"\n';
 
 test('accepts a Phase-1 compliant source pair', () => {
@@ -18,13 +18,53 @@ test('accepts a Phase-1 compliant source pair', () => {
   );
 });
 
+test('allows comments and formatting around the exact desktop entrypoint', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: `
+        // The binary delegates all composition to the library crate.
+        fn main ( ) {
+          lcdiff_desktop :: run ( ) ;
+        }
+      `,
+      coreCargoToml: cleanCoreCargoToml,
+    }),
+    [],
+  );
+});
+
+test('rejects every non-composition desktop entrypoint shape', () => {
+  const invalidEntrypoints = [
+    'fn main() {}\n',
+    'use lcdiff_desktop::run;\nfn main() { run(); }\n',
+    'fn helper() {}\nfn main() { lcdiff_desktop::run(); }\n',
+    'fn main() { println!("starting"); lcdiff_desktop::run(); }\n',
+    'fn main() { other_desktop::run(); }\n',
+  ];
+
+  for (const mainSource of invalidEntrypoints) {
+    assert.deepEqual(
+      verifyPhaseOneArchitecture({
+        mainSource,
+        coreCargoToml: cleanCoreCargoToml,
+      }),
+      [
+        'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      ],
+    );
+  }
+});
+
 test('rejects AppState ownership in the desktop entrypoint', () => {
   assert.deepEqual(
     verifyPhaseOneArchitecture({
       mainSource: 'struct AppState {}\n',
       coreCargoToml: cleanCoreCargoToml,
     }),
-    ['src-tauri/src/main.rs must not define struct AppState'],
+    [
+      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      'src-tauri/src/main.rs must not define struct AppState',
+    ],
   );
 });
 
@@ -34,7 +74,10 @@ test('rejects Tauri commands in the desktop entrypoint', () => {
       mainSource: '#[tauri::command]\nfn open_archive() {}\n',
       coreCargoToml: cleanCoreCargoToml,
     }),
-    ['src-tauri/src/main.rs must not define #[tauri::command] handlers'],
+    [
+      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      'src-tauri/src/main.rs must not define #[tauri::command] handlers',
+    ],
   );
 });
 
@@ -44,7 +87,10 @@ test('rejects event emission in the desktop entrypoint', () => {
       mainSource: 'window.emit("search-progress", payload)?;\n',
       coreCargoToml: cleanCoreCargoToml,
     }),
-    ['src-tauri/src/main.rs must not call .emit('],
+    [
+      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      'src-tauri/src/main.rs must not call .emit(',
+    ],
   );
 });
 
@@ -115,6 +161,7 @@ test('reports every independent Phase-1 violation together', () => {
       coreCargoToml: '[dependencies]\ntauri = "2"\n',
     }),
     [
+      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
       'src-tauri/src/main.rs must not define struct AppState',
       'src-tauri/src/main.rs must not define #[tauri::command] handlers',
       'src-tauri/src/main.rs must not call .emit(',
@@ -198,6 +245,68 @@ function verifyPhaseTwoArchitecture(sources) {
 
 test('accepts a Phase-2 compliant backend command and event boundary', () => {
   assert.deepEqual(verifyPhaseTwoArchitecture(cleanPhaseTwoSources), []);
+});
+
+test('rejects command submodule dependencies on sibling command submodules', () => {
+  const siblingDependencies = [
+    'use crate::commands::archive::resolve_view_entry;\n',
+    'use crate::commands::{archive::resolve_view_entry, preview as preview_workflow};\n',
+    'use crate::{commands::{archive as archive_workflow}, state::AppState};\n',
+    'use super::archive::resolve_view_entry;\n',
+    'use super::{archive as archive_workflow, search::search_archive};\n',
+    'fn call() { crate::commands::archive::resolve_view_entry(); }\n',
+    'use crate::commands as workflows;\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use super as workflows;\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use crate::{commands as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use crate::commands::{self as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use super::{self as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+  ];
+
+  for (const dependency of siblingDependencies) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.commandSources['src-tauri/src/commands/preview.rs'] = [
+      '#[tauri::command]\nfn read_entry() {}\n',
+      dependency,
+    ].join('');
+    delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+    assert.deepEqual(
+      verifyPhaseTwoArchitecture(sources),
+      [
+        'src-tauri/src/commands/preview.rs must not depend on sibling command submodules',
+      ],
+      dependency,
+    );
+  }
+});
+
+test('allows command submodules to use neutral backend services', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.commandSources['src-tauri/src/commands/preview.rs'] = `
+    use crate::{
+      archive_access::{resolve_side_entry, resolve_view_entry},
+      sidecar_process::SidecarClient,
+      state::SharedState,
+    };
+    #[tauri::command]
+    fn read_entry() {}
+  `;
+  delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
+});
+
+test('ignores sibling command dependency text inside comments and strings', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.commandSources['src-tauri/src/commands/preview.rs'] = `
+    // use crate::commands::archive::resolve_view_entry;
+    /* use super::{archive as archive_workflow}; */
+    const NOTE: &str = "crate::commands::archive::resolve_view_entry";
+    #[tauri::command]
+    fn read_entry() {}
+  `;
+  delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
 });
 
 test('rejects commands imports from stored state, events, menu, and adapters', () => {
@@ -390,6 +499,34 @@ test('allows Tauri package mocks in test files', () => {
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
 });
 
+test('rejects non-literal dynamic imports outside src/ipc production files', () => {
+  const invalidImports = [
+    'const api = await import(moduleName);\n',
+    'const api = await import(`@tauri-apps/${packageName}`);\n',
+    'const api = await import(resolveModule());\n',
+  ];
+
+  for (const invalidImport of invalidImports) {
+    const sources = structuredClone(cleanPhaseThreeSources);
+    sources.frontendSources['src/features/search/search.ts'] = invalidImport;
+    assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+      'src/features/search/search.ts must not use a non-literal dynamic import outside src/ipc',
+    ]);
+  }
+});
+
+test('allows literal dynamic imports, IPC-owned dynamic imports, and test fixtures', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/features/search/search.ts'] =
+    'const helpers = await import("./search-helpers");\n';
+  sources.frontendSources['src/ipc/platform.ts'] =
+    'const api = await import(tauriPackageName);\n';
+  sources.frontendSources['src/features/search/search.test.ts'] =
+    'const fixture = await import(moduleName);\n';
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
+});
+
 test('rejects direct Tauri internals access outside src/ipc production files', () => {
   const internalAccesses = [
     `
@@ -567,6 +704,56 @@ test('allows cross-feature imports of non-component contracts', () => {
   const sources = structuredClone(cleanPhaseFourSources);
   sources.frontendSources['src/features/search/search.ts'] =
     'import type { UiPreferences } from "@/features/preferences/preferences";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('rejects feature imports from the app composition root', () => {
+  const reverseImports = [
+    'import { compose } from "@/app/App";\n',
+    'import { compose } from "@/features/search/../../../src/app/App";\n',
+    'import { compose } from "../../app/App";\n',
+  ];
+
+  for (const reverseImport of reverseImports) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/features/search/search.ts'] = reverseImport;
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/features/search/search.ts must not depend on src/app',
+    ]);
+  }
+});
+
+test('rejects feature imports that reach src/app through a barrel', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/bridge/index.ts'] =
+    'export { default as App } from "@/app/App";\n';
+  sources.frontendSources['src/features/search/search.ts'] =
+    'import { App } from "@/bridge";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/search.ts must not depend on src/app',
+  ]);
+});
+
+test('rejects cross-feature React components re-exported through barrels', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/workspace/index.ts'] =
+    'export { DiffView } from "./DiffView";\n';
+  sources.frontendSources['src/features/search/SearchBar.tsx'] =
+    'import { DiffView } from "@/features/workspace";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/SearchBar.tsx must not import React components through src/features/workspace/index.ts from another feature',
+  ]);
+});
+
+test('allows cross-feature pure contracts re-exported through barrels', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/preferences/index.ts'] =
+    'export type { UiPreferences } from "./preferences";\n';
+  sources.frontendSources['src/features/search/search.ts'] =
+    'import type { UiPreferences } from "@/features/preferences";\n';
 
   assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
 });
