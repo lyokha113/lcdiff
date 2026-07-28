@@ -2,13 +2,50 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+function dependencySection(header) {
+  const match = header
+    .trim()
+    .match(/^(?:target\..+\.)?(?:dependencies|dev-dependencies|build-dependencies)(?:\.(.+))?$/);
+  if (!match) {
+    return null;
+  }
+
+  const alias = match[1]?.trim().replace(/^(["'])(.*)\1$/, '$2');
+  return { alias };
+}
+
 function hasTauriDependency(coreCargoToml) {
-  return (
-    /^\s*tauri\s*(?:=|\.\s*workspace\s*=)/m.test(coreCargoToml) ||
-    /^\s*[A-Za-z0-9_-]+\s*=\s*\{[^}]*\bpackage\s*=\s*["']tauri["'][^}]*\}/ms.test(
-      coreCargoToml,
-    )
-  );
+  let section = null;
+  for (const line of coreCargoToml.split('\n')) {
+    const header = line.match(/^\s*\[([^\]]+)]\s*(?:#.*)?$/);
+    if (header) {
+      section = dependencySection(header[1]);
+      if (section?.alias === 'tauri') {
+        return true;
+      }
+      continue;
+    }
+    if (!section) {
+      continue;
+    }
+    if (section.alias) {
+      if (/^\s*package\s*=\s*["']tauri["']\s*(?:#.*)?$/.test(line)) {
+        return true;
+      }
+      continue;
+    }
+    if (/^\s*tauri\s*(?:=|\.\s*workspace\s*=)/.test(line)) {
+      return true;
+    }
+    if (
+      /^\s*[A-Za-z0-9_-]+\s*=\s*\{[^}]*\bpackage\s*=\s*["']tauri["'][^}]*\}/.test(
+        line,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export const phaseOneRules = [

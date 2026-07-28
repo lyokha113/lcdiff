@@ -76,6 +76,36 @@ test('rejects an aliased Tauri dependency in lcdiff-core', () => {
   );
 });
 
+test('rejects a Tauri package declared through a dependency table alias', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: cleanMain,
+      coreCargoToml: '[dependencies.desktop_shell]\npackage = "tauri"\nversion = "2"\n',
+    }),
+    ['crates/lcdiff-core/Cargo.toml must not depend on tauri'],
+  );
+});
+
+test('rejects a direct Tauri dependency table', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: cleanMain,
+      coreCargoToml: '[dependencies.tauri]\nversion = "2"\n',
+    }),
+    ['crates/lcdiff-core/Cargo.toml must not depend on tauri'],
+  );
+});
+
+test('allows a Tauri package marker outside dependency sections', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: cleanMain,
+      coreCargoToml: '[package.metadata.desktop]\npackage = "tauri"\n',
+    }),
+    [],
+  );
+});
+
 test('reports every independent Phase-1 violation together', () => {
   assert.deepEqual(
     verifyPhaseOneArchitecture({
