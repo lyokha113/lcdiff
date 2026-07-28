@@ -334,3 +334,117 @@ test('rejects a changed backend event allowlist', () => {
     `backend events must be exactly: ${expectedEventNames.join(', ')}`,
   ]);
 });
+
+const cleanPhaseThreeSources = {
+  frontendSources: {
+    'src/ipc/commands.ts': [
+      'import { invoke } from "@tauri-apps/api/core";',
+      ...expectedCommandNames.map((name) => `const ${name.toUpperCase()} = "${name}";`),
+    ].join('\n'),
+    'src/ipc/events.ts': [
+      'import { listen } from "@tauri-apps/api/event";',
+      ...expectedEventNames.map((name, index) => `const EVENT_${index} = "${name}";`),
+    ].join('\n'),
+    'src/ipc/platform.ts': 'import { open } from "@tauri-apps/plugin-dialog";\n',
+    'src/App.tsx': 'import { openArchive } from "@/ipc/commands";\n',
+    'src/App.test.tsx': 'vi.mock("@tauri-apps/api/core", () => ({}));\nconst command = "open_archive";\n',
+  },
+};
+
+function verifyPhaseThreeArchitecture(sources) {
+  assert.equal(
+    typeof architecture.verifyPhaseThreeArchitecture,
+    'function',
+    'verifyPhaseThreeArchitecture must be implemented',
+  );
+  return architecture.verifyPhaseThreeArchitecture(sources);
+}
+
+test('accepts a Phase-3 compliant frontend IPC boundary', () => {
+  assert.deepEqual(verifyPhaseThreeArchitecture(cleanPhaseThreeSources), []);
+});
+
+test('rejects static and dynamic Tauri imports outside src/ipc', () => {
+  const invalidImports = [
+    'import { invoke } from "@tauri-apps/api/core";\n',
+    'import "@tauri-apps/plugin-dialog";\n',
+    'const eventApi = await import("@tauri-apps/api/event");\n',
+  ];
+
+  for (const invalidImport of invalidImports) {
+    const sources = structuredClone(cleanPhaseThreeSources);
+    sources.frontendSources['src/App.tsx'] = invalidImport;
+    assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+      'src/App.tsx must not import @tauri-apps/* outside src/ipc',
+    ]);
+  }
+});
+
+test('allows Tauri package mocks in test files', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/App.test.tsx'] = [
+    'vi.mock("@tauri-apps/api/core", () => ({}));',
+    'vi.mock("@tauri-apps/plugin-dialog", () => ({}));',
+  ].join('\n');
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
+});
+
+test('rejects raw backend command and event literals outside src/ipc production files', () => {
+  const rawCalls = ['invoke("open_archive")', 'listen("search-result", handler)'];
+
+  for (const rawCall of rawCalls) {
+    const sources = structuredClone(cleanPhaseThreeSources);
+    sources.frontendSources['src/App.tsx'] = `${rawCall};\n`;
+    assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+      'src/App.tsx must not contain raw backend command/event literals outside src/ipc',
+    ]);
+  }
+});
+
+test('allows product copy that happens to equal a backend command name', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/components/SearchBar.tsx'] = `
+    const tab = "search";
+    const action = "clear_staged";
+  `;
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
+});
+
+test('rejects a missing or renamed frontend IPC command literal', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/ipc/commands.ts'] =
+    sources.frontendSources['src/ipc/commands.ts'].replace(
+      '"validate_path"',
+      '"validate_source_path"',
+    );
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+    `frontend IPC command literals must be exactly: ${expectedCommandNames.join(', ')}`,
+  ]);
+});
+
+test('rejects a missing or renamed frontend IPC event literal', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/ipc/events.ts'] =
+    sources.frontendSources['src/ipc/events.ts'].replace(
+      '"search-result"',
+      '"search-complete"',
+    );
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+    `frontend IPC event literals must be exactly: ${expectedEventNames.join(', ')}`,
+  ]);
+});
+
+test('ignores import and command text in comments and unrelated string literals', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/App.tsx'] = `
+    // import { invoke } from "@tauri-apps/api/core";
+    /* import "@tauri-apps/plugin-dialog"; */
+    const note = "open_archive_notes";
+  `;
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
+});

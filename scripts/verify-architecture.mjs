@@ -331,6 +331,135 @@ export function verifyPhaseTwoArchitecture({
   return violations;
 }
 
+function stripJavaScriptComments(source) {
+  const output = [...source];
+  const blank = (index) => {
+    if (output[index] !== '\n' && output[index] !== '\r') {
+      output[index] = ' ';
+    }
+  };
+
+  for (let index = 0; index < source.length; ) {
+    const quote = source[index];
+    if (quote === '"' || quote === "'" || quote === '`') {
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === '\\') {
+          index += Math.min(2, source.length - index);
+        } else if (source[index] === quote) {
+          index += 1;
+          break;
+        } else {
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    if (source.startsWith('//', index)) {
+      while (index < source.length && source[index] !== '\n') {
+        blank(index);
+        index += 1;
+      }
+      continue;
+    }
+
+    if (source.startsWith('/*', index)) {
+      blank(index);
+      blank(index + 1);
+      index += 2;
+      while (index < source.length && !source.startsWith('*/', index)) {
+        blank(index);
+        index += 1;
+      }
+      if (index < source.length) {
+        blank(index);
+        blank(index + 1);
+        index += 2;
+      }
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return output.join('');
+}
+
+function importsTauriPackage(source) {
+  const code = stripJavaScriptComments(source);
+  return (
+    /\bfrom\s*["']@tauri-apps\//.test(code) ||
+    /\bimport\s*["']@tauri-apps\//.test(code) ||
+    /\bimport\s*\(\s*["']@tauri-apps\//.test(code)
+  );
+}
+
+function quotedStringValues(source) {
+  const code = stripJavaScriptComments(source);
+  return [...code.matchAll(/(["'])([^"'\\]*(?:\\.[^"'\\]*)*)\1/g)]
+    .map((match) => match[2]);
+}
+
+function rawIpcCallValues(source) {
+  const code = stripJavaScriptComments(source);
+  return [
+    ...code.matchAll(
+      /\b(?:invoke|listen)\s*(?:<[^>]*>)?\s*\(\s*(["'])([^"'\\]*(?:\\.[^"'\\]*)*)\1/g,
+    ),
+  ].map((match) => match[2]);
+}
+
+function isFrontendTest(path) {
+  return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
+}
+
+function isFrontendIpc(path) {
+  return path.startsWith('src/ipc/');
+}
+
+export function verifyPhaseThreeArchitecture({ frontendSources }) {
+  const violations = [];
+  const productionSources = Object.entries(frontendSources)
+    .filter(([path]) => !isFrontendTest(path));
+
+  for (const [path, source] of productionSources) {
+    if (!isFrontendIpc(path) && importsTauriPackage(source)) {
+      violations.push(`${path} must not import @tauri-apps/* outside src/ipc`);
+    }
+    if (
+      !isFrontendIpc(path) &&
+      rawIpcCallValues(source).some(
+        (value) => backendCommandNames.includes(value) || backendEventNames.includes(value),
+      )
+    ) {
+      violations.push(
+        `${path} must not contain raw backend command/event literals outside src/ipc`,
+      );
+    }
+  }
+
+  const commandLiterals = quotedStringValues(
+    frontendSources['src/ipc/commands.ts'] ?? '',
+  ).filter((value) => backendCommandNames.includes(value));
+  if (!sameValueSet(commandLiterals, backendCommandNames)) {
+    violations.push(
+      `frontend IPC command literals must be exactly: ${backendCommandNames.join(', ')}`,
+    );
+  }
+
+  const eventLiterals = quotedStringValues(
+    frontendSources['src/ipc/events.ts'] ?? '',
+  ).filter((value) => backendEventNames.includes(value));
+  if (!sameValueSet(eventLiterals, backendEventNames)) {
+    violations.push(
+      `frontend IPC event literals must be exactly: ${backendEventNames.join(', ')}`,
+    );
+  }
+
+  return violations;
+}
+
 function readTrackedSource(path) {
   execFileSync('git', ['ls-files', '--error-unmatch', path], { stdio: 'ignore' });
   return readFileSync(path, 'utf8');
@@ -353,8 +482,26 @@ function readRustSources(directory) {
   );
 }
 
+function readFrontendSources(directory) {
+  if (!existsSync(directory)) {
+    return {};
+  }
+  return Object.fromEntries(
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        return Object.entries(readFrontendSources(path));
+      }
+      return entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name)
+        ? [[path, readFileSync(path, 'utf8')]]
+        : [];
+    }),
+  );
+}
+
 export function verifyRepository() {
   const rustSources = readRustSources('src-tauri/src');
+  const frontendSources = readFrontendSources('src');
   const mainSource = rustSources['src-tauri/src/main.rs'];
   const coreCargoToml = readTrackedSource('crates/lcdiff-core/Cargo.toml');
   const libSource = rustSources['src-tauri/src/lib.rs'];
@@ -388,6 +535,7 @@ export function verifyRepository() {
       ),
       nonCommandSources,
     }),
+    ...verifyPhaseThreeArchitecture({ frontendSources }),
   ];
 }
 

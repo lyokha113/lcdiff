@@ -17,7 +17,13 @@ import { onboardingKeyForMode } from "@/components/OnboardingTour";
 // reached here but resolve defensively.)
 // ---------------------------------------------------------------------------
 
-const FILE_ENTRY = { path: "config.json", kind: "text" as const, uncompressedSize: 8 };
+const FILE_ENTRY = {
+  path: "config.json",
+  kind: "text" as const,
+  uncompressedSize: 8,
+  compressedSize: 8,
+  crc32: 3_582_281_688,
+};
 
 // Source kind the open_archive mock reports. Default "file" (plain-file compare);
 // tests can flip to "archive" to exercise hunk-merge on entries inside a jar.
@@ -48,6 +54,7 @@ function viewSummary(path: string) {
     path,
     name,
     kind: "archive" as const,
+    signed: false,
     entryCount: viewRootEntries[`view:${path}`]?.length ?? 1,
   };
 }
@@ -57,8 +64,8 @@ const onePairDiff = {
     {
       path: "config.json",
       status: "different" as const,
-      left: { path: "config.json", kind: "text" as const },
-      right: { path: "config.json", kind: "text" as const },
+      left: FILE_ENTRY,
+      right: FILE_ENTRY,
     },
   ],
 };
@@ -68,6 +75,7 @@ function entryPreview(side: "left" | "right") {
     path: "config.json",
     kind: "text" as const,
     language: "json",
+    details: null,
     content: side === "left" ? '{\n  "v": 1\n}\n' : '{\n  "v": 2\n}\n',
   };
 }
@@ -89,8 +97,13 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
       return [];
     case "list_system_fonts":
       return [
-        { family: "Menlo", monospaceLikely: true },
-        { family: "Helvetica Neue", monospaceLikely: false },
+        { family: "Menlo", monospaceLikely: true, localNames: ["Menlo"], fontFile: null },
+        {
+          family: "Helvetica Neue",
+          monospaceLikely: false,
+          localNames: ["Helvetica Neue"],
+          fontFile: null,
+        },
       ];
     case "validate_path":
       return (args?.raw as string) ?? "/tmp/config.json";
@@ -157,6 +170,7 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
     case "commit_view":
       return {
         rewrittenPath: "/tmp/config.json",
+        backupPath: null,
         signatureInvalidated: false,
         copiedEntries: 1,
       };

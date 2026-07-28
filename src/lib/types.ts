@@ -58,8 +58,8 @@ export interface ArchiveSummary {
 export interface ComparePair {
   path: string;
   status: PairStatus;
-  left?: { path: string; kind: EntryKind };
-  right?: { path: string; kind: EntryKind };
+  left?: { path: string; kind: EntryKind } | null;
+  right?: { path: string; kind: EntryKind } | null;
 }
 
 export interface ArchiveDiff {
@@ -70,7 +70,7 @@ export interface EntryPreview {
   path: string;
   kind: EntryKind;
   language: string;
-  details?: string;
+  details?: string | null;
   content: string;
 }
 

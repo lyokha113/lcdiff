@@ -1,11 +1,9 @@
 import "@/lib/monaco";
 import type { DiffOnMount, OnMount } from "@monaco-editor/react";
 import {
-  type ArchiveDiff,
   type ArchiveSummary,
   type BackendSearchHit,
   type CodeEditor,
-  type CommitResult,
   type ComparePair,
   type ContentFilter,
   type DecorationRef,
@@ -15,7 +13,6 @@ import {
   type Mode,
   type MonacoApi,
   type PairStatus,
-  type PlatformHints,
   type SearchResult,
   type Side,
   type StagedEntry,
@@ -23,14 +20,54 @@ import {
   type ViewEntryTab,
   type ViewMode,
   type ViewSource,
-  type ViewSourceSummary,
   type ViewWorkspaceState,
 } from "@/lib/types";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
-import { open as chooseFile } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  cancelDeepSearch as cancelDeepSearchCommand,
+  clearStaged as clearStagedCommand,
+  closeViewSource as closeViewSourceCommand,
+  commitMerge,
+  commitView,
+  computeDiff,
+  computeNestedDiff,
+  computeViewNestedEntries,
+  deepSearch,
+  deepSearchViewSource,
+  disassemble,
+  disassembleViewEntry,
+  listSystemFonts,
+  openArchive,
+  openViewSource as openViewSourceCommand,
+  pendingOpenPaths,
+  platformHints,
+  prefetchSiblings,
+  readEntry,
+  readViewEntry,
+  search as searchArchive,
+  searchViewSource,
+  setEngine,
+  stageCopy,
+  stageViewWrite,
+  stageWrite,
+  unstage as unstageCommand,
+  unstageViewWrite,
+  validatePath,
+} from "@/ipc/commands";
+import {
+  subscribeAppAction,
+  subscribeOsOpenPaths,
+  subscribeSearchProgress,
+  subscribeSearchResult,
+} from "@/ipc/events";
+import {
+  assetUrl,
+  destroyCurrentWindow,
+  isTauriRuntime,
+  openPathDialog,
+  subscribeWindowCloseRequested,
+  subscribeWindowDragDrop,
+} from "@/ipc/platform";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -106,10 +143,6 @@ import {
   type AppUpdateState,
 } from "@/lib/update-client";
 
-function isTauriRuntime() {
-  return "__TAURI_INTERNALS__" in window;
-}
-
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const MAX_DIFF_TABS = 10;
@@ -126,10 +159,6 @@ type DiffLineChange = NonNullable<ReturnType<DiffCodeEditor["getLineChanges"]>>[
 type DiffNavigatorState = {
   currentIndex: number;
   total: number;
-};
-
-type OsOpenPathsPayload = {
-  paths: string[];
 };
 
 function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
@@ -413,9 +442,7 @@ export function App() {
   useEffect(() => {
     const styleId = "lcdiff-installed-editor-fonts";
     let style = document.getElementById(styleId) as HTMLStyleElement | null;
-    const css = installedFontFacesCss(systemFonts, (path) =>
-      isTauriRuntime() ? convertFileSrc(path) : path,
-    );
+    const css = installedFontFacesCss(systemFonts, assetUrl);
     if (!css) {
       style?.remove();
       return;
@@ -439,7 +466,7 @@ export function App() {
     let cancelled = false;
     const requestedEngine = engine;
     const previousEngine = appliedEngineRef.current;
-    invoke("set_engine", { engine: requestedEngine })
+    setEngine(requestedEngine)
       .then(() => {
         appliedEngineRef.current = requestedEngine;
         const currentSelected = selectedRef.current;
@@ -471,7 +498,7 @@ export function App() {
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");
     try {
-      const fonts = normalizeSystemFonts(await invoke<SystemFont[]>("list_system_fonts"));
+      const fonts = normalizeSystemFonts(await listSystemFonts());
       setSystemFonts(fonts);
       setFontStatus("ready");
     } catch {
@@ -575,12 +602,12 @@ export function App() {
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
-    if (cancelBackendSearch) void invoke("cancel_deep_search").catch(() => undefined);
+    if (cancelBackendSearch) void cancelDeepSearchCommand().catch(() => undefined);
   }
 
   const refreshDiff = useCallback(async () => {
     try {
-      const diff = await invoke<ArchiveDiff>("compute_diff");
+      const diff = await computeDiff();
       setPairs(diff.pairs);
       setNestedPairs({});
     } catch {
@@ -590,7 +617,7 @@ export function App() {
   }, []);
 
   const loadViewPairs = useCallback(async (sourceId: string, nestedPath = VIEW_ROOT_KEY, generation?: number) => {
-    const diff = await invoke<ArchiveDiff>("compute_view_nested_entries", { sourceId, nestedPath });
+    const diff = await computeViewNestedEntries(sourceId, nestedPath);
     if (generation !== undefined && !isCurrentViewRequest(generation, sourceId)) return diff.pairs;
     setViewWorkspace((current) => ({
       ...current,
@@ -610,7 +637,7 @@ export function App() {
         await loadViewPairs(activeViewSource.id, fullPath);
         return;
       }
-      const diff = await invoke<ArchiveDiff>("compute_nested_diff", { nestedPath: fullPath });
+      const diff = await computeNestedDiff(fullPath);
       setNestedPairs((prev) => ({ ...prev, [fullPath]: diff.pairs }));
     } catch (error) {
       setMessage(String(error));
@@ -625,9 +652,9 @@ export function App() {
     const generation = viewRequestGenerationRef.current + 1;
     viewRequestGenerationRef.current = generation;
     try {
-      const validatedPath = await invoke<string>("validate_path", { raw: path });
+      const validatedPath = await validatePath(path);
       if (!isCurrentViewRequest(generation)) return undefined;
-      const summary = await invoke<ViewSourceSummary>("open_view_source", { path: validatedPath });
+      const summary = await openViewSourceCommand(validatedPath);
       if (!isCurrentViewRequest(generation)) return undefined;
       previewRequestId.current += 1;
       clearViewSearchState(false);
@@ -663,8 +690,8 @@ export function App() {
         setPendingOpen({ side, path });
         return undefined;
       }
-      const validatedPath = await invoke<string>("validate_path", { raw: path });
-      const archive = await invoke<ArchiveSummary>("open_archive", { path: validatedPath, side });
+      const validatedPath = await validatePath(path);
+      const archive = await openArchive(validatedPath, side);
       previewRequestId.current += 1;
       searchStreamId.current += 1;
       setSearching(false);
@@ -718,7 +745,7 @@ export function App() {
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
-    void invoke("cancel_deep_search").catch(() => undefined);
+    void cancelDeepSearchCommand().catch(() => undefined);
     setMessage("Free text is ready. Edit both sides, then compare when you want a result.");
   }, [stagedTarget]);
 
@@ -755,54 +782,44 @@ export function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlisten: undefined | (() => void);
-    getCurrentWindow()
-      .onDragDropEvent((event) => {
-        if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-        if (mode === "text") {
-          setMessage("File drops are not available in Free text mode.");
-          return;
-        }
-        const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
-        if (mode === "single") void openViewPath(event.payload.paths[0]);
-        else void openPath(side, event.payload.paths[0]);
-      })
-      .then((stop) => {
-        unlisten = stop;
-      });
-    return () => unlisten?.();
+    return subscribeWindowDragDrop((event) => {
+      if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
+      if (mode === "text") {
+        setMessage("File drops are not available in Free text mode.");
+        return;
+      }
+      const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
+      if (mode === "single") void openViewPath(event.payload.paths[0]);
+      else void openPath(side, event.payload.paths[0]);
+    });
   }, [mode, openPath, openViewPath]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let disposed = false;
-    let unlisten: undefined | (() => void);
-    void invoke<string[]>("pending_open_paths")
+    void pendingOpenPaths()
       .then((paths) => {
         if (!disposed && paths.length > 0) openFromOs(paths[0]);
       })
       .catch((error) => {
         if (!disposed) setMessage(`Open-with handoff failed: ${String(error)}`);
       });
-    listen<OsOpenPathsPayload>("os-open-paths", (event) => {
-      const [path] = event.payload.paths;
+    const unlisten = subscribeOsOpenPaths((payload) => {
+      const [path] = payload.paths;
       if (path) openFromOs(path);
-      void invoke<string[]>("pending_open_paths").catch(() => undefined);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch((error) => {
+      void pendingOpenPaths().catch(() => undefined);
+    }, (error) => {
       if (!disposed) setMessage(`Open-with listener failed: ${String(error)}`);
     });
     return () => {
       disposed = true;
-      unlisten?.();
+      unlisten();
     };
   }, [openFromOs]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    void invoke<PlatformHints>("platform_hints")
+    void platformHints()
       .then((hints) => setDropHint(hints.dropHint ?? ""))
       .catch(() => setDropHint(""));
   }, []);
@@ -815,41 +832,30 @@ export function App() {
 
   useEffect(() => {
     if (!stagedTarget || !isTauriRuntime()) return;
-    let unlisten: undefined | (() => void);
-    const window = getCurrentWindow();
-    window
-      .onCloseRequested((event) => {
-        event.preventDefault();
-        if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
-        void invoke("clear_staged").then(() => window.destroy());
-      })
-      .then((stop) => {
-        unlisten = stop;
-      });
-    return () => unlisten?.();
+    return subscribeWindowCloseRequested((event) => {
+      event.preventDefault();
+      if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
+      void clearStagedCommand().then(destroyCurrentWindow);
+    });
   }, [stagedTarget]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let unlistenProgress: undefined | (() => void);
-    let unlistenResult: undefined | (() => void);
-    listen<{ searchId: number; completed: number; total: number; entryPath: string }>("search-progress", (event) => {
-      if (event.payload.searchId !== searchStreamId.current) return;
+    const unlistenProgress = subscribeSearchProgress((payload) => {
+      if (payload.searchId !== searchStreamId.current) return;
       setMessage(
-        `Deep search ${event.payload.completed}/${event.payload.total}: ${event.payload.entryPath}`,
+        `Deep search ${payload.completed}/${payload.total}: ${payload.entryPath}`,
       );
-    }).then((stop) => {
-      unlistenProgress = stop;
     });
-    listen<{ searchId: number; side: Side; hit: BackendSearchHit }>("search-result", (event) => {
-      if (event.payload.searchId !== searchStreamId.current) return;
+    const unlistenResult = subscribeSearchResult((payload) => {
+      if (payload.searchId !== searchStreamId.current) return;
       const result: SearchResult = {
-        side: event.payload.side,
+        side: payload.side,
         tier: "T3",
-        path: event.payload.hit.entryPath,
-        kind: event.payload.hit.kind,
-        line: event.payload.hit.line,
-        preview: event.payload.hit.preview,
+        path: payload.hit.entryPath,
+        kind: payload.hit.kind,
+        line: payload.hit.line,
+        preview: payload.hit.preview,
       };
       setSearchPaths((current) => new Set([...(current ?? []), result.path]));
       setSearchResults((current) =>
@@ -857,12 +863,10 @@ export function App() {
           ? current
           : [...current, result],
       );
-    }).then((stop) => {
-      unlistenResult = stop;
     });
     return () => {
-      unlistenProgress?.();
-      unlistenResult?.();
+      unlistenProgress();
+      unlistenResult();
     };
   }, []);
 
@@ -921,7 +925,7 @@ export function App() {
 
   async function browse(side: Side) {
     try {
-      const path = await chooseFile({
+      const path = await openPathDialog({
         multiple: false,
         // "All files" is the default so any file is selectable — the backend
         // opens any file and auto-detects text vs binary. The other entries are
@@ -954,7 +958,7 @@ export function App() {
 
   async function browseFolder(side: Side) {
     try {
-      const path = await chooseFile({
+      const path = await openPathDialog({
         multiple: false,
         directory: true,
       });
@@ -1062,7 +1066,7 @@ export function App() {
       return;
     }
     viewRequestGenerationRef.current += 1;
-    void invoke("close_view_source", { sourceId }).catch(() => undefined);
+    void closeViewSourceCommand(sourceId).catch(() => undefined);
     const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
     const closedActive = viewWorkspace.activeSourceId === sourceId;
     const sourceIndex = viewWorkspace.sources.findIndex((source) => source.id === sourceId);
@@ -1121,10 +1125,7 @@ export function App() {
     setSelected(pair);
     setActiveTab(pair.path);
     setViewMode("source");
-    const nextPreview = await invoke<EntryPreview>("read_view_entry", {
-      sourceId: source.id,
-      entryPath: pair.path,
-    });
+    const nextPreview = await readViewEntry(source.id, pair.path);
     if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
     setPreview({ left: nextPreview });
     setEditBuffer(nextPreview.content);
@@ -1159,7 +1160,7 @@ export function App() {
     const next: Partial<Record<Side, EntryPreview>> = {};
     for (const side of ["left", "right"] as const) {
       if (pair[side]) {
-        next[side] = await invoke<EntryPreview>("read_entry", { side, entryPath: pair.path });
+        next[side] = await readEntry(side, pair.path);
       }
     }
     if (previewRequestId.current !== requestId) return;
@@ -1175,7 +1176,7 @@ export function App() {
     );
     for (const side of ["left", "right"] as const) {
       if (pair[side]?.kind === "class" && !pair.path.includes("!/")) {
-        void invoke("prefetch_siblings", { side, entryPath: pair.path });
+        void prefetchSiblings(side, pair.path);
       }
     }
     if (
@@ -1257,10 +1258,7 @@ export function App() {
           path: pair.path,
           kind: "class",
           language: "plaintext",
-          content: await invoke<string>("disassemble_view_entry", {
-            sourceId,
-            entryPath: pair.path,
-          }),
+          content: await disassembleViewEntry(sourceId, pair.path),
         };
         if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
         setPreview({ left: nextPreview });
@@ -1289,7 +1287,7 @@ export function App() {
             path: pair.path,
             kind: "class",
             language: "plaintext",
-            content: await invoke<string>("disassemble", { side, entryPath: pair.path }),
+            content: await disassemble(side, pair.path),
           };
         }
       }
@@ -1395,7 +1393,7 @@ export function App() {
   async function copy(from: Side, to: Side, pair = selected) {
     if (!pair) return;
     try {
-      await invoke("stage_copy", { from, to, entryPath: pair.path });
+      await stageCopy(from, to, pair.path);
       setStagedTarget(to);
       setStagedEntries((current) => ({ ...current, [pair.path]: { side: to, kind: "copy" } }));
       setMessage(`Staged ${pair.path}: ${from} -> ${to}`);
@@ -1408,10 +1406,7 @@ export function App() {
     if (mode === "single") {
       if (!activeViewSource) return;
       try {
-        const result = await invoke<CommitResult>("commit_view", {
-          sourceId: activeViewSource.id,
-          backup: backupEnabled,
-        });
+        const result = await commitView(activeViewSource.id, backupEnabled);
         setStagedTarget(undefined);
         setStagedEntries({});
         await loadViewPairs(activeViewSource.id);
@@ -1430,11 +1425,7 @@ export function App() {
         // Commit all dirty sides first: open_archive/openPath rejects a reopen
         // while the other side still has pending ops.
         for (const side of dirty) {
-          await invoke<CommitResult>("commit_merge", {
-            targetSide: side,
-            backup: backupEnabled,
-            confirmSigned: false,
-          });
+          await commitMerge(side, backupEnabled, false);
         }
         setStagedTarget(undefined);
         setStagedEntries({});
@@ -1457,11 +1448,7 @@ export function App() {
         setSignedSavePrompt(targetSide);
         return;
       }
-      const result = await invoke<CommitResult>("commit_merge", {
-        targetSide,
-        backup: backupEnabled,
-        confirmSigned: signed,
-      });
+      const result = await commitMerge(targetSide, backupEnabled, signed);
       setStagedTarget(undefined);
       setStagedEntries({});
       const saveMessage =
@@ -1487,7 +1474,7 @@ export function App() {
 
   async function clearStaged() {
     editStageGenerationRef.current += 1;
-    await invoke("clear_staged");
+    await clearStagedCommand();
     setStagedTarget(undefined);
     setStagedEntries({});
     // Revert the visible editor buffers to the originally loaded content so the
@@ -1515,12 +1502,9 @@ export function App() {
       const entry = stagedEntries[key];
       const bare = stripSidePrefix(key);
       if (mode === "single" && activeViewSource) {
-        await invoke("unstage_view_write", {
-          sourceId: activeViewSource.id,
-          entryPath: bare,
-        });
+        await unstageViewWrite(activeViewSource.id, bare);
       } else {
-        await invoke("unstage", { entryPath: bare, side: entry?.side });
+        await unstageCommand(bare, entry?.side);
       }
       setStagedEntries((current) => {
         const next = { ...current };
@@ -1540,10 +1524,7 @@ export function App() {
     if (content === original) {
       if (stagedEntries[entryPath]?.kind === "edit") {
         if (!activeViewSource) return;
-        await invoke("unstage_view_write", {
-          sourceId: activeViewSource.id,
-          entryPath,
-        });
+        await unstageViewWrite(activeViewSource.id, entryPath);
         setStagedEntries((current) => {
           const next = { ...current };
           delete next[entryPath];
@@ -1557,11 +1538,7 @@ export function App() {
       if (!activeViewSource) return;
       setStagedEntries((current) => ({ ...current, [entryPath]: { side: "left", kind: "edit" } }));
       setStagedTarget("left");
-      await invoke("stage_view_write", {
-        sourceId: activeViewSource.id,
-        entryPath,
-        content,
-      });
+      await stageViewWrite(activeViewSource.id, entryPath, content);
       if (generation !== editStageGenerationRef.current) return;
       setMessage(`Edited ${entryPath} (unsaved)`);
     } catch (error) {
@@ -1588,7 +1565,7 @@ export function App() {
     try {
       setStagedEntries((current) => ({ ...current, [key]: { side, kind: "edit" } }));
       setStagedTarget(side);
-      await invoke("stage_write", { side, entryPath: selected.path, content });
+      await stageWrite(side, selected.path, content);
       if (generation !== editStageGenerationRef.current) return;
       setMessage(`Edited ${selected.path} on ${side} (unsaved)`);
     } catch (error) {
@@ -1738,18 +1715,14 @@ export function App() {
           setMessage("Open a source before searching View mode.");
           return;
         }
-        for (const hit of await invoke<BackendSearchHit[]>("search_view_source", {
-          sourceId,
-          query,
-          options,
-        })) {
+        for (const hit of await searchViewSource(sourceId, query, options)) {
           if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
           appendHit(hit, "left", "T2");
         }
       } else {
         for (const side of searchSides()) {
           if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-          for (const hit of await invoke<BackendSearchHit[]>("search", { side, query, options })) {
+          for (const hit of await searchArchive(side, query, options)) {
             if (searchStreamId.current !== searchId) return;
             appendHit(hit, side, "T2");
           }
@@ -1767,18 +1740,14 @@ export function App() {
             const sourceId = activeViewSource?.id;
             const generation = viewRequestGenerationRef.current;
             if (!sourceId) return;
-            for (const hit of await invoke<BackendSearchHit[]>("deep_search_view_source", {
-              sourceId,
-              query,
-              searchId,
-            })) {
+            for (const hit of await deepSearchViewSource(sourceId, query, searchId)) {
               if (searchStreamId.current !== searchId || !isCurrentViewRequest(generation, sourceId)) return;
               appendHit(hit, "left", "T3");
             }
           } else {
             for (const side of searchSides()) {
               if (!archives[side] || archives[side]?.metadata.sourceKind === "text") continue;
-              for (const hit of await invoke<BackendSearchHit[]>("deep_search", { side, query, searchId })) {
+              for (const hit of await deepSearch(side, query, searchId)) {
                 if (searchStreamId.current !== searchId) return;
                 appendHit(hit, side, "T3");
               }
@@ -1817,7 +1786,7 @@ export function App() {
     searchStreamId.current += 1;
     cancelableSearchActiveRef.current = false;
     setSearching(false);
-    await invoke("cancel_deep_search");
+    await cancelDeepSearchCommand();
     setMessage("Cancelling decompiled source search...");
   }
 
@@ -1858,7 +1827,7 @@ export function App() {
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
-    if (shouldCancelBackendSearch) await invoke("cancel_deep_search");
+    if (shouldCancelBackendSearch) await cancelDeepSearchCommand();
   }
 
   function clearFind() {
@@ -2045,22 +2014,13 @@ export function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<{ actionId: string }>("app-action", (event) => {
-      const { actionId } = event.payload;
+    return subscribeAppAction((payload) => {
+      const { actionId } = payload;
       if (!isAppActionId(actionId)) return;
       void dispatchRegisteredAction(actionId, document.activeElement, lastFocusKindRef.current);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    }).catch((error) => {
-      if (!disposed) setMessage(`Hotkey listener failed: ${String(error)}`);
+    }, (error) => {
+      setMessage(`Hotkey listener failed: ${String(error)}`);
     });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
   }, [dispatchRegisteredAction]);
 
   const diffNavigator = {

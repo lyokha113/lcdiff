@@ -1,7 +1,10 @@
-import { getVersion } from "@tauri-apps/api/app";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { check, type Update } from "@tauri-apps/plugin-updater";
+import {
+  checkNativeUpdate,
+  getAppVersion,
+  openExternalUrl,
+  relaunchApp,
+  type NativeUpdate,
+} from "@/ipc/updater";
 
 export const RELEASE_URL = "https://github.com/lyokha113/lcdiff/releases/latest";
 
@@ -24,7 +27,7 @@ export type AppUpdateState = {
   currentVersion?: string;
   latestVersion?: string;
   message?: string;
-  update?: Update;
+  update?: NativeUpdate;
 };
 
 export const IDLE_UPDATE_STATE: AppUpdateState = {
@@ -34,7 +37,7 @@ export const IDLE_UPDATE_STATE: AppUpdateState = {
 
 async function appVersion(): Promise<string | undefined> {
   try {
-    return await getVersion();
+    return await getAppVersion();
   } catch {
     return undefined;
   }
@@ -48,7 +51,7 @@ export async function checkForAppUpdate(
   const currentVersion = await appVersion();
 
   try {
-    const update = await check();
+    const update = await checkNativeUpdate();
     if (!update) {
       return {
         ...IDLE_UPDATE_STATE,
@@ -108,9 +111,9 @@ export async function downloadAndInstallAppUpdate(state: AppUpdateState): Promis
 }
 
 export async function restartToApplyUpdate(): Promise<void> {
-  await relaunch();
+  await relaunchApp();
 }
 
 export async function openUpdateFallback(url = RELEASE_URL): Promise<void> {
-  await openUrl(url);
+  await openExternalUrl(url);
 }
