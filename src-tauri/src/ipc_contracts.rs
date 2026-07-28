@@ -6,8 +6,12 @@ use lcdiff_core::{
 use serde_json::{json, to_value};
 
 use super::{
-    AppActionPayload, ArchiveSummary, DeepSearchMatch, EntryPreview, OsOpenPathsPayload,
-    PlatformHints, SearchHit, SearchHitKind, SearchProgress, Side, ViewSourceSummary,
+    EntryPreview, PlatformHints, SearchHit, SearchHitKind, Side,
+    events::{
+        APP_ACTION, AppActionPayload, DeepSearchMatch, OS_OPEN_PATHS, OsOpenPathsPayload,
+        SEARCH_PROGRESS, SEARCH_RESULT, SearchProgress,
+    },
+    state::{ArchiveSummary, ViewSourceSummary},
     system_fonts::SystemFont,
 };
 
@@ -51,7 +55,8 @@ const EVENT_NAMES: [&str; 4] = [
     "app-action",
 ];
 
-const MAIN_SOURCE: &str = include_str!("main.rs");
+const LIB_SOURCE: &str = include_str!("lib.rs");
+const EVENTS_SOURCE: &str = include_str!("events.rs");
 const SYSTEM_FONTS_SOURCE: &str = include_str!("system_fonts.rs");
 
 const COMMAND_SIGNATURES: [&str; 30] = [
@@ -122,42 +127,16 @@ fn registered_handler_names(source: &str) -> Vec<&str> {
         .collect()
 }
 
-fn function_body<'source>(source: &'source str, function_name: &str) -> &'source str {
-    let (_, after_function) = source
-        .split_once(&format!("fn {function_name}"))
-        .expect("expected IPC event call-site function");
-    let body_start = after_function
-        .find('{')
-        .expect("IPC event call-site function must have a body");
-    let body = &after_function[body_start + 1..];
-    let mut depth = 1;
-    for (index, character) in body.char_indices() {
-        match character {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return &body[..index];
-                }
-            }
-            _ => {}
-        }
-    }
-    panic!("IPC event call-site function body must close");
-}
-
-fn emitted_event_names(source: &str) -> Vec<&str> {
+fn emitted_event_constants(source: &str) -> Vec<&str> {
     source
         .split(".emit(")
         .skip(1)
         .map(|after_emit| {
-            let (_, after_open_quote) = after_emit
-                .split_once('"')
-                .expect("event name must be a string literal");
-            let (event_name, _) = after_open_quote
-                .split_once('"')
-                .expect("event name literal must close");
-            event_name
+            after_emit
+                .split_once(',')
+                .expect("event emission must separate name and payload")
+                .0
+                .trim()
         })
         .collect()
 }
@@ -410,43 +389,25 @@ fn serializes_os_open_and_app_action_event_payloads() {
 
 #[test]
 fn locks_the_exact_command_and_event_name_allowlists() {
-    assert_eq!(registered_handler_names(MAIN_SOURCE), COMMAND_NAMES);
+    assert_eq!(registered_handler_names(LIB_SOURCE), COMMAND_NAMES);
     assert_eq!(
-        tauri_command_signatures(MAIN_SOURCE)
+        tauri_command_signatures(LIB_SOURCE)
             .into_iter()
             .chain(tauri_command_signatures(SYSTEM_FONTS_SOURCE))
             .collect::<Vec<_>>(),
         COMMAND_SIGNATURES,
     );
-
     assert_eq!(
-        emitted_event_names(function_body(MAIN_SOURCE, "deep_search")),
-        ["search-result", "search-progress"],
-    );
-    assert_eq!(
-        emitted_event_names(function_body(MAIN_SOURCE, "deep_search_view_source")),
-        ["search-result", "search-progress"],
-    );
-    assert_eq!(
-        emitted_event_names(function_body(MAIN_SOURCE, "store_and_emit_open_paths")),
-        ["os-open-paths"],
-    );
-    let (_, menu_callback) = MAIN_SOURCE
-        .split_once(".on_menu_event")
-        .expect("desktop entrypoint must define the menu callback");
-    let (menu_callback, _) = menu_callback
-        .split_once(".invoke_handler")
-        .expect("menu callback must precede handler registration");
-    assert_eq!(emitted_event_names(menu_callback), ["app-action"]);
-    assert_eq!(
-        emitted_event_names(MAIN_SOURCE)
-            .into_iter()
-            .fold(Vec::new(), |mut names, event| {
-                if !names.contains(&event) {
-                    names.push(event);
-                }
-                names
-            }),
+        [SEARCH_RESULT, SEARCH_PROGRESS, OS_OPEN_PATHS, APP_ACTION],
         EVENT_NAMES,
+    );
+    assert_eq!(
+        emitted_event_constants(EVENTS_SOURCE),
+        [
+            "SEARCH_RESULT",
+            "SEARCH_PROGRESS",
+            "OS_OPEN_PATHS",
+            "APP_ACTION"
+        ],
     );
 }

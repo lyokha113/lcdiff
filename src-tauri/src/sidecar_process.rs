@@ -249,6 +249,11 @@ impl Drop for SidecarClient {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn sidecar_clients_share_cache(left: &SidecarClient, right: &SidecarClient) -> bool {
+    std::sync::Arc::ptr_eq(&left.cache, &right.cache)
+}
+
 fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
     env::var_os("LCDIFF_SIDECAR_JAR").map_or_else(
         || {
