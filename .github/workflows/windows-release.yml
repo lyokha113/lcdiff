@@ -64,6 +64,10 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
 
+      - name: Verify architecture boundaries
+        shell: pwsh
+        run: npm run verify:architecture
+
       - name: List Windows updater assets
         shell: pwsh
         run: Get-ChildItem -Path artifacts/windows -Include *.sig,latest-*.json -Recurse

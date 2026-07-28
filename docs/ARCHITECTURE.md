@@ -3,61 +3,168 @@
 ## LCDiff Application Shape
 
 ```text
-React + shadcn/ui + Tailwind v4 + Monaco desktop view
-  -> Tauri IPC adapter
-    -> lcdiff-core Rust domain/application crate
-      -> lazy ZIP/JAR reads and atomic rewrite
-      -> length-prefixed JSON sidecar protocol
-        -> bundled JVM service: Vineflower default, CFR/JD-Core/JD-Core v0 alternates, ASM Textifier
+src/app/App.tsx composition root
+  -> feature state/controllers and presentational components
+    -> src/ipc typed command/event/platform adapters
+      -> stable Tauri command and event contracts
+        -> src-tauri command modules
+          -> stored state + lcdiff-core
+            -> lazy ZIP/JAR reads and atomic rewrite
+          -> sidecar_process
+            -> length-prefixed JSON Java 17 sidecar
+
+native menu / single instance / OS open
+  -> src-tauri/menu.rs
+    -> src-tauri/events.rs
+      -> src/ipc/events.ts
+        -> shell/source feature state
 ```
 
-`lcdiff-core` owns archive metadata, normalized entries, CRC diff, class
-constant-pool search, staged changes, and save semantics. The frontend and
-Tauri host are adapters. Decompiled Java is a view only and must never enter merge writes.
+`lcdiff-core` remains the Tauri-free domain crate. It owns archive metadata,
+normalized entries, CRC diff, class constant-pool search, nested extraction,
+staged original bytes, and atomic save/backup semantics. The desktop host and
+frontend are adapters. Decompiled Java is a view only and never enters merge
+writes.
 
-The Tauri desktop adapter currently uses React with shadcn/ui source
-components, Tailwind v4 theming, and Monaco. It provides path preflight with per-panel
-inline errors, picker and drop events, entry preview, tree diff, staged copy,
-clear, signed-save confirmation, commit, search IPC, background deep source
-search with cancel, async sidecar warm
-start, a 30-second watchdog, canonical-path, metadata, typed-options, mode, and
-engine-version keyed 128 MB LRU source/bytecode cache, and one restart/retry.
-Dedicated deep-search and
-low-priority prefetch JVM workers share that cache without blocking interactive
-class navigation. The desktop view renders a hierarchical foldable file tree
-with per-node status, a multi-tab diff workspace (capped at 10 tabs with LRU
-eviction and per-tab view-mode/preview state), a workspace-level Compare
-content filter that switches Monaco between all lines and collapsed unchanged
-regions with three context lines, a Preferences drawer organized
-into Appearance, Editor, and Misc sections, where Appearance controls
-Light/Dark/System color pattern, Editor controls Monaco-only font/display
-settings, and Misc groups Search, Decompiler, and Save defaults, contextual
-Files-index/current-diff search, and a startup splash while the sidecar warms. Nested archives
-(jar/zip/war/ear inside an archive) expand lazily through the
-`compute_nested_diff` command using the `parent!/inner` path separator, extract
-to cached temp files on demand, and merge by flattening staged replacements back
-into their parent archives. ZIP open/diff/read/search/save and sidecar read
-operations
-use async Tauri commands with blocking work offloaded from the IPC thread. The
-Java sidecar implements Vineflower decompile by default, CFR, JD-Core, and
-JD-Core v0 as explicit alternate source engines, and ASM Textifier for bytecode.
-In-app updates use `tauri-plugin-updater` with signed updater artifacts from
-GitHub Releases. LCDiff checks per-platform static updater manifests, installs
-signed updater artifacts when the package is native-updatable, and uses a
-GitHub Release fallback when the manifest, signature, package, or platform
-cannot complete a native update.
-`scripts/assemble-sidecar-resources.sh` builds a minimal Java 17 jlink runtime
-and copies the shaded sidecar JAR into Tauri resources. Release verification is
-split between `npm run verify:all` and external platform gates.
-`scripts/sign-macos-bundle.sh` stages a clean copy outside FileProvider
-directories, signs JRE Mach-O children inside-out, signs the outer `.app`,
-verifies the result, and can copy the signed app back to a deterministic output
-path. `scripts/notarize-macos-app.sh` zips that signed `.app`, submits it with
-`xcrun notarytool`, staples the ticket, and runs Gatekeeper assessment when
-Developer ID credentials are available. `scripts/package-macos-dmg.sh` packages
-the final `.app` into a verified UDZO DMG with an `Applications` symlink. Real
-Developer ID notarization, Windows Authenticode signing, Windows atomic replace,
-and Linux compositor drop behavior remain external gates in
+## Final File Ownership
+
+### Tauri adapter
+
+```text
+src-tauri/src/
+  main.rs                 binary entrypoint; calls lcdiff_desktop::run()
+  lib.rs                  plugins, setup, handler registration and run loop
+  state.rs                AppState storage and lifecycle invariants
+  events.rs               four stable event names, payloads and emit helpers
+  menu.rs                 menu, accelerators, single instance and OS-open handoff
+  commands/
+    app.rs                path validation, platform hints, pending paths, fonts
+    archive.rs            archive/diff/nested/View-source lifecycle
+    preview.rs            reads, decompile, bytecode and engine selection
+    merge.rs              stage, unstage, commit and signed-save boundary
+    search.rs             T2/T3 search, cancellation and sibling prefetch
+  sidecar_process.rs      Java process, protocol, cache, timeout and retry
+  system_fonts.rs         blocking native font enumeration
+```
+
+`lib.rs` preserves the ordered 30-command handler list and constructs the
+existing single `Arc<Mutex<AppState>>`. `state.rs` stores archives, per-source
+nested caches, View sources, merge plans, sidecar workers, cancellation
+generations, engine selection, and pending open paths. Command modules own
+workflow orchestration; stored state owns lifecycle invariants.
+
+### Frontend
+
+```text
+src/
+  app/App.tsx             composition and cross-feature lifecycle wiring
+  ipc/
+    types.ts              exact Rust wire DTOs and event payloads
+    commands.ts           typed wrappers for the 30 stable commands
+    events.ts             typed subscriptions and unlisten ownership
+    platform.ts           dialog/window/drop/asset adapters
+    updater.ts            app/updater/process/opener adapters
+  features/
+    shell/                mode, navigation, history, onboarding and status
+    sources/              source inputs, View state/tabs and file tree
+    workspace/            Monaco runtime, models, tab LRU and previews
+    free-text/            drafts, readonly results and bounded history
+    search/               search controls, projection and result state
+    merge/                generation-guarded staging and save confirmation
+    preferences/          preferences, fonts and updater state/UI
+  components/ui/          approved shared shadcn/Radix primitives only
+  lib/                    pure React/Monaco/Tauri/feature-free utilities
+```
+
+`src/app/App.tsx` is the single composition root, not a second service layer.
+Workspace and merge side effects live in `useWorkspaceController` and
+`useMergeController`; feature components render typed state and emit intent.
+
+## Completed Ownership Mapping
+
+| Before standardization | Final owner |
+| --- | --- |
+| `src/App.tsx` | `src/app/App.tsx` plus workspace and merge controllers |
+| UI projections and wire assumptions in `src/lib/types.ts` | exact DTOs in `src/ipc/types.ts`; feature projections remain in `src/lib/types.ts` |
+| `src/lib/update-client.ts` | `src/ipc/updater.ts` plus `src/features/preferences/update-client.ts` |
+| `src/lib/monaco.ts`, editor lifecycle in the root | `src/features/workspace/monaco-runtime.ts`, `editor-types.ts`, and `useWorkspaceController.ts` |
+| components under `src/components/` | matching `src/features/*`; only approved primitives remain in `src/components/ui/` |
+| free-text/history/search/preferences/source/tab helpers under generic folders | their matching `src/features/*` owner |
+| builder, state, commands, events and menu in `src-tauri/src/main.rs` | `lib.rs`, `state.rs`, `commands/*`, `events.rs`, and `menu.rs` |
+| JVM process/cache mixed with desktop orchestration | `src-tauri/src/sidecar_process.rs` |
+
+## Dependency Directions
+
+Allowed arrows are:
+
+```text
+feature intent -> src/ipc -> stable command/event
+command module -> state | events | sidecar_process | system_fonts | lcdiff-core
+menu -> events -> frontend IPC subscriptions
+src/app -> feature controllers/components + typed IPC orchestration
+feature -> same-feature files + non-component feature contracts
+        -> src/lib + src/components/ui + src/ipc
+```
+
+The reverse arrows are forbidden:
+
+- only `src/ipc/**` may import `@tauri-apps/*` or access Tauri internals;
+- `src/lib/**` may not import React, Monaco, Tauri, or a feature;
+- a feature may not import a React component owned by another feature;
+- non-primitive components may not live under `src/components`;
+- `state.rs`, `events.rs`, `menu.rs`, `sidecar_process.rs`, and
+  `system_fonts.rs` may not depend on command modules;
+- Tauri command annotations belong only under `src-tauri/src/commands`;
+- `main.rs` owns no state, command, event, menu, or workflow logic;
+- `lcdiff-core` has no Tauri dependency.
+
+## Wire Contract Authority
+
+`src/ipc/types.ts` is the frontend wire authority and mirrors Rust serialization
+exactly. It includes the complete archive fields, exact wire enum sets, required
+`ViewSourceSummary.signed`, complete `PlatformHints`, explicit nullable fields,
+and omitted optional `SearchHit.line`/`preview`. Feature view models are
+deliberate projections after the IPC boundary and are not wire declarations.
+
+The command names, handler order, argument keys, event names, camelCase fields,
+enum spelling, null/omission behavior, and error strings are compatibility
+contracts. Rust serialization fixtures and frontend facade tests lock them.
+
+## Executable Architecture Guard
+
+`npm run verify:architecture` runs `scripts/verify-architecture.mjs` against the
+tracked source tree. Its independent rules enforce the thin entrypoint and
+Tauri-free core, backend command/event allowlists and dependency direction,
+frontend Tauri/command/event ownership, pure-lib and feature ownership, and the
+workspace/merge controller boundaries. `scripts/verify-architecture.test.mjs`
+contains focused fixtures for each rule.
+
+The guard is phase-independent after standardization: it is the first step of
+`npm run verify:all` and each release workflow has an explicit architecture
+validation step. Platform release scripts still run the aggregate gate before
+packaging where supported.
+
+## Preserved Runtime Contracts
+
+- `NestedArchiveCache` remains scoped per left/right/View source and resets on
+  source replacement or successful commit; `!/` lookup stays lazy.
+- `MergePlan` remains the only write path. Original entry bytes are staged and
+  saved atomically with optional backup; signed targets require confirmation.
+- Java 17 resource lookup, framed JSON, the 30-second watchdog, one
+  restart/retry, 128 MiB shared response cache, warm start, and separate
+  interactive/prefetch/deep-search workers remain unchanged.
+- Menu IDs, accelerators, macOS close policy, single-instance arguments,
+  `RunEvent::Opened`, and store-before-emit pending path order remain unchanged.
+- Monaco models/workers, ten-tab LRU, staged buffers, diff options, installed
+  font fallback/remeasure, and read-only editability boundaries remain
+  feature-owned.
+- Persistence keys remain `lcdiff.history`, `lcdiff.freeTextHistory.v1` with a
+  20-entry cap, and `lcdiff.onboarding.v1.<mode>`.
+
+Nested archive, sidecar, staged-save, frontend render, and native bundle checks
+are part of the local proof ladder in `docs/DEVELOPMENT.md`. Windows atomic
+replace, Linux compositor behavior, Developer ID notarization, Authenticode,
+and public release/AUR publication remain external gates in
 `docs/PLATFORM_VALIDATION.md`.
 
 ## Frontend Interaction Zones
@@ -75,11 +182,11 @@ command bar
 context overlays: search, preferences, pending changes, confirmations
 ```
 
-`App.tsx` remains the orchestration owner for Tauri-facing state. `MenuBar`,
-`SourceChips`, `WorkspaceTabs`, `FileTree`, `DiffView`, `SearchBar`,
-`SearchResultsPanel`, `ConfigDrawer`, and `StatusBar` render state and emit typed
-intent callbacks. Search opens on demand and closes after result selection, so
-the contextual surface cannot block the Files navigator.
+`src/app/App.tsx` composes the workflow controllers and feature surfaces.
+`MenuBar`, `SourceChips`, `WorkspaceTabs`, `FileTree`, `DiffView`, `SearchBar`,
+`SearchResultsPanel`, `ConfigDrawer`, and `StatusBar` render state and emit
+typed intent callbacks. Search opens on demand and closes after result
+selection, so the contextual surface cannot block the Files navigator.
 
 View mode is a multi-source inspector with source tabs, a single-column tree
 for the active source, and per-source entry tabs. It uses View-specific state

@@ -62,6 +62,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: scripts/verify-macos-distribution.sh --target aarch64-apple-darwin
 
+      - name: Verify architecture boundaries
+        shell: bash
+        run: npm run verify:architecture
+
       - name: Stage macOS release assets
         shell: bash
         run: |

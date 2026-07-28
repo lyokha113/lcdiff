@@ -6,13 +6,13 @@ release. The main README is intentionally user-facing.
 ## Architecture
 
 ```text
-React + shadcn/ui + Tailwind + Monaco   (view + intent emitter)
-        |  Tauri IPC
-Rust src-tauri  (commands, async adapters)
+src/app + src/features   (composition, workflow state, React + Monaco)
+        |  typed src/ipc facade
+src-tauri commands       (Tauri interface and async adapters)
+        |                 \
+src-tauri state            sidecar_process -> Java 17 JVM service
         |
-Rust lcdiff-core  (archive state, staged bytes, CRC diff, search, save)
-        |  framed stdio
-JVM decompiler sidecar  (Vineflower default / CFR / JD-Core / JD-Core v0 / ASM, jlink Java 17)
+lcdiff-core              (archive domain, staged bytes, atomic save)
 ```
 
 The frontend never owns archive bytes. Rust owns archive state, staged changes,
@@ -25,8 +25,15 @@ merge writes. See [ARCHITECTURE.md](ARCHITECTURE.md) for the boundary rules.
 lcdiff/
   crates/
     lcdiff-core/   Rust archive engine
-  src-tauri/       Tauri v2 host and IPC commands
-  src/             React + Monaco frontend
+  src-tauri/
+    src/lib.rs     desktop composition root
+    src/state.rs   stored desktop state and lifecycle invariants
+    src/commands/  stable Tauri command modules
+  src/
+    app/           frontend composition root
+    ipc/           exact wire DTOs and the only Tauri imports
+    features/      workflow-owned UI, state and controllers
+    lib/           pure shared utilities
   sidecar/         JVM decompiler sidecar
   scripts/         build, sign, package, verification scripts
   docker/          Linux release build containers
@@ -59,16 +66,35 @@ views degrade.
 Run these before shipping changes:
 
 ```bash
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+npm run verify:architecture
 npm run verify:all
-npm run verify:frontend-render
+env -u RUSTC_WRAPPER cargo fmt --all -- --check
+env -u RUSTC_WRAPPER cargo clippy --workspace --all-targets -- -D warnings
+env -u RUSTC_WRAPPER cargo test --workspace
+scripts/test-sidecar-smoke.sh
+npm run tauri -- build --debug --bundles app
+git diff --check
 ```
 
-`npm run verify:all` runs the frontend build, unit tests, browser render check,
-branding check, and release-doc synchronization. `npm run verify:frontend-render` boots
-the shell under Playwright and fails on browser page errors.
+Use Java 17 and Node on `PATH`; point `LCDIFF_JLINK` at that JDK's `jlink`
+when assembling resources. The Rust commands explicitly remove
+`RUSTC_WRAPPER` so a stale local wrapper cannot invalidate the gate.
+
+`npm run verify:all` starts with the architecture guard, then runs the frontend
+build, unit tests, browser render check, branding check, and release-doc
+synchronization. `npm run verify:architecture` is also useful as the focused
+boundary check. `npm run verify:frontend-render` boots the shell under
+Playwright and fails on browser page errors.
+
+The debug bundle gate is artifact-backed only after inspecting
+`target/debug/bundle/macos/LCDiff.app` and its bundled
+`Contents/Resources/resources/sidecar/lcdiff-sidecar.jar` and
+`Contents/Resources/resources/jre/bin/java`.
+Interactive macOS smoke may prove only the behaviors actually exercised with
+that built artifact and real sample inputs. Keep Windows atomic replacement,
+Linux compositor/drop behavior, Developer ID notarization, Authenticode, and
+public release publication as separate external gates in
+[PLATFORM_VALIDATION.md](PLATFORM_VALIDATION.md).
 
 ## Build Linux
 

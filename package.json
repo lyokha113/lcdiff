@@ -12,7 +12,7 @@
     "verify:frontend-render": "node scripts/verify-frontend-render.mjs",
     "verify:branding": "node scripts/verify-branding.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",
-    "verify:all": "npm run build && npm test && npm run verify:frontend-render && npm run verify:branding && npm run verify:docs"
+    "verify:all": "npm run verify:architecture && npm run build && npm test && npm run verify:frontend-render && npm run verify:branding && npm run verify:docs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.2.10",
