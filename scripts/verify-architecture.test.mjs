@@ -409,6 +409,34 @@ test('rejects direct Tauri internals access outside src/ipc production files', (
   }
 });
 
+test('rejects statically computed and reflected Tauri internals access', () => {
+  const internalAccesses = [
+    'const internals = globalThis["__TAURI_" + "INTERNALS__"];\n',
+    'const internals = window[(("__TAURI_") + "INTERNALS__")];\n',
+    'const internals = Reflect.get(globalThis, "__TAURI_INTERNALS__");\n',
+    'const present = Reflect.has(window, "__TAURI_" + "INTERNALS__");\n',
+  ];
+
+  for (const internalAccess of internalAccesses) {
+    const sources = structuredClone(cleanPhaseThreeSources);
+    sources.frontendSources['src/App.tsx'] = internalAccess;
+    assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+      'src/App.tsx must not access __TAURI_INTERNALS__ outside src/ipc',
+    ]);
+  }
+});
+
+test('allows standalone internals strings and reflection on unrelated objects', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/App.tsx'] = `
+    const key = "__TAURI_" + "INTERNALS__";
+    const value = Reflect.get(config, "__TAURI_INTERNALS__");
+    const present = Reflect.has(settings, "__TAURI_" + "INTERNALS__");
+  `;
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
+});
+
 test('rejects raw backend command and event literals outside src/ipc production files', () => {
   const rawCalls = ['invoke("open_archive")', 'listen("search-result", handler)'];
 

@@ -411,6 +411,66 @@ function rawIpcCallValues(source) {
   ].map((match) => match[2]);
 }
 
+function unwrapStaticExpression(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function staticStringValue(node) {
+  const expression = unwrapStaticExpression(node);
+  if (ts.isStringLiteralLike(expression)) {
+    return expression.text;
+  }
+  if (
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = staticStringValue(expression.left);
+    const right = staticStringValue(expression.right);
+    return left === undefined || right === undefined
+      ? undefined
+      : left + right;
+  }
+  return undefined;
+}
+
+function isGlobalObjectExpression(node) {
+  const expression = unwrapStaticExpression(node);
+  return (
+    ts.isIdentifier(expression) &&
+    (expression.text === 'window' || expression.text === 'globalThis')
+  );
+}
+
+function reflectedMethodName(node) {
+  const expression = unwrapStaticExpression(node);
+  if (
+    ts.isPropertyAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === 'Reflect'
+  ) {
+    return expression.name.text;
+  }
+  if (
+    ts.isElementAccessExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    expression.expression.text === 'Reflect' &&
+    expression.argumentExpression
+  ) {
+    return staticStringValue(expression.argumentExpression);
+  }
+  return undefined;
+}
+
 function accessesTauriInternals(path, source) {
   const scriptKind = path.endsWith('.tsx')
     ? ts.ScriptKind.TSX
@@ -434,14 +494,20 @@ function accessesTauriInternals(path, source) {
       (
         ts.isElementAccessExpression(node) &&
         node.argumentExpression &&
-        ts.isStringLiteralLike(node.argumentExpression) &&
-        node.argumentExpression.text === '__TAURI_INTERNALS__'
+        staticStringValue(node.argumentExpression) === '__TAURI_INTERNALS__'
       ) ||
       (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
-        ts.isStringLiteralLike(node.left) &&
-        node.left.text === '__TAURI_INTERNALS__'
+        staticStringValue(node.left) === '__TAURI_INTERNALS__'
+      ) ||
+      (
+        ts.isCallExpression(node) &&
+        (reflectedMethodName(node.expression) === 'get' ||
+          reflectedMethodName(node.expression) === 'has') &&
+        node.arguments.length >= 2 &&
+        isGlobalObjectExpression(node.arguments[0]) &&
+        staticStringValue(node.arguments[1]) === '__TAURI_INTERNALS__'
       )
     ) {
       found = true;
