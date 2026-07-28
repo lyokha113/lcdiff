@@ -8,6 +8,7 @@
     "test": "vitest run --exclude \".worktrees/**\"",
     "build": "tsc && vite build",
     "tauri": "tauri",
+    "verify:architecture": "node scripts/verify-architecture.mjs",
     "verify:frontend-render": "node scripts/verify-frontend-render.mjs",
     "verify:branding": "node scripts/verify-branding.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",

@@ -23,6 +23,8 @@ use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder},
 };
 
+#[cfg(test)]
+mod ipc_contracts;
 mod sidecar_process;
 mod system_fonts;
 
