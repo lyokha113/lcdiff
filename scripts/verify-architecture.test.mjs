@@ -654,3 +654,38 @@ test('rejects merge staging infrastructure imports from the app root', () => {
     ]);
   }
 });
+
+test('rejects dynamic IPC command facade imports from the app root', () => {
+  const forbiddenImports = [
+    'const commands = await import("../ipc/commands");\ncommands.stageWrite;\n',
+    'const commands = await import("@/ipc/commands");\ncommands.stageViewWrite;\n',
+    'const commands = await import("@/ipc/../ipc/commands");\ncommands.readEntry;\n',
+  ];
+
+  for (const forbiddenImport of forbiddenImports) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/app/App.tsx'] = forbiddenImport;
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/app/App.tsx must not dynamically import src/ipc/commands; feature controllers own workspace and merge commands',
+    ]);
+  }
+});
+
+test('allows unrelated dynamic imports from the app root', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/app/App.tsx'] =
+    'const helpers = await import("../features/search/search");\nhelpers.searchResultKey;\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('ignores dynamic IPC import text in App comments and strings', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/app/App.tsx'] = `
+    // const commands = await import("../ipc/commands");
+    /* import("@/ipc/commands"); */
+    const note = 'import("@/ipc/../ipc/commands")';
+  `;
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});

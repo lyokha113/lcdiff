@@ -669,6 +669,28 @@ function namedImportsFrom(sourcePath, source, modulePath) {
   return names;
 }
 
+function dynamicImportModulePaths(sourcePath, source) {
+  const sourceFile = frontendSourceFile(sourcePath, source);
+  const modulePaths = [];
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+      node.arguments.length === 1 &&
+      ts.isStringLiteralLike(node.arguments[0])
+    ) {
+      const modulePath = normalizedFrontendModulePath(
+        sourcePath,
+        node.arguments[0].text,
+      );
+      if (modulePath) modulePaths.push(modulePath);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return modulePaths;
+}
+
 function resolvedFrontendImport(sourcePath, specifier, frontendSources) {
   const base = normalizedFrontendModulePath(sourcePath, specifier);
   if (!base) return undefined;
@@ -736,9 +758,21 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
       sourcePath === 'src/app/App.tsx'
         ? namedImportsFrom(sourcePath, source, 'src/ipc/commands')
         : [];
+    const appDynamicImports =
+      sourcePath === 'src/app/App.tsx'
+        ? dynamicImportModulePaths(sourcePath, source)
+        : [];
     const resolvedSpecifiers = specifiers
       .map((specifier) => normalizedFrontendModulePath(sourcePath, specifier))
       .filter(Boolean);
+    if (
+      sourcePath === 'src/app/App.tsx' &&
+      appDynamicImports.includes('src/ipc/commands')
+    ) {
+      violations.push(
+        'src/app/App.tsx must not dynamically import src/ipc/commands; feature controllers own workspace and merge commands',
+      );
+    }
     if (
       sourcePath === 'src/app/App.tsx' &&
       (
