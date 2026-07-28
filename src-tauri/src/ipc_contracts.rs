@@ -56,9 +56,53 @@ const EVENT_NAMES: [&str; 4] = [
 ];
 
 const LIB_SOURCE: &str = include_str!("lib.rs");
+const APP_COMMANDS_SOURCE: &str = include_str!("commands/app.rs");
+const ARCHIVE_COMMANDS_SOURCE: &str = include_str!("commands/archive.rs");
+const PREVIEW_COMMANDS_SOURCE: &str = include_str!("commands/preview.rs");
+const MERGE_COMMANDS_SOURCE: &str = include_str!("commands/merge.rs");
+const SEARCH_COMMANDS_SOURCE: &str = include_str!("commands/search.rs");
+const COMMAND_SOURCES: [&str; 5] = [
+    APP_COMMANDS_SOURCE,
+    ARCHIVE_COMMANDS_SOURCE,
+    PREVIEW_COMMANDS_SOURCE,
+    MERGE_COMMANDS_SOURCE,
+    SEARCH_COMMANDS_SOURCE,
+];
 const EVENTS_SOURCE: &str = include_str!("events.rs");
 const MENU_SOURCE: &str = include_str!("menu.rs");
-const SYSTEM_FONTS_SOURCE: &str = include_str!("system_fonts.rs");
+
+const COMMAND_SIGNATURE_NAMES: [&str; 30] = [
+    "validate_path",
+    "platform_hints",
+    "pending_open_paths",
+    "open_archive",
+    "compute_diff",
+    "compute_nested_diff",
+    "open_view_source",
+    "list_view_sources",
+    "read_entry",
+    "read_view_entry",
+    "compute_view_nested_entries",
+    "close_view_source",
+    "set_engine",
+    "disassemble",
+    "disassemble_view_entry",
+    "stage_copy",
+    "stage_write",
+    "stage_view_write",
+    "unstage_view_write",
+    "commit_view",
+    "commit_merge",
+    "clear_staged",
+    "unstage",
+    "search",
+    "search_view_source",
+    "deep_search",
+    "deep_search_view_source",
+    "cancel_deep_search",
+    "prefetch_siblings",
+    "list_system_fonts",
+];
 
 const COMMAND_SIGNATURES: [&str; 30] = [
     "fnvalidate_path(raw:String)->Result<String,String>",
@@ -68,12 +112,12 @@ const COMMAND_SIGNATURES: [&str; 30] = [
     "asyncfncompute_diff(state:State<'_,SharedState>)->Result<ArchiveDiff,String>",
     "asyncfncompute_nested_diff(nested_path:String,state:State<'_,SharedState>,)->Result<ArchiveDiff,String>",
     "asyncfnopen_view_source(path:String,state:State<'_,SharedState>,)->Result<ViewSourceSummary,String>",
-    "fnlist_view_sources(state:State<'_,SharedState>)->Result<Vec<ViewSourceSummary>,String>",
+    "fnlist_view_sources(state:State<'_,SharedState>,)->Result<Vec<ViewSourceSummary>,String>",
     "asyncfnread_entry(side:Side,entry_path:String,state:State<'_,SharedState>,)->Result<EntryPreview,String>",
     "asyncfnread_view_entry(source_id:String,entry_path:String,state:State<'_,SharedState>,)->Result<EntryPreview,String>",
     "asyncfncompute_view_nested_entries(source_id:String,nested_path:String,state:State<'_,SharedState>,)->Result<ArchiveDiff,String>",
-    "fnclose_view_source(source_id:String,state:State<'_,SharedState>)->Result<(),String>",
-    "fnset_engine(engine:DecompileEngine,state:State<'_,SharedState>)->Result<(),String>",
+    "fnclose_view_source(source_id:String,state:State<'_,SharedState>,)->Result<(),String>",
+    "fnset_engine(engine:DecompileEngine,state:State<'_,SharedState>,)->Result<(),String>",
     "asyncfndisassemble(side:Side,entry_path:String,state:State<'_,SharedState>,)->Result<String,String>",
     "asyncfndisassemble_view_entry(source_id:String,entry_path:String,state:State<'_,SharedState>,)->Result<String,String>",
     "fnstage_copy(from:Side,to:Side,entry_path:String,state:State<'_,SharedState>,)->Result<(),String>",
@@ -108,10 +152,21 @@ fn tauri_command_signatures(source: &str) -> Vec<String> {
         let header_end = after_attribute
             .find('{')
             .expect("Tauri command must have a function body");
-        signatures.push(compact(&after_attribute[..header_end]));
+        signatures.push(compact(&after_attribute[..header_end]).replace("pub(crate)", ""));
         remaining = &after_attribute[header_end + 1..];
     }
     signatures
+}
+
+fn tauri_command_signature(function_name: &str) -> String {
+    COMMAND_SOURCES
+        .iter()
+        .flat_map(|source| tauri_command_signatures(source))
+        .find(|signature| {
+            signature.contains(&format!("fn{function_name}("))
+                || signature.contains(&format!("fn{function_name}<"))
+        })
+        .unwrap_or_else(|| panic!("missing Tauri command signature for {function_name}"))
 }
 
 fn registered_handler_names(source: &str) -> Vec<&str> {
@@ -463,9 +518,9 @@ fn serializes_os_open_and_app_action_event_payloads() {
 fn locks_the_exact_command_and_event_name_allowlists() {
     assert_eq!(registered_handler_names(LIB_SOURCE), COMMAND_NAMES);
     assert_eq!(
-        tauri_command_signatures(LIB_SOURCE)
-            .into_iter()
-            .chain(tauri_command_signatures(SYSTEM_FONTS_SOURCE))
+        COMMAND_SIGNATURE_NAMES
+            .iter()
+            .map(|name| tauri_command_signature(name))
             .collect::<Vec<_>>(),
         COMMAND_SIGNATURES,
     );
@@ -487,11 +542,14 @@ fn locks_the_exact_command_and_event_name_allowlists() {
 #[test]
 fn locks_each_deep_search_producer_to_result_then_progress_events() {
     assert_eq!(
-        routing_helper_calls(function_body(LIB_SOURCE, "deep_search")),
+        routing_helper_calls(function_body(SEARCH_COMMANDS_SOURCE, "deep_search")),
         ["emit_search_result", "emit_search_progress"],
     );
     assert_eq!(
-        routing_helper_calls(function_body(LIB_SOURCE, "deep_search_view_source")),
+        routing_helper_calls(function_body(
+            SEARCH_COMMANDS_SOURCE,
+            "deep_search_view_source"
+        )),
         ["emit_search_result", "emit_search_progress"],
     );
 }

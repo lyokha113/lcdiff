@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { verifyPhaseOneArchitecture } from './verify-architecture.mjs';
+import * as architecture from './verify-architecture.mjs';
+
+const { verifyPhaseOneArchitecture } = architecture;
 
 const cleanMain = 'fn main() {}\n';
 const cleanCoreCargoToml = '[dependencies]\nserde = "1"\n';
@@ -119,4 +121,145 @@ test('reports every independent Phase-1 violation together', () => {
       'crates/lcdiff-core/Cargo.toml must not depend on tauri',
     ],
   );
+});
+
+const expectedCommandNames = [
+  'validate_path',
+  'platform_hints',
+  'list_system_fonts',
+  'open_archive',
+  'compute_diff',
+  'compute_nested_diff',
+  'open_view_source',
+  'list_view_sources',
+  'read_entry',
+  'read_view_entry',
+  'compute_view_nested_entries',
+  'close_view_source',
+  'set_engine',
+  'disassemble',
+  'disassemble_view_entry',
+  'stage_copy',
+  'stage_write',
+  'stage_view_write',
+  'unstage_view_write',
+  'commit_view',
+  'commit_merge',
+  'clear_staged',
+  'unstage',
+  'search',
+  'search_view_source',
+  'deep_search',
+  'deep_search_view_source',
+  'cancel_deep_search',
+  'prefetch_siblings',
+  'pending_open_paths',
+];
+
+const expectedEventNames = [
+  'search-progress',
+  'search-result',
+  'os-open-paths',
+  'app-action',
+];
+
+const cleanPhaseTwoSources = {
+  libSource: `tauri::generate_handler![${expectedCommandNames.join(',')}]\n`,
+  commandSources: Object.fromEntries(
+    expectedCommandNames.map((name) => [
+      `src-tauri/src/commands/${name}.rs`,
+      `#[tauri::command]\nfn ${name}() {}\n`,
+    ]),
+  ),
+  eventSource: [
+    'pub(crate) const SEARCH_PROGRESS: &str = "search-progress";',
+    'pub(crate) const SEARCH_RESULT: &str = "search-result";',
+    'pub(crate) const OS_OPEN_PATHS: &str = "os-open-paths";',
+    'pub(crate) const APP_ACTION: &str = "app-action";',
+  ].join('\n'),
+  protectedSources: {
+    'src-tauri/src/state.rs': 'use crate::sidecar_process::SidecarClient;\n',
+    'src-tauri/src/events.rs': 'use tauri::Emitter;\n',
+    'src-tauri/src/menu.rs': 'use crate::events::emit_app_action;\n',
+    'src-tauri/src/sidecar_process.rs': 'use std::process::Command;\n',
+    'src-tauri/src/system_fonts.rs': 'use font_kit::source::SystemSource;\n',
+  },
+};
+
+function verifyPhaseTwoArchitecture(sources) {
+  assert.equal(
+    typeof architecture.verifyPhaseTwoArchitecture,
+    'function',
+    'verifyPhaseTwoArchitecture must be implemented',
+  );
+  return architecture.verifyPhaseTwoArchitecture(sources);
+}
+
+test('accepts a Phase-2 compliant backend command and event boundary', () => {
+  assert.deepEqual(verifyPhaseTwoArchitecture(cleanPhaseTwoSources), []);
+});
+
+test('rejects commands imports from stored state, events, menu, and adapters', () => {
+  for (const path of Object.keys(cleanPhaseTwoSources.protectedSources)) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.protectedSources[path] = 'use crate::commands::open_archive;\n';
+    assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+      `${path} must not depend on src-tauri/src/commands`,
+    ]);
+  }
+});
+
+test('rejects commands imported through a grouped crate use', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.protectedSources['src-tauri/src/state.rs'] =
+    'use crate::{commands::open_archive, sidecar_process::SidecarClient};\n';
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    'src-tauri/src/state.rs must not depend on src-tauri/src/commands',
+  ]);
+});
+
+test('rejects Tauri command definitions outside commands modules', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.protectedSources['src-tauri/src/system_fonts.rs'] =
+    '#[tauri::command]\npub async fn list_system_fonts() {}\n';
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    'Tauri commands must be defined only in src-tauri/src/commands/*.rs',
+  ]);
+});
+
+test('rejects a changed or reordered backend handler allowlist', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.libSource = sources.libSource.replace(
+    'validate_path,platform_hints',
+    'platform_hints,validate_path',
+  );
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    `backend handlers must be exactly: ${expectedCommandNames.join(', ')}`,
+  ]);
+});
+
+test('rejects a changed backend command definition allowlist', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  delete sources.commandSources['src-tauri/src/commands/validate_path.rs'];
+  sources.commandSources['src-tauri/src/commands/renamed.rs'] =
+    '#[tauri::command]\nfn validate_source_path() {}\n';
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    `backend command definitions must be exactly: ${expectedCommandNames.join(', ')}`,
+  ]);
+});
+
+test('rejects a changed backend event allowlist', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.eventSource = sources.eventSource.replace(
+    '"search-result"',
+    '"search-complete"',
+  );
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    `backend events must be exactly: ${expectedEventNames.join(', ')}`,
+  ]);
 });

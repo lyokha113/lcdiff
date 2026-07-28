@@ -147,14 +147,7 @@ where
     fonts
 }
 
-#[tauri::command]
-pub async fn list_system_fonts() -> Result<Vec<SystemFont>, String> {
-    tauri::async_runtime::spawn_blocking(list_system_fonts_blocking)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-fn list_system_fonts_blocking() -> Result<Vec<SystemFont>, String> {
+pub(crate) fn list_system_fonts_native() -> Result<Vec<SystemFont>, String> {
     let source = SystemSource::new();
     let families = source
         .all_families()

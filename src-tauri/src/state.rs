@@ -4,10 +4,11 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicU64},
 };
 
+#[cfg(test)]
+use lcdiff_core::validate_path as validate_archive_path;
 use lcdiff_core::{
     Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions, CommitResult,
     DEFAULT_DECOMPILE_ENGINE, DecompileEngine, MergePlan, NestedArchiveCache, edit,
-    validate_path as validate_archive_path,
 };
 use serde::Serialize;
 
@@ -73,6 +74,7 @@ impl AppState {
         std::mem::take(&mut self.pending_open_paths)
     }
 
+    #[cfg(test)]
     fn canonical_view_source_path(path: &std::path::Path) -> Result<PathBuf, String> {
         std::fs::canonicalize(path).map_err(|error| {
             format!(
@@ -86,7 +88,8 @@ impl AppState {
         format!("view:{}", path.display())
     }
 
-    pub(crate) fn open_view_archive(path: String) -> Result<Archive, String> {
+    #[cfg(test)]
+    fn open_view_archive(path: String) -> Result<Archive, String> {
         let validated = validate_archive_path(&path).map_err(|error| error.to_string())?;
         let canonical = Self::canonical_view_source_path(&validated)?;
         Archive::open_validated(canonical).map_err(|error| error.to_string())
