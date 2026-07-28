@@ -303,17 +303,32 @@ function dependsOnSiblingCommandModule(sourcePath, source) {
   const code = stripRustCommentsAndLiterals(source).replace(/\s+/g, '');
   const siblings = ['app', 'archive', 'merge', 'preview', 'search']
     .filter((moduleName) => moduleName !== owner);
+  const commandParent = '(?:crate|super(?:::super)+)';
+  const commandRoot = `${commandParent}::commands`;
   const commandRootAliases = [
-    /\buse(?:crate::commands|super)as([A-Za-z_][A-Za-z0-9_]*);/g,
-    /\busecrate::\{[^;]*commandsas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
-    /\busecrate::commands::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
+    new RegExp(
+      `\\buse(?:${commandRoot}|super)as([A-Za-z_][A-Za-z0-9_]*);`,
+      'g',
+    ),
+    new RegExp(
+      `\\buse${commandParent}::\\{[^;]*commandsas([A-Za-z_][A-Za-z0-9_]*)[^;]*};`,
+      'g',
+    ),
+    new RegExp(
+      `\\buse${commandRoot}::\\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};`,
+      'g',
+    ),
     /\busesuper::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
   ].flatMap((pattern) => [...code.matchAll(pattern)].map((match) => match[1]));
 
   return siblings.some((sibling) => {
     const directDependencies = [
-      new RegExp(`(?:^|use|[({;=])crate::commands::(?:\\{)?${sibling}(?:\\b|as)`),
-      new RegExp(`crate::\\{[^;]*commands::(?:\\{)?${sibling}(?:\\b|as)`),
+      new RegExp(
+        `(?:^|use|[({;=])${commandRoot}::(?:\\{)?${sibling}(?:\\b|as)`,
+      ),
+      new RegExp(
+        `${commandParent}::\\{[^;]*commands::(?:\\{)?${sibling}(?:\\b|as)`,
+      ),
       new RegExp(`(?:^|use|[({;=])super::(?:\\{)?${sibling}(?:\\b|as)`),
       ...commandRootAliases.map(
         (alias) =>
@@ -707,16 +722,64 @@ function importedModuleSpecifiers(sourcePath, source) {
   return specifiers;
 }
 
-function exportedModuleSpecifiers(sourcePath, source) {
+function reexportedModuleSpecifiers(sourcePath, source) {
   const sourceFile = frontendSourceFile(sourcePath, source);
-  return sourceFile.statements
-    .filter(
-      (statement) =>
-        ts.isExportDeclaration(statement) &&
+  const importedBindings = new Map();
+  const specifiers = [];
+
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier)
+    ) {
+      const moduleSpecifier = statement.moduleSpecifier.text;
+      const importClause = statement.importClause;
+      if (importClause?.name) {
+        importedBindings.set(importClause.name.text, moduleSpecifier);
+      }
+      const bindings = importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        importedBindings.set(bindings.name.text, moduleSpecifier);
+      } else if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) {
+          importedBindings.set(element.name.text, moduleSpecifier);
+        }
+      }
+      continue;
+    }
+
+    if (ts.isExportDeclaration(statement)) {
+      if (
         statement.moduleSpecifier &&
-        ts.isStringLiteralLike(statement.moduleSpecifier),
-    )
-    .map((statement) => statement.moduleSpecifier.text);
+        ts.isStringLiteralLike(statement.moduleSpecifier)
+      ) {
+        specifiers.push(statement.moduleSpecifier.text);
+        continue;
+      }
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        for (const element of statement.exportClause.elements) {
+          const localName = (element.propertyName ?? element.name).text;
+          const moduleSpecifier = importedBindings.get(localName);
+          if (moduleSpecifier) {
+            specifiers.push(moduleSpecifier);
+          }
+        }
+      }
+      continue;
+    }
+
+    if (
+      ts.isExportAssignment(statement) &&
+      ts.isIdentifier(statement.expression)
+    ) {
+      const moduleSpecifier = importedBindings.get(statement.expression.text);
+      if (moduleSpecifier) {
+        specifiers.push(moduleSpecifier);
+      }
+    }
+  }
+
+  return specifiers;
 }
 
 function normalizedFrontendModulePath(sourcePath, specifier) {
@@ -860,7 +923,7 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
   );
   const reexportGraph = resolvedDependencyGraph(
     productionSourceMap,
-    exportedModuleSpecifiers,
+    reexportedModuleSpecifiers,
   );
 
   for (const [sourcePath] of productionSources) {

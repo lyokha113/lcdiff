@@ -260,6 +260,11 @@ test('rejects command submodule dependencies on sibling command submodules', () 
     'use crate::{commands as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
     'use crate::commands::{self as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
     'use super::{self as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use super::super::commands::archive::resolve_view_entry;\n',
+    'use super::super::{commands::{archive as archive_workflow}};\n',
+    'use super::super::commands as workflows;\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use super::super::{commands as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
+    'use super::super::commands::{self as workflows};\nfn call() { workflows::archive::resolve_view_entry(); }\n',
   ];
 
   for (const dependency of siblingDependencies) {
@@ -748,10 +753,36 @@ test('rejects cross-feature React components re-exported through barrels', () =>
   ]);
 });
 
+test('rejects cross-feature React components imported then re-exported through barrels', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/workspace/index.ts'] = `
+    import { DiffView } from "./DiffView";
+    export { DiffView };
+  `;
+  sources.frontendSources['src/features/search/SearchBar.tsx'] =
+    'import { DiffView } from "@/features/workspace";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/SearchBar.tsx must not import React components through src/features/workspace/index.ts from another feature',
+  ]);
+});
+
 test('allows cross-feature pure contracts re-exported through barrels', () => {
   const sources = structuredClone(cleanPhaseFourSources);
   sources.frontendSources['src/features/preferences/index.ts'] =
     'export type { UiPreferences } from "./preferences";\n';
+  sources.frontendSources['src/features/search/search.ts'] =
+    'import type { UiPreferences } from "@/features/preferences";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('allows cross-feature pure contracts imported then re-exported through barrels', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/preferences/index.ts'] = `
+    import type { UiPreferences } from "./preferences";
+    export type { UiPreferences };
+  `;
   sources.frontendSources['src/features/search/search.ts'] =
     'import type { UiPreferences } from "@/features/preferences";\n';
 
