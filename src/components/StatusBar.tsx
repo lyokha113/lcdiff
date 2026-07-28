@@ -1,9 +1,10 @@
 import { Button } from "@/components/ui/button";
 
 export interface StatusBarUpdatePrompt {
-  status: "available" | "readyToRestart" | "fallback" | "error";
+  status: "available" | "downloading" | "readyToRestart" | "fallback" | "error";
   message: string;
   primaryLabel?: string;
+  primaryDisabled?: boolean;
   fallbackLabel?: string;
   onPrimaryAction?: () => void;
   onFallbackAction?: () => void;
@@ -17,7 +18,7 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ message, searching, pendingCount, updatePrompt }: StatusBarProps) {
-  const showPrimary = updatePrompt?.primaryLabel && updatePrompt.onPrimaryAction;
+  const showPrimary = updatePrompt?.primaryLabel && (updatePrompt.onPrimaryAction || updatePrompt.primaryDisabled);
   const showFallback = updatePrompt?.status !== "readyToRestart" && updatePrompt?.fallbackLabel && updatePrompt.onFallbackAction;
 
   return (
@@ -32,7 +33,13 @@ export function StatusBar({ message, searching, pendingCount, updatePrompt }: St
           <span className={`status-bar__update status-bar__update--${updatePrompt.status}`} aria-live="polite">
             <span className="status-bar__update-text">{updatePrompt.message}</span>
             {showPrimary && (
-              <Button type="button" variant="secondary" size="xs" onClick={updatePrompt.onPrimaryAction}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="xs"
+                disabled={updatePrompt.primaryDisabled}
+                onClick={updatePrompt.onPrimaryAction}
+              >
                 {updatePrompt.primaryLabel}
               </Button>
             )}

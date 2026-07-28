@@ -632,6 +632,39 @@ describe("App file-merge wiring", () => {
     expect(await screen.findAllByText("Update downloaded. Restart to finish.")).not.toHaveLength(0);
   });
 
+  it("keeps update feedback visible while downloading", async () => {
+    const user = userEvent.setup();
+    let resolveDownload!: (state: AppUpdateState) => void;
+    updateClientMocks.state.current = {
+      status: "available",
+      releaseUrl: updateClientMocks.releaseUrl,
+      source: "auto",
+      checkedAt: 1000,
+      currentVersion: "0.3.4",
+      latestVersion: "0.3.5",
+      message: "LCDiff v0.3.5 is available.",
+    } as AppUpdateState;
+    updateClientMocks.downloadAndInstallAppUpdate.mockImplementationOnce(
+      () => new Promise<AppUpdateState>((resolve) => {
+        resolveDownload = resolve;
+      }),
+    );
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(await screen.findByRole("button", { name: "Download and install" }));
+
+    const downloadingButton = await screen.findByRole("button", { name: "Downloading..." });
+    expect(downloadingButton).toBeDisabled();
+
+    resolveDownload({
+      ...updateClientMocks.state.current,
+      status: "readyToRestart",
+      message: "Update downloaded. Restart to finish.",
+    });
+    expect(await screen.findAllByText("Update downloaded. Restart to finish.")).not.toHaveLength(0);
+  });
+
   it("keeps the update release fallback actionable when install fails", async () => {
     const user = userEvent.setup();
     updateClientMocks.state.current = {

@@ -2081,7 +2081,14 @@ export function App() {
           onPrimaryAction: installUpdate,
           onFallbackAction: openUpdateRelease,
         }
-      : updateState.status === "readyToRestart"
+      : updateState.status === "downloading"
+        ? {
+            status: "downloading",
+            message: updateState.message ?? "Downloading update...",
+            primaryLabel: "Downloading...",
+            primaryDisabled: true,
+          }
+        : updateState.status === "readyToRestart"
         ? {
             status: "readyToRestart",
             message: updateState.message ?? "Update downloaded. Restart to finish.",
