@@ -86,6 +86,34 @@ synchronization. `npm run verify:architecture` is also useful as the focused
 boundary check. `npm run verify:frontend-render` boots the shell under
 Playwright and fails on browser page errors.
 
+`src-tauri/tauri.conf.json` intentionally keeps
+`bundle.createUpdaterArtifacts` enabled. The default command shown in the proof
+ladder,
+
+```bash
+npm run tauri -- build --debug --bundles app
+```
+
+is therefore the real updater-signing gate. It requires
+`TAURI_SIGNING_PRIVATE_KEY` and, for an encrypted key,
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Without the private key, Tauri may finish
+compiling and create `LCDiff.app`, then exit non-zero when it attempts to sign
+the updater artifact. Record that command as failed rather than treating the
+created app alone as a green signing gate.
+
+For unsigned local app-bundle validation when the updater signing key is not
+available, override only the local invocation:
+
+```bash
+npm run tauri -- build --debug --bundles app \
+  --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+This override validates the local `.app` bundle and packaged resources only. It
+does not validate updater artifact generation/signing, release signing,
+Developer ID signing, or notarization, and it does not change the checked-in
+release configuration.
+
 The debug bundle gate is artifact-backed only after inspecting
 `target/debug/bundle/macos/LCDiff.app` and its bundled
 `Contents/Resources/resources/sidecar/lcdiff-sidecar.jar` and
