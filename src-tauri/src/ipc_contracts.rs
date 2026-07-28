@@ -57,6 +57,7 @@ const EVENT_NAMES: [&str; 4] = [
 
 const LIB_SOURCE: &str = include_str!("lib.rs");
 const EVENTS_SOURCE: &str = include_str!("events.rs");
+const MENU_SOURCE: &str = include_str!("menu.rs");
 const SYSTEM_FONTS_SOURCE: &str = include_str!("system_fonts.rs");
 
 const COMMAND_SIGNATURES: [&str; 30] = [
@@ -125,6 +126,77 @@ fn registered_handler_names(source: &str) -> Vec<&str> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .collect()
+}
+
+fn registered_menu_event_handler(source: &str) -> &str {
+    let (_, after_registration) = source
+        .split_once(".on_menu_event(")
+        .expect("desktop composition must register a menu event handler");
+    after_registration
+        .split_once(')')
+        .expect("menu event handler registration must close")
+        .0
+        .trim()
+}
+
+fn registered_run_event_handler(source: &str) -> &str {
+    let (_, after_registration) = source
+        .split_once(".run(")
+        .expect("desktop composition must register a run event handler");
+    after_registration
+        .split_once(')')
+        .expect("run event handler registration must close")
+        .0
+        .trim()
+}
+
+fn function_body<'source>(source: &'source str, function_name: &str) -> &'source str {
+    let (_, after_function) = source
+        .split_once(&format!("fn {function_name}"))
+        .expect("expected event producer function");
+    let body_start = after_function
+        .find('{')
+        .expect("event producer function must have a body");
+    let body = &after_function[body_start + 1..];
+    let mut depth = 1;
+    for (index, character) in body.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &body[..index];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("event producer function body must close");
+}
+
+fn routing_helper_calls(source: &str) -> Vec<&str> {
+    let mut calls = [
+        ("emit_search_result(", "emit_search_result"),
+        ("emit_search_progress(", "emit_search_progress"),
+        ("emit_open_paths(", "emit_open_paths"),
+        ("emit_app_action(", "emit_app_action"),
+        ("store_and_emit_open_paths(", "store_and_emit_open_paths"),
+    ]
+    .into_iter()
+    .flat_map(|(pattern, helper)| {
+        source
+            .match_indices(pattern)
+            .filter(|(index, _)| {
+                source[..*index]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+            })
+            .map(move |(index, _)| (index, helper))
+    })
+    .collect::<Vec<_>>();
+    calls.sort_by_key(|(index, _)| *index);
+    calls.into_iter().map(|(_, helper)| helper).collect()
 }
 
 fn emitted_event_constants(source: &str) -> Vec<&str> {
@@ -409,5 +481,46 @@ fn locks_the_exact_command_and_event_name_allowlists() {
             "OS_OPEN_PATHS",
             "APP_ACTION"
         ],
+    );
+}
+
+#[test]
+fn locks_each_deep_search_producer_to_result_then_progress_events() {
+    assert_eq!(
+        routing_helper_calls(function_body(LIB_SOURCE, "deep_search")),
+        ["emit_search_result", "emit_search_progress"],
+    );
+    assert_eq!(
+        routing_helper_calls(function_body(LIB_SOURCE, "deep_search_view_source")),
+        ["emit_search_result", "emit_search_progress"],
+    );
+}
+
+#[test]
+fn locks_native_open_and_menu_producers_to_their_event_helpers() {
+    let open_paths = function_body(MENU_SOURCE, "store_and_emit_open_paths");
+    assert_eq!(routing_helper_calls(open_paths), ["emit_open_paths"]);
+    assert!(
+        open_paths.find("push_pending_open_paths").unwrap()
+            < open_paths.find("emit_open_paths").unwrap(),
+        "native open paths must be stored before their event is emitted",
+    );
+    assert_eq!(registered_run_event_handler(LIB_SOURCE), "handle_run_event");
+    assert_eq!(
+        routing_helper_calls(function_body(LIB_SOURCE, "run")),
+        ["store_and_emit_open_paths"],
+    );
+    assert_eq!(
+        routing_helper_calls(function_body(MENU_SOURCE, "handle_run_event")),
+        ["store_and_emit_open_paths"],
+    );
+
+    assert_eq!(
+        registered_menu_event_handler(LIB_SOURCE),
+        "handle_menu_event"
+    );
+    assert_eq!(
+        routing_helper_calls(function_body(MENU_SOURCE, "handle_menu_event")),
+        ["emit_app_action"],
     );
 }
