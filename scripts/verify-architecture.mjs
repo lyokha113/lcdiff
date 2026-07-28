@@ -222,6 +222,36 @@ function declaredEventNames(source) {
   ].map((match) => match[1]);
 }
 
+function topLevelUseItems(useTree) {
+  const items = [];
+  let depth = 0;
+  let start = 0;
+  for (let index = 0; index < useTree.length; index += 1) {
+    if (useTree[index] === '{') {
+      depth += 1;
+    } else if (useTree[index] === '}') {
+      depth -= 1;
+    } else if (useTree[index] === ',' && depth === 0) {
+      items.push(useTree.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  items.push(useTree.slice(start).trim());
+  return items.filter(Boolean);
+}
+
+function groupedUseDependsOnRootCommands(usePath) {
+  const group = usePath.match(
+    /^\s*(?:crate|self|super(?:::\s*super)*)\s*::\s*\{([\s\S]*)\}\s*$/,
+  );
+  if (!group) {
+    return false;
+  }
+  return topLevelUseItems(group[1]).some((item) =>
+    /^commands\b/.test(item),
+  );
+}
+
 function dependsOnCommands(source) {
   const code = stripRustCommentsAndLiterals(source);
   if (
@@ -232,9 +262,7 @@ function dependsOnCommands(source) {
     return true;
   }
   return [...code.matchAll(/\buse\s+([\s\S]*?);/g)].some((match) =>
-    /^\s*(?:crate|self|super(?:::\s*super)*)\s*::\s*\{[\s\S]*?\bcommands\b/.test(
-      match[1],
-    ),
+    groupedUseDependsOnRootCommands(match[1]),
   );
 }
 

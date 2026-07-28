@@ -211,13 +211,33 @@ test('rejects commands imports from stored state, events, menu, and adapters', (
 });
 
 test('rejects commands imported through a grouped crate use', () => {
-  const sources = structuredClone(cleanPhaseTwoSources);
-  sources.protectedSources['src-tauri/src/state.rs'] =
-    'use crate::{commands::open_archive, sidecar_process::SidecarClient};\n';
+  const rootCommandImports = [
+    'use crate::{commands::open_archive, sidecar_process::SidecarClient};\n',
+    'use crate::{commands as workflow_commands, sidecar_process::SidecarClient};\n',
+    'use crate::{commands::{open_archive as load_archive}, sidecar_process::SidecarClient};\n',
+  ];
 
-  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
-    'src-tauri/src/state.rs must not depend on src-tauri/src/commands',
-  ]);
+  for (const rootCommandImport of rootCommandImports) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.protectedSources['src-tauri/src/state.rs'] = rootCommandImport;
+    assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+      'src-tauri/src/state.rs must not depend on src-tauri/src/commands',
+    ]);
+  }
+});
+
+test('allows nested modules named commands in a grouped crate use', () => {
+  const nestedCommandImports = [
+    'use crate::{sidecar_process::commands::Command};\n',
+    'use crate::{sidecar_process::{commands::Command, SidecarClient}};\n',
+    'use crate::{sidecar_process::{commands::{Command, Other}}, state::AppState};\n',
+  ];
+
+  for (const nestedCommandImport of nestedCommandImports) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.protectedSources['src-tauri/src/state.rs'] = nestedCommandImport;
+    assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
+  }
 });
 
 test('rejects fully-qualified and aliased command dependencies', () => {
