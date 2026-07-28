@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const backendCommandNames = [
   'validate_path',
@@ -410,6 +411,49 @@ function rawIpcCallValues(source) {
   ].map((match) => match[2]);
 }
 
+function accessesTauriInternals(path, source) {
+  const scriptKind = path.endsWith('.tsx')
+    ? ts.ScriptKind.TSX
+    : path.endsWith('.jsx')
+      ? ts.ScriptKind.JSX
+      : path.endsWith('.js') || path.endsWith('.mjs') || path.endsWith('.cjs')
+        ? ts.ScriptKind.JS
+        : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind,
+  );
+  let found = false;
+
+  const visit = (node) => {
+    if (
+      (ts.isIdentifier(node) && node.text === '__TAURI_INTERNALS__') ||
+      (
+        ts.isElementAccessExpression(node) &&
+        node.argumentExpression &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        node.argumentExpression.text === '__TAURI_INTERNALS__'
+      ) ||
+      (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        ts.isStringLiteralLike(node.left) &&
+        node.left.text === '__TAURI_INTERNALS__'
+      )
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return found;
+}
+
 function isFrontendTest(path) {
   return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(path);
 }
@@ -426,6 +470,11 @@ export function verifyPhaseThreeArchitecture({ frontendSources }) {
   for (const [path, source] of productionSources) {
     if (!isFrontendIpc(path) && importsTauriPackage(source)) {
       violations.push(`${path} must not import @tauri-apps/* outside src/ipc`);
+    }
+    if (!isFrontendIpc(path) && accessesTauriInternals(path, source)) {
+      violations.push(
+        `${path} must not access __TAURI_INTERNALS__ outside src/ipc`,
+      );
     }
     if (
       !isFrontendIpc(path) &&

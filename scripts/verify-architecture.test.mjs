@@ -390,6 +390,25 @@ test('allows Tauri package mocks in test files', () => {
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
 });
 
+test('rejects direct Tauri internals access outside src/ipc production files', () => {
+  const internalAccesses = [
+    `
+      const { invoke: rawInvoke, listen: rawListen } = window.__TAURI_INTERNALS__;
+      rawInvoke("open_archive");
+      rawListen("search-result", handler);
+    `,
+    'const internals = globalThis["__TAURI_INTERNALS__"];\n',
+  ];
+
+  for (const internalAccess of internalAccesses) {
+    const sources = structuredClone(cleanPhaseThreeSources);
+    sources.frontendSources['src/App.tsx'] = internalAccess;
+    assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+      'src/App.tsx must not access __TAURI_INTERNALS__ outside src/ipc',
+    ]);
+  }
+});
+
 test('rejects raw backend command and event literals outside src/ipc production files', () => {
   const rawCalls = ['invoke("open_archive")', 'listen("search-result", handler)'];
 
@@ -444,6 +463,9 @@ test('ignores import and command text in comments and unrelated string literals'
     // import { invoke } from "@tauri-apps/api/core";
     /* import "@tauri-apps/plugin-dialog"; */
     const note = "open_archive_notes";
+    const internalsNote = "window.__TAURI_INTERNALS__";
+    // const internals = window.__TAURI_INTERNALS__;
+    /* globalThis["__TAURI_INTERNALS__"] */
   `;
 
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), []);
