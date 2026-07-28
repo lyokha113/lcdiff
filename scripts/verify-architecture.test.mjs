@@ -225,6 +225,7 @@ const cleanPhaseTwoSources = {
     'pub(crate) const APP_ACTION: &str = "app-action";',
   ].join('\n'),
   protectedSources: {
+    'src-tauri/src/archive_access.rs': 'use crate::state::SideSnapshot;\n',
     'src-tauri/src/state.rs': 'use crate::sidecar_process::SidecarClient;\n',
     'src-tauri/src/events.rs': 'use tauri::Emitter;\n',
     'src-tauri/src/menu.rs': 'use crate::events::emit_app_action;\n',
@@ -284,6 +285,39 @@ test('rejects command submodule dependencies on sibling command submodules', () 
   }
 });
 
+test('rejects command submodule dependencies through commands root reexports', () => {
+  const siblingReexportDependencies = [
+    'use crate::commands::open_archive;\n',
+    'use crate::commands::{open_archive as load_archive};\n',
+    'use crate::{commands::open_archive};\n',
+    'use crate::{commands::{open_archive as load_archive}};\n',
+    'use super::open_archive;\n',
+    'use super::{open_archive as load_archive};\n',
+    'fn call() { crate::commands::open_archive(); }\n',
+    'use crate::commands as workflows;\nfn call() { workflows::open_archive(); }\n',
+    'use crate::{commands as workflows};\nfn call() { workflows::open_archive(); }\n',
+    'use super as workflows;\nfn call() { workflows::open_archive(); }\n',
+    'use crate::commands::*;\n',
+    'use super::*;\n',
+  ];
+
+  for (const dependency of siblingReexportDependencies) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.commandSources['src-tauri/src/commands/preview.rs'] = [
+      '#[tauri::command]\nfn read_entry() {}\n',
+      dependency,
+    ].join('');
+    delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+    assert.deepEqual(
+      verifyPhaseTwoArchitecture(sources),
+      [
+        'src-tauri/src/commands/preview.rs must not depend on sibling command submodules',
+      ],
+      dependency,
+    );
+  }
+});
+
 test('allows command submodules to use neutral backend services', () => {
   const sources = structuredClone(cleanPhaseTwoSources);
   sources.commandSources['src-tauri/src/commands/preview.rs'] = `
@@ -321,6 +355,30 @@ test('rejects commands imports from stored state, events, menu, and adapters', (
     assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
       `${path} must not depend on src-tauri/src/commands`,
     ]);
+  }
+});
+
+test('rejects direct, qualified, aliased, and glob command dependencies from archive access', () => {
+  const reverseDependencies = [
+    'use crate::commands::open_archive;\n',
+    'fn call() { crate::commands::open_archive(); }\n',
+    'use crate::commands as workflows;\nfn call() { workflows::open_archive(); }\n',
+    'use crate::{commands as workflows};\nfn call() { workflows::open_archive(); }\n',
+    'use super::commands::open_archive;\n',
+    'use super::commands as workflows;\nfn call() { workflows::open_archive(); }\n',
+    'use crate::commands::*;\n',
+  ];
+
+  for (const dependency of reverseDependencies) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.protectedSources['src-tauri/src/archive_access.rs'] = dependency;
+    assert.deepEqual(
+      verifyPhaseTwoArchitecture(sources),
+      [
+        'src-tauri/src/archive_access.rs must not depend on src-tauri/src/commands',
+      ],
+      dependency,
+    );
   }
 });
 
@@ -779,6 +837,61 @@ test('rejects cross-feature React components re-exported through a neutral bridg
   assert.deepEqual(verifyPhaseFourArchitecture(sources), [
     'src/features/search/SearchBar.tsx must not import React components through src/bridge/index.ts from another feature',
   ]);
+});
+
+test('rejects cross-feature React components re-exported through static aliases', () => {
+  const aliasBarrels = [
+    `
+      import { DiffView } from "@/features/workspace/DiffView";
+      const Exported = DiffView;
+      export { Exported };
+    `,
+    `
+      import { DiffView } from "@/features/workspace/DiffView";
+      const First = DiffView;
+      const Exported = First;
+      export { Exported };
+    `,
+    `
+      import { DiffView } from "@/features/workspace/DiffView";
+      export const Exported = DiffView;
+    `,
+  ];
+
+  for (const barrel of aliasBarrels) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/bridge/index.ts'] = barrel;
+    sources.frontendSources['src/features/search/SearchBar.tsx'] =
+      'import { Exported } from "@/bridge";\n';
+
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/features/search/SearchBar.tsx must not import React components through src/bridge/index.ts from another feature',
+    ]);
+  }
+});
+
+test('allows pure contracts and dynamic expressions assigned to exported aliases', () => {
+  const allowedBarrels = [
+    `
+      import { format } from "@/lib/format";
+      const Exported = format;
+      export { Exported };
+    `,
+    `
+      import { DiffView } from "@/features/workspace/DiffView";
+      const Exported = chooseComponent(DiffView);
+      export { Exported };
+    `,
+  ];
+
+  for (const barrel of allowedBarrels) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/bridge/index.ts'] = barrel;
+    sources.frontendSources['src/features/search/search.ts'] =
+      'import { Exported } from "@/bridge";\n';
+
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+  }
 });
 
 test('allows cross-feature pure contracts re-exported through barrels', () => {

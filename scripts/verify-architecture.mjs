@@ -294,15 +294,19 @@ function commandModuleName(sourcePath) {
   return sourcePath.match(/^src-tauri\/src\/commands\/([^/]+)\.rs$/)?.[1];
 }
 
-function dependsOnSiblingCommandModule(sourcePath, source) {
+function dependsOnSiblingCommandModule(sourcePath, source, commandOwners) {
   const owner = commandModuleName(sourcePath);
   if (!owner || owner === 'mod') {
     return false;
   }
 
   const code = stripRustCommentsAndLiterals(source).replace(/\s+/g, '');
-  const siblings = ['app', 'archive', 'merge', 'preview', 'search']
-    .filter((moduleName) => moduleName !== owner);
+  const siblings = ['app', 'archive', 'merge', 'preview', 'search'].filter(
+    (moduleName) => moduleName !== owner,
+  );
+  const siblingCommands = [...commandOwners.entries()]
+    .filter(([, commandOwner]) => commandOwner !== owner)
+    .map(([commandName]) => commandName);
   const commandParent = '(?:crate|super(?:::super)+)';
   const commandRoot = `${commandParent}::commands`;
   const commandRootAliases = [
@@ -321,22 +325,42 @@ function dependsOnSiblingCommandModule(sourcePath, source) {
     /\busesuper::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
   ].flatMap((pattern) => [...code.matchAll(pattern)].map((match) => match[1]));
 
-  return siblings.some((sibling) => {
-    const directDependencies = [
-      new RegExp(
-        `(?:^|use|[({;=])${commandRoot}::(?:\\{)?${sibling}(?:\\b|as)`,
-      ),
-      new RegExp(
-        `${commandParent}::\\{[^;]*commands::(?:\\{)?${sibling}(?:\\b|as)`,
-      ),
-      new RegExp(`(?:^|use|[({;=])super::(?:\\{)?${sibling}(?:\\b|as)`),
-      ...commandRootAliases.map(
-        (alias) =>
-          new RegExp(`(?:^|use|[({;=])${alias}::(?:\\{)?${sibling}(?:\\b|as)`),
-      ),
-    ];
-    return directDependencies.some((pattern) => pattern.test(code));
-  });
+  const dependsOnSibling = [...siblings, ...siblingCommands].some(
+    (dependency) => {
+      const directDependencies = [
+        new RegExp(
+          `(?:^|use|[({;=])${commandRoot}::(?:\\{)?${dependency}(?:\\b|as)`,
+        ),
+        new RegExp(
+          `${commandParent}::\\{[^;]*commands::(?:\\{)?${dependency}(?:\\b|as)`,
+        ),
+        new RegExp(
+          `(?:^|use|[({;=])super::(?:\\{)?${dependency}(?:\\b|as)`,
+        ),
+        ...commandRootAliases.map(
+          (alias) =>
+            new RegExp(
+              `(?:^|use|[({;=])${alias}::(?:\\{)?${dependency}(?:\\b|as)`,
+            ),
+        ),
+      ];
+      return directDependencies.some((pattern) => pattern.test(code));
+    },
+  );
+  if (dependsOnSibling) {
+    return true;
+  }
+
+  const globDependencies = [
+    new RegExp(`(?:^|use|[({;=])${commandRoot}::(?:\\{)?\\*`),
+    new RegExp(`${commandParent}::\\{[^;]*commands::(?:\\{)?\\*`),
+    /(?:^|use|[({;=])super::(?:\{)?\*/,
+    ...commandRootAliases.map(
+      (alias) =>
+        new RegExp(`(?:^|use|[({;=])${alias}::(?:\\{)?\\*`),
+    ),
+  ];
+  return globDependencies.some((pattern) => pattern.test(code));
 }
 
 function sameOrderedValues(actual, expected) {
@@ -362,9 +386,15 @@ export function verifyPhaseTwoArchitecture({
   nonCommandSources = {},
 }) {
   const violations = [];
+  const commandOwners = new Map(
+    Object.entries(commandSources).flatMap(([path, source]) => {
+      const owner = commandModuleName(path);
+      return tauriCommandNames(source).map((commandName) => [commandName, owner]);
+    }),
+  );
 
   for (const [path, source] of Object.entries(commandSources)) {
-    if (dependsOnSiblingCommandModule(path, source)) {
+    if (dependsOnSiblingCommandModule(path, source, commandOwners)) {
       violations.push(
         `${path} must not depend on sibling command submodules`,
       );
@@ -724,7 +754,7 @@ function importedModuleSpecifiers(sourcePath, source) {
 
 function reexportedModuleSpecifiers(sourcePath, source) {
   const sourceFile = frontendSourceFile(sourcePath, source);
-  const importedBindings = new Map();
+  const bindingSources = new Map();
   const specifiers = [];
 
   for (const statement of sourceFile.statements) {
@@ -735,14 +765,40 @@ function reexportedModuleSpecifiers(sourcePath, source) {
       const moduleSpecifier = statement.moduleSpecifier.text;
       const importClause = statement.importClause;
       if (importClause?.name) {
-        importedBindings.set(importClause.name.text, moduleSpecifier);
+        bindingSources.set(importClause.name.text, moduleSpecifier);
       }
       const bindings = importClause?.namedBindings;
       if (bindings && ts.isNamespaceImport(bindings)) {
-        importedBindings.set(bindings.name.text, moduleSpecifier);
+        bindingSources.set(bindings.name.text, moduleSpecifier);
       } else if (bindings && ts.isNamedImports(bindings)) {
         for (const element of bindings.elements) {
-          importedBindings.set(element.name.text, moduleSpecifier);
+          bindingSources.set(element.name.text, moduleSpecifier);
+        }
+      }
+      continue;
+    }
+
+    if (ts.isVariableStatement(statement)) {
+      const isExported = statement.modifiers?.some(
+        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+      );
+      for (const declaration of statement.declarationList.declarations) {
+        const initializer =
+          declaration.initializer &&
+          unwrapStaticExpression(declaration.initializer);
+        if (
+          !ts.isIdentifier(declaration.name) ||
+          !initializer ||
+          !ts.isIdentifier(initializer)
+        ) {
+          continue;
+        }
+        const moduleSpecifier = bindingSources.get(initializer.text);
+        if (moduleSpecifier) {
+          bindingSources.set(declaration.name.text, moduleSpecifier);
+          if (isExported) {
+            specifiers.push(moduleSpecifier);
+          }
         }
       }
       continue;
@@ -759,7 +815,7 @@ function reexportedModuleSpecifiers(sourcePath, source) {
       if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
         for (const element of statement.exportClause.elements) {
           const localName = (element.propertyName ?? element.name).text;
-          const moduleSpecifier = importedBindings.get(localName);
+          const moduleSpecifier = bindingSources.get(localName);
           if (moduleSpecifier) {
             specifiers.push(moduleSpecifier);
           }
@@ -772,7 +828,7 @@ function reexportedModuleSpecifiers(sourcePath, source) {
       ts.isExportAssignment(statement) &&
       ts.isIdentifier(statement.expression)
     ) {
-      const moduleSpecifier = importedBindings.get(statement.expression.text);
+      const moduleSpecifier = bindingSources.get(statement.expression.text);
       if (moduleSpecifier) {
         specifiers.push(moduleSpecifier);
       }
@@ -1116,6 +1172,7 @@ export function verifyRepository() {
   const coreCargoToml = readTrackedSource('crates/lcdiff-core/Cargo.toml');
   const libSource = rustSources['src-tauri/src/lib.rs'];
   const protectedPaths = [
+    'src-tauri/src/archive_access.rs',
     'src-tauri/src/state.rs',
     'src-tauri/src/events.rs',
     'src-tauri/src/menu.rs',
