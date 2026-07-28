@@ -1047,14 +1047,17 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
         );
       } else if (
         importedPath &&
-        importedOwner &&
-        importedOwner !== owner &&
         graphReaches(
           reexportGraph,
           importedPath,
-          (dependencyPath) =>
-            dependencyPath.endsWith('.tsx') &&
-            featureName(dependencyPath) === importedOwner,
+          (dependencyPath) => {
+            const dependencyOwner = featureName(dependencyPath);
+            return (
+              dependencyPath.endsWith('.tsx') &&
+              dependencyOwner !== undefined &&
+              dependencyOwner !== owner
+            );
+          },
         )
       ) {
         violations.push(

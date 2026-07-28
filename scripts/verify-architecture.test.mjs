@@ -767,6 +767,20 @@ test('rejects cross-feature React components imported then re-exported through b
   ]);
 });
 
+test('rejects cross-feature React components re-exported through a neutral bridge', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/bridge/index.ts'] = `
+    import { DiffView } from "@/features/workspace/DiffView";
+    export { DiffView };
+  `;
+  sources.frontendSources['src/features/search/SearchBar.tsx'] =
+    'import { DiffView } from "@/bridge";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/SearchBar.tsx must not import React components through src/bridge/index.ts from another feature',
+  ]);
+});
+
 test('allows cross-feature pure contracts re-exported through barrels', () => {
   const sources = structuredClone(cleanPhaseFourSources);
   sources.frontendSources['src/features/preferences/index.ts'] =
@@ -785,6 +799,18 @@ test('allows cross-feature pure contracts imported then re-exported through barr
   `;
   sources.frontendSources['src/features/search/search.ts'] =
     'import type { UiPreferences } from "@/features/preferences";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('allows cross-feature pure contracts re-exported through a neutral bridge', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/bridge/index.ts'] = `
+    import type { UiPreferences } from "@/features/preferences/preferences";
+    export type { UiPreferences };
+  `;
+  sources.frontendSources['src/features/search/search.ts'] =
+    'import type { UiPreferences } from "@/bridge";\n';
 
   assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
 });
