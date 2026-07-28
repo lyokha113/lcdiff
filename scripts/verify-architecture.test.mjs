@@ -56,6 +56,26 @@ test('rejects a Tauri dependency in lcdiff-core', () => {
   );
 });
 
+test('rejects a workspace-inherited Tauri dependency in lcdiff-core', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: cleanMain,
+      coreCargoToml: '[dependencies]\ntauri.workspace = true\n',
+    }),
+    ['crates/lcdiff-core/Cargo.toml must not depend on tauri'],
+  );
+});
+
+test('rejects an aliased Tauri dependency in lcdiff-core', () => {
+  assert.deepEqual(
+    verifyPhaseOneArchitecture({
+      mainSource: cleanMain,
+      coreCargoToml: '[dependencies]\ndesktop-shell = { package = "tauri", version = "2" }\n',
+    }),
+    ['crates/lcdiff-core/Cargo.toml must not depend on tauri'],
+  );
+});
+
 test('reports every independent Phase-1 violation together', () => {
   assert.deepEqual(
     verifyPhaseOneArchitecture({

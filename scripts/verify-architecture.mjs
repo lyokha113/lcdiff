@@ -2,6 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+function hasTauriDependency(coreCargoToml) {
+  return (
+    /^\s*tauri\s*(?:=|\.\s*workspace\s*=)/m.test(coreCargoToml) ||
+    /^\s*[A-Za-z0-9_-]+\s*=\s*\{[^}]*\bpackage\s*=\s*["']tauri["'][^}]*\}/ms.test(
+      coreCargoToml,
+    )
+  );
+}
+
 export const phaseOneRules = [
   {
     message: 'src-tauri/src/main.rs must not define struct AppState',
@@ -17,7 +26,7 @@ export const phaseOneRules = [
   },
   {
     message: 'crates/lcdiff-core/Cargo.toml must not depend on tauri',
-    violates: ({ coreCargoToml }) => /^\s*tauri\s*=\s*/m.test(coreCargoToml),
+    violates: ({ coreCargoToml }) => hasTauriDependency(coreCargoToml),
   },
 ];
 
