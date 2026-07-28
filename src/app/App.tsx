@@ -1,60 +1,34 @@
-import "@/features/workspace/monaco-runtime";
-import type {
-  CodeEditor,
-  DecorationRef,
-  DiffCodeEditor,
-  DiffOnMount,
-  MonacoApi,
-  OnMount,
-} from "@/features/workspace/editor-types";
 import {
   type ArchiveSummary,
   type BackendSearchHit,
   type ComparePair,
-  type ContentFilter,
   type EntryKind,
   type EntryPreview,
   type Mode,
   type PairStatus,
   type SearchResult,
   type Side,
-  type StagedEntry,
   type TreeFilter,
-  type ViewEntryTab,
-  type ViewMode,
   type ViewSource,
   type ViewWorkspaceState,
 } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelDeepSearch as cancelDeepSearchCommand,
-  clearStaged as clearStagedCommand,
   closeViewSource as closeViewSourceCommand,
-  commitMerge,
-  commitView,
   computeDiff,
   computeNestedDiff,
   computeViewNestedEntries,
   deepSearch,
   deepSearchViewSource,
-  disassemble,
-  disassembleViewEntry,
   listSystemFonts,
   openArchive,
   openViewSource as openViewSourceCommand,
   pendingOpenPaths,
   platformHints,
-  prefetchSiblings,
-  readEntry,
-  readViewEntry,
   search as searchArchive,
   searchViewSource,
   setEngine,
-  stageCopy,
-  stageViewWrite,
-  stageWrite,
-  unstage as unstageCommand,
-  unstageViewWrite,
   validatePath,
 } from "@/ipc/commands";
 import {
@@ -65,10 +39,8 @@ import {
 } from "@/ipc/events";
 import {
   assetUrl,
-  destroyCurrentWindow,
   isTauriRuntime,
   openPathDialog,
-  subscribeWindowCloseRequested,
   subscribeWindowDragDrop,
 } from "@/ipc/platform";
 import { Button } from "@/components/ui/button";
@@ -92,7 +64,7 @@ import { SearchResultsPanel } from "@/features/search/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/features/workspace/DiffView";
 import { FreeTextWorkspace } from "@/features/free-text/FreeTextWorkspace";
 import { KeyboardShortcutsDialog } from "@/features/shell/KeyboardShortcutsDialog";
-import { type DiffTab, evictLru, pickNeighbor, upsertTab } from "@/features/workspace/tabs";
+import { useWorkspaceController } from "@/features/workspace/useWorkspaceController";
 import {
   applyPreferencesToRoot,
   effectiveColorPattern,
@@ -108,15 +80,10 @@ import {
   type SystemFont,
 } from "@/features/preferences/system-fonts";
 import { searchContextForActiveTab, searchResultKey } from "@/features/search/search";
-import { moveHunk, type Hunk } from "@/features/merge/textMerge";
 import {
-  beginStagingOperation,
-  fileStagingKey,
-  invalidateStagingOperations,
-  isCurrentStagingOperation,
-  stagingEntryPath,
-  viewStagingKey,
-} from "@/features/merge/staging";
+  type MergeControllerContext,
+  useMergeController,
+} from "@/features/merge/useMergeController";
 import { WorkspaceTabs } from "@/features/workspace/WorkspaceTabs";
 import { ViewSourceTabs } from "@/features/sources/ViewSourceTabs";
 import { FileTree } from "@/features/sources/FileTree";
@@ -139,11 +106,8 @@ import {
 } from "@/lib/actions";
 import { classifyFocusTarget, currentPlatform, matchShortcut } from "@/lib/shortcuts";
 import {
-  closeViewSource,
   createViewSource,
-  focusViewEntryTab,
   openViewSource,
-  upsertViewEntryTab,
 } from "@/features/sources/view-workspace";
 import {
   checkForAppUpdate,
@@ -156,31 +120,20 @@ import {
 
 const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
-const MAX_DIFF_TABS = 10;
 const VIEW_ROOT_KEY = "";
 
 // Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
 
-type DiffLineChange = NonNullable<ReturnType<DiffCodeEditor["getLineChanges"]>>[number];
-
-type DiffNavigatorState = {
-  currentIndex: number;
-  total: number;
-};
-
-function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
-  return {
-    path: tab.entryPath,
-    status: "onlyLeft",
-    left: { path: tab.entryPath, kind: tab.preview.kind },
-  };
-}
-
-function latestViewEntryTab(source: ViewSource | undefined) {
-  return source?.entryTabs.reduce<ViewEntryTab | undefined>(
-    (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
-    undefined,
+function isEditableTextPreview(preview?: EntryPreview) {
+  return (
+    !!preview &&
+    preview.kind !== "class" &&
+    preview.kind !== "directory" &&
+    (preview.kind === "text" ||
+      EDIT_EXTENSIONS.includes(
+        preview.path.split(".").pop()?.toLowerCase() ?? "",
+      ))
   );
 }
 
@@ -193,93 +146,9 @@ function summaryAsArchive(source: ViewSource | undefined): ArchiveSummary | unde
   };
 }
 
-function applySearchLineHighlight(
-  editor: CodeEditor | undefined,
-  monaco: MonacoApi | undefined,
-  line: number | undefined,
-  decorations: DecorationRef,
-) {
-  if (!editor || !monaco || line === undefined || line < 1) {
-    if (editor) decorations.current = editor.deltaDecorations(decorations.current, []);
-    return;
-  }
-  const lineNumber = Math.min(line, editor.getModel()?.getLineCount() ?? line);
-  decorations.current = editor.deltaDecorations(decorations.current, [
-    {
-      range: new monaco.Range(lineNumber, 1, lineNumber, 1),
-      options: { isWholeLine: true, className: "search-line-highlight" },
-    },
-  ]);
-  editor.setPosition({ lineNumber, column: 1 });
-  editor.revealLineInCenter(lineNumber);
-}
-
 function dropSideForPosition(mode: Mode, x: number, width: number): Side {
   if (mode === "single") return "left";
   return x < width / 2 ? "left" : "right";
-}
-
-function lineChangeRangeForSide(change: DiffLineChange, side: Side) {
-  const start =
-    side === "left"
-      ? change.originalStartLineNumber
-      : change.modifiedStartLineNumber;
-  const end =
-    side === "left"
-      ? change.originalEndLineNumber
-      : change.modifiedEndLineNumber;
-  return { start, end };
-}
-
-function hasChangedLinesForSide(change: DiffLineChange, side: Side) {
-  const { start, end } = lineChangeRangeForSide(change, side);
-  return start >= 1 && end >= start;
-}
-
-function oppositeSide(side: Side): Side {
-  return side === "left" ? "right" : "left";
-}
-
-function resolveDiffNavigationSide(change: DiffLineChange, preferredSide: Side): Side {
-  if (hasChangedLinesForSide(change, preferredSide)) return preferredSide;
-  const fallbackSide = oppositeSide(preferredSide);
-  if (hasChangedLinesForSide(change, fallbackSide)) return fallbackSide;
-  return preferredSide;
-}
-
-function revealLineForChange(change: DiffLineChange, side: Side, editor: CodeEditor) {
-  const { start, end } = lineChangeRangeForSide(change, side);
-  const modelLineCount = editor.getModel()?.getLineCount() ?? 0;
-  if (modelLineCount < 1) return undefined;
-  return Math.max(1, Math.min(start, modelLineCount));
-}
-
-function lineDistanceToChange(change: DiffLineChange, side: Side, line: number) {
-  const { start, end } = lineChangeRangeForSide(change, side);
-  const rangeStart = Math.max(1, start);
-  const rangeEnd = Math.max(rangeStart, end === 0 ? start : end);
-  if (line >= rangeStart && line <= rangeEnd) return 0;
-  if (line < rangeStart) return rangeStart - line;
-  return line - rangeEnd;
-}
-
-function currentDiffBlockIndex(
-  changes: DiffLineChange[],
-  side: Side,
-  cursorLine: number | undefined,
-) {
-  if (changes.length === 0) return -1;
-  if (cursorLine === undefined || cursorLine < 1) return 0;
-  let bestIndex = 0;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  changes.forEach((change, index) => {
-    const distance = lineDistanceToChange(change, side, cursorLine);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  });
-  return bestIndex;
 }
 
 export function App() {
@@ -289,11 +158,8 @@ export function App() {
   const [pairs, setPairs] = useState<ComparePair[]>([]);
   const [nestedPairs, setNestedPairs] = useState<Record<string, ComparePair[]>>({});
   const [viewWorkspace, setViewWorkspace] = useState<ViewWorkspaceState>({ sources: [] });
-  const [selected, setSelected] = useState<ComparePair>();
-  const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
   const [message, setMessage] = useState("Open a JAR, ZIP, or folder on each side.");
   const [treeFilter, setTreeFilter] = useState<TreeFilter>("diff");
-  const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
   const [treeExpandAllVersion, setTreeExpandAllVersion] = useState(0);
   const [treeCollapseAllVersion, setTreeCollapseAllVersion] = useState(0);
   const [preferences, setPreferences] = useState(loadUiPreferences);
@@ -314,38 +180,18 @@ export function App() {
   const [mode, setMode] = useState<Mode>("compare");
   const [view, setView] = useState<"splash" | "workspace">("splash");
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
-  const [viewMode, setViewMode] = useState<ViewMode>("source");
-  const [stagedTarget, setStagedTarget] = useState<Side>();
-  const [stagedEntries, setStagedEntries] = useState<Record<string, StagedEntry>>({});
-  const [editBuffer, setEditBuffer] = useState<string>("");
   const [searching, setSearching] = useState(false);
   const [dropHint, setDropHint] = useState("");
   const [tourStep, setTourStep] = useState<number | null>(() =>
     hasSeenOnboarding("compare") ? null : 0,
   );
-  const [signedSavePrompt, setSignedSavePrompt] = useState<Side>();
   const [pendingOpen, setPendingOpen] = useState<{ side: Side; path: string }>();
-  const [suppressSignedWarningForFile, setSuppressSignedWarningForFile] = useState(false);
-  const [signedWarningSuppressions, setSignedWarningSuppressions] = useState<Record<string, boolean>>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"files" | string>("files");
-  const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
-  const [diffNavigatorState, setDiffNavigatorState] = useState<DiffNavigatorState>({
-    currentIndex: -1,
-    total: 0,
-  });
   const appShellRef = useRef<HTMLElement>(null);
-  const focusCounter = useRef(0);
-  const openTabsCountRef = useRef(0);
-  const previewRequestId = useRef(0);
   const searchStreamId = useRef(0);
   const cancelableSearchActiveRef = useRef(false);
-  const editorRef = useRef<CodeEditor | undefined>(undefined);
-  const diffEditorRef = useRef<DiffCodeEditor | undefined>(undefined);
-  const diffNavigatorFocusSideRef = useRef<Side>("right");
-  const monacoRef = useRef<MonacoApi | undefined>(undefined);
   const actionContextRef = useRef<AppActionContext | undefined>(undefined);
   const actionHandlersRef = useRef<AppActionHandlers | undefined>(undefined);
   const shortcutDialogOpenRef = useRef(shortcutDialogOpen);
@@ -355,54 +201,82 @@ export function App() {
   const modeRef = useRef(mode);
   const activeViewSourceIdRef = useRef<string | undefined>(undefined);
   const viewRequestGenerationRef = useRef(0);
-  const editStageGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
-  const singleSearchDecorations = useRef<string[]>([]);
-  const leftSearchDecorations = useRef<string[]>([]);
-  const rightSearchDecorations = useRef<string[]>([]);
+  const appliedEngineRef = useRef(engine);
+  const mergeContextRef = useRef<MergeControllerContext | undefined>(undefined);
+  const workspace = useWorkspaceController({
+    mode,
+    setPairs,
+    viewWorkspace,
+    setViewWorkspace,
+    selectedSearchResult,
+    isCurrentViewRequest,
+    currentViewRequestGeneration: () => viewRequestGenerationRef.current,
+    onMessage: setMessage,
+    fontRemeasureKey: `${preferences.editor.fontFamily}\0${preferences.editor.fontSize}\0${systemFonts
+      .map((font) => font.family)
+      .join("\0")}`,
+  });
+  const {
+    selected,
+    preview,
+    contentFilter,
+    viewMode,
+    editBuffer,
+    activeTab,
+    openTabs,
+    activeViewSource,
+  } = workspace.state;
+  const {
+    selectPair,
+    setContentFilter,
+    updateEditBuffer,
+    focusFiles,
+    focusTab,
+    selectViewSource: selectWorkspaceViewSource,
+    closeViewSourceTab: closeWorkspaceViewSourceTab,
+    inspect,
+    inspectViewEntry,
+    closeTab,
+    focusRelativeTab,
+    closeActiveTab,
+    showBytecode,
+    reset: resetWorkspace,
+  } = workspace.actions;
+  const { handleEditorMount, handleDiffMount, diffNavigator } = workspace.editor;
+  const merge = useMergeController({
+    getContext: () => {
+      if (!mergeContextRef.current) {
+        throw new Error("Merge controller context is unavailable");
+      }
+      return mergeContextRef.current;
+    },
+    editor: workspace.editor.merge,
+    onMessage: setMessage,
+  });
+  const {
+    stagedTarget,
+    stagedEntries,
+    signedSavePrompt,
+    suppressSignedWarningForFile,
+  } = merge.state;
+  const {
+    setSignedSavePrompt,
+    setSuppressSignedWarningForFile,
+  } = merge.setters;
+  const {
+    copy,
+    save,
+    confirmSignedSave,
+    clearStaged,
+    unstage,
+    stageEdit,
+    stageFileSide,
+    takeAllTo,
+    moveHunkTo,
+  } = merge.actions;
   const selectedRef = useRef<ComparePair | undefined>(selected);
   const inspectRef = useRef(inspect);
-  const appliedEngineRef = useRef(engine);
-  const updateDiffNavigatorState = useCallback(() => {
-    const editor = diffEditorRef.current;
-    if (mode !== "compare" || !editor) {
-      setDiffNavigatorState({ currentIndex: -1, total: 0 });
-      return;
-    }
-    const changes = editor.getLineChanges() ?? [];
-    if (changes.length === 0) {
-      setDiffNavigatorState({ currentIndex: -1, total: 0 });
-      return;
-    }
-    const side = diffNavigatorFocusSideRef.current ?? "right";
-    const focusedEditor = side === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
-    const currentIndex = currentDiffBlockIndex(
-      changes,
-      side,
-      focusedEditor.getPosition()?.lineNumber,
-    );
-    setDiffNavigatorState({ currentIndex, total: changes.length });
-  }, [mode]);
-  const handleEditorMount = useCallback<OnMount>((editor, monaco) => { editorRef.current = editor; monacoRef.current = monaco; }, []);
-  const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => {
-    diffEditorRef.current = editor;
-    monacoRef.current = monaco;
-    const original = editor.getOriginalEditor();
-    const modified = editor.getModifiedEditor();
-    const updateForSide = (side: Side) => {
-      diffNavigatorFocusSideRef.current = side;
-      updateDiffNavigatorState();
-    };
-    const disposables = [
-      editor.onDidUpdateDiff(updateDiffNavigatorState),
-      original.onDidChangeCursorPosition(() => updateForSide("left")),
-      modified.onDidChangeCursorPosition(() => updateForSide("right")),
-      original.onDidFocusEditorText(() => updateForSide("left")),
-      modified.onDidFocusEditorText(() => updateForSide("right")),
-    ];
-    updateDiffNavigatorState();
-    editor.onDidDispose(() => disposables.forEach((disposable) => disposable.dispose()));
-  }, [updateDiffNavigatorState]);
   const availableFontFamilies = useMemo(
     () => (fontStatus === "ready" ? fontFamilies(systemFonts) : undefined),
     [fontStatus, systemFonts],
@@ -465,11 +339,6 @@ export function App() {
       style?.remove();
     };
   }, [systemFonts]);
-  useEffect(() => {
-    monacoRef.current?.editor?.remeasureFonts?.();
-    if (typeof editorRef.current?.layout === "function") editorRef.current.layout();
-    if (typeof diffEditorRef.current?.layout === "function") diffEditorRef.current.layout();
-  }, [preferences.editor.fontFamily, preferences.editor.fontSize, systemFonts]);
   useEffect(() => {
     let cancelled = false;
     const requestedEngine = engine;
@@ -565,14 +434,6 @@ export function App() {
     shortcutDialogOpenRef.current = resolved;
     setShortcutDialogOpen(resolved);
   }, []);
-  const activeViewSource = useMemo(
-    () => viewWorkspace.sources.find((source) => source.id === viewWorkspace.activeSourceId),
-    [viewWorkspace.activeSourceId, viewWorkspace.sources],
-  );
-  const activeViewEntryTab = useMemo(
-    () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
-    [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
-  );
   useEffect(() => {
     activeViewSourceIdRef.current = viewWorkspace.activeSourceId;
   }, [viewWorkspace.activeSourceId]);
@@ -664,19 +525,13 @@ export function App() {
       if (!isCurrentViewRequest(generation)) return undefined;
       const summary = await openViewSourceCommand(validatedPath);
       if (!isCurrentViewRequest(generation)) return undefined;
-      previewRequestId.current += 1;
       clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
       setPaths((current) => ({ ...current, left: summary.path }));
       setArchives({});
       setPairs([]);
       setNestedPairs({});
-      setSelected(undefined);
-      setActiveTab("files");
-      setOpenTabs([]);
-      setPreview({});
-      setEditBuffer("");
-      setViewMode("source");
+      resetWorkspace();
       activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
       await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
@@ -690,26 +545,22 @@ export function App() {
       setMessage(message);
       return message;
     }
-  }, [loadViewPairs, stagedTarget]);
+  }, [loadViewPairs, resetWorkspace, stagedTarget]);
 
   const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
     try {
-      if (!confirmed && openTabsCountRef.current > 0) {
+      if (!confirmed && workspace.openTabsCount > 0) {
         setPendingOpen({ side, path });
         return undefined;
       }
       const validatedPath = await validatePath(path);
       const archive = await openArchive(validatedPath, side);
-      previewRequestId.current += 1;
       searchStreamId.current += 1;
       setSearching(false);
       setPaths((current) => ({ ...current, [side]: archive.path }));
       setPathErrors((current) => ({ ...current, [side]: undefined }));
       setArchives((current) => ({ ...current, [side]: archive }));
-      setSelected(undefined);
-      setActiveTab("files");
-      setOpenTabs([]);
-      setPreview({});
+      resetWorkspace();
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -722,7 +573,7 @@ export function App() {
       setMessage(message);
       return message;
     }
-  }, [refreshDiff]);
+  }, [refreshDiff, resetWorkspace, workspace.openTabsCount]);
 
   const openTextMode = useCallback(() => {
     if (stagedTarget) {
@@ -731,7 +582,6 @@ export function App() {
     }
     modeRef.current = "text";
     viewRequestGenerationRef.current += 1;
-    previewRequestId.current += 1;
     searchStreamId.current += 1;
     cancelableSearchActiveRef.current = false;
     setSearching(false);
@@ -744,18 +594,14 @@ export function App() {
     setArchives({});
     setPairs([]);
     setNestedPairs({});
-    setSelected(undefined);
-    setActiveTab("files");
-    setViewMode("source");
-    setPreview({});
-    setOpenTabs([]);
+    resetWorkspace();
     setQuery("");
     setSearchPaths(undefined);
     setSearchResults([]);
     setSelectedSearchResult(undefined);
     void cancelDeepSearchCommand().catch(() => undefined);
     setMessage("Free text is ready. Edit both sides, then compare when you want a result.");
-  }, [stagedTarget]);
+  }, [resetWorkspace, stagedTarget]);
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
@@ -768,10 +614,6 @@ export function App() {
     setView("workspace");
     void openViewPath(path);
   }, [openViewPath]);
-
-  useEffect(() => {
-    openTabsCountRef.current = openTabs.length;
-  }, [openTabs]);
 
   useEffect(() => {
     if (view !== "workspace") return;
@@ -839,15 +681,6 @@ export function App() {
   }, [dropHint, tourStep, view]);
 
   useEffect(() => {
-    if (!stagedTarget || !isTauriRuntime()) return;
-    return subscribeWindowCloseRequested((event) => {
-      event.preventDefault();
-      if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
-      void clearStagedCommand().then(destroyCurrentWindow);
-    });
-  }, [stagedTarget]);
-
-  useEffect(() => {
     if (!isTauriRuntime()) return;
     const unlistenProgress = subscribeSearchProgress((payload) => {
       if (payload.searchId !== searchStreamId.current) return;
@@ -877,59 +710,6 @@ export function App() {
       unlistenResult();
     };
   }, []);
-
-  useEffect(() => {
-    const activeSearchResult = selectedSearchResult;
-    const line =
-      activeSearchResult && activeSearchResult.path === selected?.path
-        ? activeSearchResult.line
-        : undefined;
-    if (mode === "compare") {
-      const diffEditor = diffEditorRef.current;
-      applySearchLineHighlight(
-        diffEditor?.getOriginalEditor(),
-        monacoRef.current,
-        activeSearchResult?.side === "left" ? line : undefined,
-        leftSearchDecorations,
-      );
-      applySearchLineHighlight(
-        diffEditor?.getModifiedEditor(),
-        monacoRef.current,
-        activeSearchResult?.side === "right" ? line : undefined,
-        rightSearchDecorations,
-      );
-      applySearchLineHighlight(editorRef.current, monacoRef.current, undefined, singleSearchDecorations);
-    } else {
-      applySearchLineHighlight(
-        editorRef.current,
-        monacoRef.current,
-        activeSearchResult?.side === "left" ? line : undefined,
-        singleSearchDecorations,
-      );
-      const diffEditor = diffEditorRef.current;
-      applySearchLineHighlight(diffEditor?.getOriginalEditor(), monacoRef.current, undefined, leftSearchDecorations);
-      applySearchLineHighlight(diffEditor?.getModifiedEditor(), monacoRef.current, undefined, rightSearchDecorations);
-    }
-  }, [mode, preview.left?.content, preview.right?.content, selected?.path, selectedSearchResult]);
-
-  useEffect(() => {
-    updateDiffNavigatorState();
-  }, [
-    activeTab,
-    mode,
-    preview.left?.content,
-    preview.right?.content,
-    selected?.path,
-    updateDiffNavigatorState,
-    viewMode,
-  ]);
-
-  useEffect(() => {
-    if (activeTab === "files" || !selected) return;
-    setOpenTabs((prev) =>
-      prev.map((t) => (t.path === activeTab ? { ...t, pair: selected, preview, viewMode } : t)),
-    );
-  }, [activeTab, selected, preview, viewMode]);
 
   async function browse(side: Side) {
     try {
@@ -992,20 +772,6 @@ export function App() {
     }
   }
 
-  function focusViewTab(path: string) {
-    if (!activeViewSource) return;
-    const tab = activeViewSource.entryTabs.find((candidate) => candidate.entryPath === path);
-    if (!tab) return;
-    focusCounter.current += 1;
-    const stamp = focusCounter.current;
-    setSelected(viewPairFromPreview(tab));
-    setPreview({ left: tab.preview });
-    setEditBuffer(tab.preview.content);
-    setViewMode(tab.viewMode);
-    setActiveTab(path);
-    setViewWorkspace((current) => focusViewEntryTab(current, activeViewSource.id, path, stamp));
-  }
-
   function selectViewSource(sourceId: string) {
     if (stagedTarget && sourceId !== activeViewSource?.id) {
       setMessage("Save or clear unsaved changes before switching View sources.");
@@ -1014,58 +780,8 @@ export function App() {
     viewRequestGenerationRef.current += 1;
     activeViewSourceIdRef.current = sourceId;
     clearViewSearchState(cancelableSearchActiveRef.current);
-    const source = viewWorkspace.sources.find((candidate) => candidate.id === sourceId);
-    const tab = latestViewEntryTab(source);
-    setViewWorkspace((current) => ({
-      ...current,
-      activeSourceId: sourceId,
-      activeEntryPath: tab?.entryPath,
-    }));
-    setActiveTab(tab?.entryPath ?? "files");
-    if (tab) {
-      setSelected(viewPairFromPreview(tab));
-      setPreview({ left: tab.preview });
-      setEditBuffer(tab.preview.content);
-      setViewMode(tab.viewMode);
-    } else {
-      setSelected(undefined);
-      setPreview({});
-      setEditBuffer("");
-      setViewMode("source");
-    }
+    selectWorkspaceViewSource(sourceId);
     setSelectedSearchResult(undefined);
-  }
-
-  function closeViewEntryTab(path: string) {
-    if (!activeViewSource) return;
-    const remainingTabs = activeViewSource.entryTabs.filter((tab) => tab.entryPath !== path);
-    const nextTab =
-      activeTab === path
-        ? remainingTabs.reduce<ViewEntryTab | undefined>(
-            (latest, tab) => (!latest || tab.lastFocus > latest.lastFocus ? tab : latest),
-            undefined,
-          )
-        : activeViewEntryTab;
-    setViewWorkspace((current) => ({
-      ...current,
-      activeEntryPath: nextTab?.entryPath,
-      sources: current.sources.map((source) =>
-        source.id === activeViewSource.id ? { ...source, entryTabs: remainingTabs } : source,
-      ),
-    }));
-    if (activeTab !== path) return;
-    setActiveTab(nextTab?.entryPath ?? "files");
-    if (nextTab) {
-      setSelected(viewPairFromPreview(nextTab));
-      setPreview({ left: nextTab.preview });
-      setEditBuffer(nextTab.preview.content);
-      setViewMode(nextTab.viewMode);
-    } else {
-      setSelected(undefined);
-      setPreview({});
-      setEditBuffer("");
-      setViewMode("source");
-    }
   }
 
   function closeViewSourceTab(sourceId: string) {
@@ -1075,236 +791,9 @@ export function App() {
     }
     viewRequestGenerationRef.current += 1;
     void closeViewSourceCommand(sourceId).catch(() => undefined);
-    const remainingSources = viewWorkspace.sources.filter((source) => source.id !== sourceId);
-    const closedActive = viewWorkspace.activeSourceId === sourceId;
-    const sourceIndex = viewWorkspace.sources.findIndex((source) => source.id === sourceId);
-    const nextSource = closedActive ? remainingSources[sourceIndex] ?? remainingSources[sourceIndex - 1] : activeViewSource;
-    activeViewSourceIdRef.current = nextSource?.id;
+    const { closedActive, nextSourceId } = closeWorkspaceViewSourceTab(sourceId);
+    activeViewSourceIdRef.current = nextSourceId;
     if (closedActive) clearViewSearchState(cancelableSearchActiveRef.current);
-    const nextTab = closedActive ? latestViewEntryTab(nextSource) : activeViewEntryTab;
-    setViewWorkspace((current) => ({
-      ...closeViewSource(current, sourceId),
-      activeEntryPath: nextTab?.entryPath,
-    }));
-    if (!closedActive) return;
-    setActiveTab(nextTab?.entryPath ?? "files");
-    if (nextTab) {
-      setSelected(viewPairFromPreview(nextTab));
-      setPreview({ left: nextTab.preview });
-      setEditBuffer(nextTab.preview.content);
-      setViewMode(nextTab.viewMode);
-    } else {
-      setSelected(undefined);
-      setPreview({});
-      setEditBuffer("");
-      setViewMode("source");
-    }
-  }
-
-  function focusTab(path: string) {
-    if (mode === "single") {
-      focusViewTab(path);
-      return;
-    }
-    const tab = openTabs.find((t) => t.path === path);
-    if (!tab) return;
-    focusCounter.current += 1;
-    const stamp = focusCounter.current;
-    setSelected(tab.pair);
-    setPreview(tab.preview);
-    setEditBuffer(tab.preview.left?.content ?? "");
-    setViewMode(tab.viewMode);
-    setActiveTab(path);
-    setOpenTabs((prev) => prev.map((t) => (t.path === path ? { ...t, lastFocus: stamp } : t)));
-  }
-
-  async function inspectViewEntry(pair: ComparePair, force = false) {
-    const source = activeViewSource;
-    if (!source) return;
-    const existing = source.entryTabs.find((tab) => tab.entryPath === pair.path);
-    if (existing && !force) {
-      focusViewTab(pair.path);
-      return;
-    }
-    const sourceId = source.id;
-    const requestId = previewRequestId.current + 1;
-    const generation = viewRequestGenerationRef.current;
-    previewRequestId.current = requestId;
-    setSelected(pair);
-    setActiveTab(pair.path);
-    setViewMode("source");
-    const nextPreview = await readViewEntry(source.id, pair.path);
-    if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
-    setPreview({ left: nextPreview });
-    setEditBuffer(nextPreview.content);
-    focusCounter.current += 1;
-    const stamp = focusCounter.current;
-    setViewWorkspace((current) => {
-      if (current.activeSourceId !== sourceId) return current;
-      return upsertViewEntryTab(
-        current,
-        sourceId,
-        { entryPath: pair.path, preview: nextPreview, viewMode: "source", lastFocus: stamp },
-        MAX_DIFF_TABS,
-      );
-    });
-  }
-
-  async function inspect(pair: ComparePair, force = false) {
-    if (mode === "single") {
-      await inspectViewEntry(pair, force);
-      return;
-    }
-    const existing = openTabs.find((t) => t.path === pair.path);
-    if (existing && !force) {
-      focusTab(pair.path);
-      return;
-    }
-    const requestId = previewRequestId.current + 1;
-    previewRequestId.current = requestId;
-    setSelected(pair);
-    setActiveTab(pair.path);
-    setViewMode("source");
-    const next: Partial<Record<Side, EntryPreview>> = {};
-    for (const side of ["left", "right"] as const) {
-      if (pair[side]) {
-        next[side] = await readEntry(side, pair.path);
-      }
-    }
-    if (previewRequestId.current !== requestId) return;
-    setPreview(next);
-    setEditBuffer(next.left?.content ?? "");
-    focusCounter.current += 1;
-    const stamp = focusCounter.current;
-    setOpenTabs((prev) =>
-      evictLru(
-        upsertTab(prev, { path: pair.path, pair, preview: next, viewMode: "source", lastFocus: stamp }),
-        MAX_DIFF_TABS,
-      ),
-    );
-    for (const side of ["left", "right"] as const) {
-      if (pair[side]?.kind === "class" && !pair.path.includes("!/")) {
-        void prefetchSiblings(side, pair.path);
-      }
-    }
-    if (
-      pair.status === "different" &&
-      pair.left?.kind === "class" &&
-      pair.right?.kind === "class" &&
-      !next.left?.content.startsWith("Decompiler unavailable:") &&
-      next.left?.content === next.right?.content
-    ) {
-      const metadataOnly = { ...pair, status: "differentMetadataOnly" as const };
-      setSelected(metadataOnly);
-      setPairs((current) =>
-        current.map((candidate) => (candidate.path === pair.path ? metadataOnly : candidate)),
-      );
-    }
-  }
-
-  function closeTab(path: string) {
-    if (mode === "single") {
-      closeViewEntryTab(path);
-      return;
-    }
-    if (activeTab === path) {
-      const next = pickNeighbor(openTabs, path);
-      if (next === "files") {
-        setActiveTab("files");
-      } else {
-        focusTab(next);
-      }
-    }
-    setOpenTabs((prev) => prev.filter((t) => t.path !== path));
-  }
-
-  function focusRelativeTab(direction: 1 | -1) {
-    if (mode === "single") {
-      const tabs = activeViewSource?.entryTabs ?? [];
-      if (tabs.length === 0) return;
-      if (activeTab === "files") {
-        const target = direction > 0 ? tabs[0] : tabs.at(-1);
-        if (target) focusViewTab(target.entryPath);
-        return;
-      }
-      const index = tabs.findIndex((tab) => tab.entryPath === activeTab);
-      const nextIndex = index < 0 ? 0 : (index + direction + tabs.length) % tabs.length;
-      focusViewTab(tabs[nextIndex].entryPath);
-      return;
-    }
-    if (openTabs.length === 0) return;
-    if (activeTab === "files") {
-      const target = direction > 0 ? openTabs[0] : openTabs.at(-1);
-      if (target) focusTab(target.path);
-      return;
-    }
-    const index = openTabs.findIndex((tab) => tab.path === activeTab);
-    const nextIndex = index < 0 ? 0 : (index + direction + openTabs.length) % openTabs.length;
-    focusTab(openTabs[nextIndex].path);
-  }
-
-  function closeActiveTab() {
-    if (activeTab !== "files") closeTab(activeTab);
-  }
-
-  async function showBytecode() {
-    const pair = selected;
-    if (!pair) return;
-    if (!pairHasClass(pair)) {
-      setMessage("Bytecode view is only available for class entries.");
-      return;
-    }
-    const requestId = previewRequestId.current + 1;
-    previewRequestId.current = requestId;
-    if (mode === "single") {
-      const source = activeViewSource;
-      if (!source) return;
-      const sourceId = source.id;
-      const generation = viewRequestGenerationRef.current;
-      try {
-        const nextPreview: EntryPreview = {
-          path: pair.path,
-          kind: "class",
-          language: "plaintext",
-          content: await disassembleViewEntry(sourceId, pair.path),
-        };
-        if (previewRequestId.current !== requestId || !isCurrentViewRequest(generation, sourceId)) return;
-        setPreview({ left: nextPreview });
-        setViewMode("bytecode");
-        focusCounter.current += 1;
-        setViewWorkspace((current) => {
-          if (current.activeSourceId !== sourceId) return current;
-          return upsertViewEntryTab(
-            current,
-            sourceId,
-            { entryPath: pair.path, preview: nextPreview, viewMode: "bytecode", lastFocus: focusCounter.current },
-            MAX_DIFF_TABS,
-          );
-        });
-      } catch (error) {
-        if (!isCurrentViewRequest(generation, sourceId)) return;
-        setMessage(String(error));
-      }
-      return;
-    }
-    const next: Partial<Record<Side, EntryPreview>> = {};
-    try {
-      for (const side of ["left", "right"] as const) {
-        if (pair[side]?.kind === "class") {
-          next[side] = {
-            path: pair.path,
-            kind: "class",
-            language: "plaintext",
-            content: await disassemble(side, pair.path),
-          };
-        }
-      }
-      if (previewRequestId.current !== requestId) return;
-      setPreview(next);
-      setViewMode("bytecode");
-    } catch (error) {
-      setMessage(String(error));
-    }
   }
 
   function pickMode(next: Mode) {
@@ -1350,32 +839,24 @@ export function App() {
     viewRequestGenerationRef.current += 1;
     if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
-      diffEditorRef.current?.setModel(null);
-      diffEditorRef.current = undefined;
-      setSelected(undefined);
-      setPreview({});
-      setEditBuffer("");
-      setOpenTabs([]);
-      setActiveTab("files");
-      setViewMode("source");
+      resetWorkspace({
+        clearDiffModel: true,
+        invalidatePreviewRequest: false,
+      });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     if (mode === "single" && next === "compare") {
-      diffEditorRef.current?.setModel(null);
-      diffEditorRef.current = undefined;
+      resetWorkspace({
+        clearDiffModel: true,
+        invalidatePreviewRequest: false,
+      });
       setPaths(emptyPaths);
       setPathErrors({});
       setArchives({});
       setPairs([]);
       setNestedPairs({});
-      setSelected(undefined);
-      setActiveTab("files");
-      setOpenTabs([]);
-      setPreview({});
-      setEditBuffer("");
-      setViewMode("source");
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -1386,310 +867,13 @@ export function App() {
       setArchives({});
       setPairs([]);
       setNestedPairs({});
-      setSelected(undefined);
-      setActiveTab("files");
-      setOpenTabs([]);
-      setPreview({});
+      resetWorkspace({ invalidatePreviewRequest: false });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     setMode(next);
     setTourStep(hasSeenOnboarding(next) ? null : 0);
-  }
-
-  async function copy(from: Side, to: Side, pair = selected) {
-    if (!pair) return;
-    try {
-      await stageCopy(from, to, pair.path);
-      setStagedTarget(to);
-      setStagedEntries((current) => ({ ...current, [pair.path]: { side: to, kind: "copy" } }));
-      setMessage(`Staged ${pair.path}: ${from} -> ${to}`);
-    } catch (error) {
-      setMessage(String(error));
-    }
-  }
-
-  async function save(targetSide: Side, signedConfirmed = false) {
-    if (mode === "single") {
-      if (!activeViewSource) return;
-      try {
-        const result = await commitView(activeViewSource.id, backupEnabled);
-        setStagedTarget(undefined);
-        setStagedEntries({});
-        await loadViewPairs(activeViewSource.id);
-        if (selected) await inspectViewEntry(selected, true);
-        setMessage(`Saved ${result.copiedEntries} entries to ${result.rewrittenPath}`);
-      } catch (error) {
-        setMessage(String(error));
-      }
-      return;
-    }
-    if (isFileMerge) {
-      const dirty = (["left", "right"] as Side[]).filter((s) =>
-        Object.values(stagedEntries).some((e) => e.side === s),
-      );
-      try {
-        // Commit all dirty sides first: open_archive/openPath rejects a reopen
-        // while the other side still has pending ops.
-        for (const side of dirty) {
-          await commitMerge(side, backupEnabled, false);
-        }
-        setStagedTarget(undefined);
-        setStagedEntries({});
-        // Refresh each saved side's preview/state from disk.
-        for (const side of dirty) {
-          const path = archives[side]?.path;
-          if (path) await openPath(side, path, true);
-        }
-        setMessage(`Saved ${dirty.length} file change${dirty.length === 1 ? "" : "s"}.`);
-      } catch (error) {
-        setMessage(String(error));
-      }
-      return;
-    }
-    try {
-      const signed = archives[targetSide]?.metadata.signed ?? false;
-      const signedPath = archives[targetSide]?.path ?? "";
-      if (signed && !signedConfirmed && !signedWarningSuppressions[signedPath]) {
-        setSuppressSignedWarningForFile(false);
-        setSignedSavePrompt(targetSide);
-        return;
-      }
-      const result = await commitMerge(targetSide, backupEnabled, signed);
-      setStagedTarget(undefined);
-      setStagedEntries({});
-      const saveMessage =
-        `Saved ${result.copiedEntries} entries to ${result.rewrittenPath}` +
-        (result.signatureInvalidated ? " (signed archive is now invalid)" : "");
-      const reloadError = await openPath(targetSide, result.rewrittenPath, true);
-      setMessage(reloadError ? `${saveMessage}; reload failed: ${reloadError}` : saveMessage);
-    } catch (error) {
-      setMessage(String(error));
-    }
-  }
-
-  function confirmSignedSave() {
-    const targetSide = signedSavePrompt;
-    if (!targetSide) return;
-    const signedPath = archives[targetSide]?.path;
-    if (suppressSignedWarningForFile && signedPath) {
-      setSignedWarningSuppressions((current) => ({ ...current, [signedPath]: true }));
-    }
-    setSignedSavePrompt(undefined);
-    void save(targetSide, true);
-  }
-
-  async function clearStaged() {
-    invalidateStagingOperations(editStageGenerationRef);
-    await clearStagedCommand();
-    setStagedTarget(undefined);
-    setStagedEntries({});
-    // Revert the visible editor buffers to the originally loaded content so the
-    // discard takes effect immediately, without needing a reload. `preview`
-    // holds the on-disk content captured when the entry was opened; edits live
-    // only in the Monaco models until staged, so resetting the models discards
-    // them. Compare/file-merge uses the diff editor; single mode uses editBuffer.
-    const ed = diffEditorRef.current;
-    if (ed) {
-      ed.getOriginalEditor().setValue(preview.left?.content ?? "");
-      ed.getModifiedEditor().setValue(preview.right?.content ?? "");
-    }
-    setEditBuffer(preview.left?.content ?? "");
-    setMessage("Cleared unsaved changes.");
-  }
-
-  async function unstage(key: string) {
-    // File-merge staging uses side-prefixed keys ("left:<path>"/"right:<path>");
-    // archive/folder staging uses bare path keys (a bare key has no prefix, so
-    // stripSidePrefix is a no-op there). The backend `unstage` takes a bare
-    // entryPath plus an optional side, so resolve the side from the stored entry
-    // and remove exactly the one matching local key. This keeps two versions of
-    // the same basename (left:config.json / right:config.json) independent.
-    try {
-      const entry = stagedEntries[key];
-      const bare = stagingEntryPath(key);
-      if (mode === "single" && activeViewSource) {
-        await unstageViewWrite(activeViewSource.id, bare);
-      } else {
-        await unstageCommand(bare, entry?.side);
-      }
-      setStagedEntries((current) => {
-        const next = { ...current };
-        delete next[key];
-        if (Object.keys(next).length === 0) setStagedTarget(undefined);
-        return next;
-      });
-      setMessage(`Unstaged ${bare}.`);
-    } catch (error) {
-      setMessage(String(error));
-    }
-  }
-
-  async function stageEdit(entryPath: string, content: string) {
-    const generation = beginStagingOperation(editStageGenerationRef);
-    const key = viewStagingKey(entryPath);
-    const original = preview.left?.content ?? "";
-    if (content === original) {
-      if (stagedEntries[key]?.kind === "edit") {
-        if (!activeViewSource) return;
-        await unstageViewWrite(activeViewSource.id, entryPath);
-        setStagedEntries((current) => {
-          const next = { ...current };
-          delete next[key];
-          if (Object.keys(next).length === 0) setStagedTarget(undefined);
-          return next;
-        });
-      }
-      return;
-    }
-    try {
-      if (!activeViewSource) return;
-      setStagedEntries((current) => ({ ...current, [key]: { side: "left", kind: "edit" } }));
-      setStagedTarget("left");
-      await stageViewWrite(activeViewSource.id, entryPath, content);
-      if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
-      setMessage(`Edited ${entryPath} (unsaved)`);
-    } catch (error) {
-      if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
-      setStagedEntries((current) => {
-        const next = { ...current };
-        delete next[key];
-        if (Object.keys(next).length === 0) setStagedTarget(undefined);
-        return next;
-      });
-      setMessage(String(error));
-    }
-  }
-
-  async function stageFileSide(side: Side, content: string) {
-    if (!selected) return;
-    const key = fileStagingKey(side, selected.path);
-    const original = (side === "left" ? preview.left?.content : preview.right?.content) ?? "";
-    if (content === original) {
-      if (stagedEntries[key]?.kind === "edit") await unstage(key);
-      return;
-    }
-    const generation = beginStagingOperation(editStageGenerationRef);
-    try {
-      setStagedEntries((current) => ({ ...current, [key]: { side, kind: "edit" } }));
-      setStagedTarget(side);
-      await stageWrite(side, selected.path, content);
-      if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
-      setMessage(`Edited ${selected.path} on ${side} (unsaved)`);
-    } catch (error) {
-      if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
-      setStagedEntries((current) => {
-        const next = { ...current };
-        delete next[key];
-        if (Object.keys(next).length === 0) setStagedTarget(undefined);
-        return next;
-      });
-      setMessage(String(error));
-    }
-  }
-
-  function currentHunkAtCursor(): Hunk | undefined {
-    const ed = diffEditorRef.current;
-    if (!ed) return undefined;
-    const changes = ed.getLineChanges() ?? [];
-    // Hunk under cursor is detected from the modified (right) editor's cursor;
-    // when focus is in the left pane we fall back to the first change.
-    const line = ed.getModifiedEditor().getPosition()?.lineNumber ?? 1;
-    const c =
-      changes.find(
-        (ch) =>
-          line >= ch.modifiedStartLineNumber &&
-          line <= Math.max(ch.modifiedEndLineNumber, ch.modifiedStartLineNumber),
-      ) ?? changes[0];
-    if (!c) return undefined;
-    // Monaco: *EndLineNumber === 0 means "no lines on that side" (insertion point).
-    return {
-      targetStart: c.modifiedStartLineNumber,
-      targetEnd: c.modifiedEndLineNumber === 0 ? c.modifiedStartLineNumber - 1 : c.modifiedEndLineNumber,
-      sourceStart: c.originalStartLineNumber,
-      sourceEnd: c.originalEndLineNumber === 0 ? c.originalStartLineNumber - 1 : c.originalEndLineNumber,
-    };
-  }
-
-  function navigateDiffBlock(direction: 1 | -1) {
-    const editor = diffEditorRef.current;
-    if (mode !== "compare" || !editor) {
-      setDiffNavigatorState({ currentIndex: -1, total: 0 });
-      return;
-    }
-    const changes = editor.getLineChanges() ?? [];
-    if (changes.length === 0) {
-      setDiffNavigatorState({ currentIndex: -1, total: 0 });
-      return;
-    }
-    const side = diffNavigatorFocusSideRef.current ?? "right";
-    const focusedEditor = side === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
-    const currentIndex =
-      diffNavigatorState.currentIndex >= 0 && diffNavigatorState.currentIndex < changes.length
-        ? diffNavigatorState.currentIndex
-        : currentDiffBlockIndex(changes, side, focusedEditor.getPosition()?.lineNumber);
-    const targetIndex = (currentIndex + direction + changes.length) % changes.length;
-    const targetSide = resolveDiffNavigationSide(changes[targetIndex], side);
-    const targetEditor = targetSide === "left" ? editor.getOriginalEditor() : editor.getModifiedEditor();
-    const targetLine = revealLineForChange(changes[targetIndex], targetSide, targetEditor);
-    if (targetLine !== undefined) {
-      targetEditor.setPosition({ lineNumber: targetLine, column: 1 });
-      targetEditor.revealLineInCenter(targetLine);
-    }
-    setDiffNavigatorState({ currentIndex: targetIndex, total: changes.length });
-  }
-
-  async function takeAllTo(target: Side) {
-    if (!isTextMerge || !selected) return;
-    const ed = diffEditorRef.current;
-    if (!ed) return;
-    const source: Side = target === "left" ? "right" : "left";
-    const sourceEditor = source === "left" ? ed.getOriginalEditor() : ed.getModifiedEditor();
-    const targetEditor = target === "left" ? ed.getOriginalEditor() : ed.getModifiedEditor();
-    const content = sourceEditor.getValue();
-    targetEditor.setValue(content);
-    await stageFileSide(target, content);
-  }
-
-  function moveHunkTo(target: Side) {
-    if (!isTextMerge) return;
-    const ed = diffEditorRef.current;
-    const hunk = currentHunkAtCursor();
-    if (!ed || !hunk) return;
-    // Monaco: left = original, right = modified. moveHunk works in target-space;
-    // for "move right→left" we invert the hunk's target/source coordinates.
-    let tEditor: CodeEditor;
-    let sEditor: CodeEditor;
-    let resolvedHunk: Hunk;
-    if (target === "left") {
-      tEditor = ed.getOriginalEditor();
-      sEditor = ed.getModifiedEditor();
-      resolvedHunk = {
-        targetStart: hunk.sourceStart,
-        targetEnd: hunk.sourceEnd,
-        sourceStart: hunk.targetStart,
-        sourceEnd: hunk.targetEnd,
-      };
-    } else {
-      tEditor = ed.getModifiedEditor();
-      sEditor = ed.getOriginalEditor();
-      resolvedHunk = hunk;
-    }
-    // A move pulls the hunk's lines from the source side into the target side.
-    // When the source side has no lines for this hunk (the content already lives
-    // only on the target side, e.g. a target-only addition), there is nothing to
-    // move — applying anyway would overwrite the target's real lines with the
-    // empty source range and delete them outright. Skip to avoid data loss.
-    if (resolvedHunk.sourceEnd < resolvedHunk.sourceStart) {
-      setMessage("Nothing to move: the hunk at the cursor only exists on this side.");
-      return;
-    }
-    const res = moveHunk(tEditor.getValue(), sEditor.getValue(), resolvedHunk);
-    tEditor.setValue(res.target);
-    sEditor.setValue(res.source);
-    void stageFileSide(target, res.target);
-    void stageFileSide(target === "left" ? "right" : "left", res.source);
   }
 
   async function runSearch() {
@@ -1805,17 +989,7 @@ export function App() {
       setMessage("Search query is empty");
       return;
     }
-    const searchInEditor = (editor?: CodeEditor) => {
-      const matches = editor?.getModel()?.findMatches(trimmed, true, false, false, null, true) ?? [];
-      const line = matches[0]?.range.startLineNumber;
-      if (line !== undefined) editor?.revealLineInCenter(line);
-      return line;
-    };
-    const diffEditor = diffEditorRef.current;
-    const line =
-      mode === "compare"
-        ? searchInEditor(diffEditor?.getModifiedEditor()) ?? searchInEditor(diffEditor?.getOriginalEditor())
-        : searchInEditor(editorRef.current);
+    const line = workspace.editor.findFirstMatch(trimmed);
     if (line === undefined) {
       setMessage("Current diff found no matches.");
       return;
@@ -1857,7 +1031,6 @@ export function App() {
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
-  const backupEnabled = preferences.misc.save.backupEnabled;
   const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
   const activeColorPattern = effectiveColorPattern(
     preferences.appearance.colorPattern,
@@ -1868,14 +1041,10 @@ export function App() {
   // where both sides show the same entry as editable text — standalone plain
   // files AND text entries inside jar/zip archives. `isFileMerge` (sourceKind
   // file) only changes the copy-arrow wording now.
-  const sideEditableText = (p?: EntryPreview) =>
-    !!p &&
-    p.kind !== "class" &&
-    p.kind !== "directory" &&
-    (p.kind === "text" ||
-      EDIT_EXTENSIONS.includes(p.path.split(".").pop()?.toLowerCase() ?? ""));
   const isTextMerge =
-    mode === "compare" && sideEditableText(preview.left) && sideEditableText(preview.right);
+    mode === "compare" &&
+    isEditableTextPreview(preview.left) &&
+    isEditableTextPreview(preview.right);
   const isDiffEditable = isTextMerge;
 
   const isEditableEntry =
@@ -1884,7 +1053,21 @@ export function App() {
     !!preview.left &&
     activeViewSource?.signed !== true &&
     !preview.left.path.includes("!/") &&
-    sideEditableText(preview.left);
+    isEditableTextPreview(preview.left);
+
+  mergeContextRef.current = {
+    mode,
+    activeViewSource,
+    selected,
+    preview,
+    archives,
+    backupEnabled: preferences.misc.save.backupEnabled,
+    isFileMerge,
+    isTextMerge,
+    openPath,
+    loadViewPairs,
+    inspectViewEntry,
+  };
 
   const baseName = (p?: string) => (p ? p.split("/").pop() || undefined : undefined);
   const leftLabel = mode === "single"
@@ -1942,7 +1125,7 @@ export function App() {
     },
     togglePreferences: () => setDrawerOpen((open) => !open),
     toggleShortcutDialog: () => updateShortcutDialogOpen((open) => !open),
-    focusFiles: () => setActiveTab("files"),
+    focusFiles,
     nextTab: () => focusRelativeTab(1),
     previousTab: () => focusRelativeTab(-1),
     closeActiveTab,
@@ -1960,6 +1143,7 @@ export function App() {
     closeActiveTab,
     copy,
     findInCurrentDiff,
+    focusFiles,
     focusRelativeTab,
     moveHunkTo,
     mode,
@@ -2032,14 +1216,6 @@ export function App() {
     });
   }, [dispatchRegisteredAction]);
 
-  const diffNavigator = {
-    current: diffNavigatorState.total === 0 ? 0 : diffNavigatorState.currentIndex + 1,
-    total: diffNavigatorState.total,
-    canGoPrevious: diffNavigatorState.total > 0,
-    canGoNext: diffNavigatorState.total > 0,
-    onPrevious: () => navigateDiffBlock(-1),
-    onNext: () => navigateDiffBlock(1),
-  };
   const updatePrompt: StatusBarUpdatePrompt | undefined =
     updateState.status === "available"
       ? {
@@ -2090,7 +1266,7 @@ export function App() {
       editValue={editBuffer}
       onEditChange={(value) => {
         const content = value ?? "";
-        setEditBuffer(content);
+        updateEditBuffer(content);
         if (selected) void stageEdit(selected.path, content);
       }}
       onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
@@ -2140,7 +1316,7 @@ export function App() {
       <MenuBar
         mode={mode}
         stagedTarget={stagedTarget}
-        pendingOps={Object.entries(stagedEntries).map(([key, entry]) => ({ key, path: stagingEntryPath(key), side: entry.side, kind: entry.kind }))}
+        pendingOps={merge.pendingOps}
         onUnstageOne={(entryPath) => void unstage(entryPath)}
         canRefresh={Boolean(
           mode === "single"
@@ -2223,7 +1399,7 @@ export function App() {
               viewMode={viewMode}
               canShowSource={!!selected}
               canShowBytecode={pairHasClass(selected)}
-              onSelectFiles={() => setActiveTab("files")}
+              onSelectFiles={focusFiles}
               onSelectTab={(path) => focusTab(path)}
               onCloseTab={(path) => closeTab(path)}
               onFilterChange={setTreeFilter}
@@ -2264,7 +1440,7 @@ export function App() {
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
-                    onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                    onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
                     onCopy={(from, to, pair) => void copy(from, to, pair)}
                     onUnstage={(entryPath) => void unstage(entryPath)}
                     onExpandArchive={(fullPath) => void expandArchive(fullPath)}
@@ -2289,7 +1465,7 @@ export function App() {
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
-                    onSelect={(pair) => { setSelectedSearchResult(undefined); setSelected(pair); }}
+                    onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
                     onCopy={(from, to, pair) => void copy(from, to, pair)}
                     onUnstage={(entryPath) => void unstage(entryPath)}
                     onExpandArchive={(fullPath) => void expandArchive(fullPath)}

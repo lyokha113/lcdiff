@@ -44,6 +44,18 @@ const backendEventNames = [
   'app-action',
 ];
 
+const sharedUiPrimitivePaths = new Set([
+  'src/components/ui/badge.tsx',
+  'src/components/ui/button.tsx',
+  'src/components/ui/checkbox.tsx',
+  'src/components/ui/context-menu.tsx',
+  'src/components/ui/dialog.tsx',
+  'src/components/ui/input.tsx',
+  'src/components/ui/popover.tsx',
+  'src/components/ui/select.tsx',
+  'src/components/ui/tooltip.tsx',
+]);
+
 function dependencySection(header) {
   const match = header
     .trim()
@@ -576,7 +588,7 @@ export function verifyPhaseThreeArchitecture({ frontendSources }) {
   return violations;
 }
 
-function importedModuleSpecifiers(sourcePath, source) {
+function frontendSourceFile(sourcePath, source) {
   const scriptKind = sourcePath.endsWith('.tsx')
     ? ts.ScriptKind.TSX
     : sourcePath.endsWith('.jsx')
@@ -584,13 +596,17 @@ function importedModuleSpecifiers(sourcePath, source) {
       : sourcePath.endsWith('.js') || sourcePath.endsWith('.mjs') || sourcePath.endsWith('.cjs')
         ? ts.ScriptKind.JS
         : ts.ScriptKind.TS;
-  const sourceFile = ts.createSourceFile(
+  return ts.createSourceFile(
     sourcePath,
     source,
     ts.ScriptTarget.Latest,
     true,
     scriptKind,
   );
+}
+
+function importedModuleSpecifiers(sourcePath, source) {
+  const sourceFile = frontendSourceFile(sourcePath, source);
   const specifiers = [];
   const visit = (node) => {
     if (
@@ -613,10 +629,35 @@ function importedModuleSpecifiers(sourcePath, source) {
   return specifiers;
 }
 
+function namedImportsFrom(sourcePath, source, moduleSpecifier) {
+  const sourceFile = frontendSourceFile(sourcePath, source);
+  const names = [];
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== moduleSpecifier
+    ) {
+      continue;
+    }
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) {
+      names.push('*');
+      continue;
+    }
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        names.push((element.propertyName ?? element.name).text);
+      }
+    }
+  }
+  return names;
+}
+
 function resolvedFrontendImport(sourcePath, specifier, frontendSources) {
   let base;
   if (specifier.startsWith('@/')) {
-    base = `src/${specifier.slice(2)}`;
+    base = path.posix.normalize(`src/${specifier.slice(2)}`);
   } else if (specifier.startsWith('.')) {
     base = path.posix.normalize(
       path.posix.join(path.posix.dirname(sourcePath), specifier),
@@ -647,7 +688,7 @@ function isForbiddenLibImport(sourcePath, specifier) {
   const resolved = specifier.startsWith('.')
     ? path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), specifier))
     : specifier.startsWith('@/')
-      ? `src/${specifier.slice(2)}`
+      ? path.posix.normalize(`src/${specifier.slice(2)}`)
       : undefined;
   return (
     specifier === 'react' ||
@@ -657,6 +698,7 @@ function isForbiddenLibImport(sourcePath, specifier) {
     specifier === 'monaco-editor' ||
     specifier.startsWith('monaco-editor/') ||
     specifier === '@monaco-editor/react' ||
+    specifier.startsWith('@monaco-editor/react/') ||
     specifier.startsWith('@tauri-apps/') ||
     resolved?.startsWith('src/features/')
   );
@@ -675,11 +717,65 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
       violations.push(
         `${sourcePath} must move to a feature; only src/components/ui primitives may remain`,
       );
+    } else if (
+      sourcePath.startsWith('src/components/ui/') &&
+      !sharedUiPrimitivePaths.has(sourcePath)
+    ) {
+      violations.push(
+        `${sourcePath} is not an approved shared UI primitive`,
+      );
     }
   }
 
   for (const [sourcePath, source] of productionSources) {
     const specifiers = importedModuleSpecifiers(sourcePath, source);
+    const appCommandImports =
+      sourcePath === 'src/app/App.tsx'
+        ? namedImportsFrom(sourcePath, source, '@/ipc/commands')
+        : [];
+    if (
+      sourcePath === 'src/app/App.tsx' &&
+      (
+        specifiers.some((specifier) => [
+          '@/features/workspace/monaco-runtime',
+          '@/features/workspace/editor-types',
+          '@/features/workspace/tabs',
+        ].includes(specifier)) ||
+        appCommandImports.some((name) => [
+          '*',
+          'readEntry',
+          'readViewEntry',
+          'disassemble',
+          'disassembleViewEntry',
+          'prefetchSiblings',
+        ].includes(name))
+      )
+    ) {
+      violations.push(
+        'src/app/App.tsx must delegate workspace lifecycle ownership to a workspace controller',
+      );
+    }
+    if (
+      sourcePath === 'src/app/App.tsx' &&
+      (
+        specifiers.includes('@/features/merge/staging') ||
+        appCommandImports.some((name) => [
+          '*',
+          'stageCopy',
+          'stageWrite',
+          'stageViewWrite',
+          'unstageViewWrite',
+          'commitView',
+          'commitMerge',
+          'clearStaged',
+          'unstage',
+        ].includes(name))
+      )
+    ) {
+      violations.push(
+        'src/app/App.tsx must delegate generation-guarded staging to a merge controller',
+      );
+    }
     if (
       sourcePath.startsWith('src/lib/') &&
       specifiers.some((specifier) => isForbiddenLibImport(sourcePath, specifier))

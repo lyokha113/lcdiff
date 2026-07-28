@@ -527,9 +527,11 @@ test('rejects React, Monaco, Tauri, and feature imports from src/lib', () => {
     'import { useMemo } from "react";\n',
     'import { createRoot } from "react-dom/client";\n',
     'import Editor from "@monaco-editor/react";\n',
+    'import type { EditorProps } from "@monaco-editor/react/dist/index";\n',
     'import type { editor } from "monaco-editor";\n',
     'import { invoke } from "@tauri-apps/api/core";\n',
     'import { SearchBar } from "@/features/search/SearchBar";\n',
+    'import { SearchBar } from "@/lib/../features/search/SearchBar";\n',
   ];
 
   for (const invalidImport of invalidImports) {
@@ -545,6 +547,16 @@ test('rejects feature-to-feature React component imports', () => {
   const sources = structuredClone(cleanPhaseFourSources);
   sources.frontendSources['src/features/search/SearchBar.tsx'] =
     'import { DiffView } from "@/features/workspace/DiffView";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/features/search/SearchBar.tsx must not import React component src/features/workspace/DiffView.tsx from another feature',
+  ]);
+});
+
+test('normalizes aliased traversal before checking feature ownership', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/features/search/SearchBar.tsx'] =
+    'import { DiffView } from "@/features/search/../workspace/DiffView";\n';
 
   assert.deepEqual(verifyPhaseFourArchitecture(sources), [
     'src/features/search/SearchBar.tsx must not import React component src/features/workspace/DiffView.tsx from another feature',
@@ -567,4 +579,62 @@ test('rejects non-primitive files under src/components', () => {
   assert.deepEqual(verifyPhaseFourArchitecture(sources), [
     'src/components/LegacyPanel.tsx must move to a feature; only src/components/ui primitives may remain',
   ]);
+});
+
+test('rejects non-allowlisted files under src/components/ui', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/components/ui/FeaturePanel.tsx'] =
+    'export function FeaturePanel() { return null; }\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+    'src/components/ui/FeaturePanel.tsx is not an approved shared UI primitive',
+  ]);
+});
+
+test('ignores Phase-4 import text in comments and unrelated strings', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/lib/format.ts'] = `
+    // import Editor from "@monaco-editor/react/dist/index";
+    /* import { SearchBar } from "@/features/search/SearchBar"; */
+    const note = "@/features/search/SearchBar";
+  `;
+  sources.frontendSources['src/app/App.tsx'] = `
+    // import { stageViewWrite } from "@/ipc/commands";
+    /* import { readEntry } from "@/ipc/commands"; */
+    const note = "@/features/workspace/monaco-runtime";
+  `;
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
+test('rejects workspace lifecycle infrastructure imports from the app root', () => {
+  const forbiddenImports = [
+    'import "@/features/workspace/monaco-runtime";\n',
+    'import type { MonacoApi } from "@/features/workspace/editor-types";\n',
+    'import { evictLru } from "@/features/workspace/tabs";\n',
+    'import { readEntry } from "@/ipc/commands";\n',
+  ];
+
+  for (const forbiddenImport of forbiddenImports) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/app/App.tsx'] = forbiddenImport;
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/app/App.tsx must delegate workspace lifecycle ownership to a workspace controller',
+    ]);
+  }
+});
+
+test('rejects merge staging infrastructure imports from the app root', () => {
+  const forbiddenImports = [
+    'import { beginStagingOperation } from "@/features/merge/staging";\n',
+    'import { stageViewWrite } from "@/ipc/commands";\n',
+  ];
+
+  for (const forbiddenImport of forbiddenImports) {
+    const sources = structuredClone(cleanPhaseFourSources);
+    sources.frontendSources['src/app/App.tsx'] = forbiddenImport;
+    assert.deepEqual(verifyPhaseFourArchitecture(sources), [
+      'src/app/App.tsx must delegate generation-guarded staging to a merge controller',
+    ]);
+  }
 });
