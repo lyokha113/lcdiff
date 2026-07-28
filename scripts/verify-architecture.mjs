@@ -629,14 +629,29 @@ function importedModuleSpecifiers(sourcePath, source) {
   return specifiers;
 }
 
-function namedImportsFrom(sourcePath, source, moduleSpecifier) {
+function normalizedFrontendModulePath(sourcePath, specifier) {
+  if (specifier.startsWith('@/')) {
+    return path.posix.normalize(`src/${specifier.slice(2)}`);
+  }
+  if (specifier.startsWith('.')) {
+    return path.posix.normalize(
+      path.posix.join(path.posix.dirname(sourcePath), specifier),
+    );
+  }
+  return undefined;
+}
+
+function namedImportsFrom(sourcePath, source, modulePath) {
   const sourceFile = frontendSourceFile(sourcePath, source);
   const names = [];
   for (const statement of sourceFile.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteralLike(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== moduleSpecifier
+      normalizedFrontendModulePath(
+        sourcePath,
+        statement.moduleSpecifier.text,
+      ) !== modulePath
     ) {
       continue;
     }
@@ -655,16 +670,8 @@ function namedImportsFrom(sourcePath, source, moduleSpecifier) {
 }
 
 function resolvedFrontendImport(sourcePath, specifier, frontendSources) {
-  let base;
-  if (specifier.startsWith('@/')) {
-    base = path.posix.normalize(`src/${specifier.slice(2)}`);
-  } else if (specifier.startsWith('.')) {
-    base = path.posix.normalize(
-      path.posix.join(path.posix.dirname(sourcePath), specifier),
-    );
-  } else {
-    return undefined;
-  }
+  const base = normalizedFrontendModulePath(sourcePath, specifier);
+  if (!base) return undefined;
 
   const candidates = [
     base,
@@ -685,11 +692,7 @@ function featureName(sourcePath) {
 }
 
 function isForbiddenLibImport(sourcePath, specifier) {
-  const resolved = specifier.startsWith('.')
-    ? path.posix.normalize(path.posix.join(path.posix.dirname(sourcePath), specifier))
-    : specifier.startsWith('@/')
-      ? path.posix.normalize(`src/${specifier.slice(2)}`)
-      : undefined;
+  const resolved = normalizedFrontendModulePath(sourcePath, specifier);
   return (
     specifier === 'react' ||
     specifier.startsWith('react/') ||
@@ -709,7 +712,7 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
   const productionSources = Object.entries(frontendSources)
     .filter(([sourcePath]) => !isFrontendTest(sourcePath));
 
-  for (const sourcePath of Object.keys(frontendSources)) {
+  for (const [sourcePath] of productionSources) {
     if (
       sourcePath.startsWith('src/components/') &&
       !sourcePath.startsWith('src/components/ui/')
@@ -731,16 +734,19 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
     const specifiers = importedModuleSpecifiers(sourcePath, source);
     const appCommandImports =
       sourcePath === 'src/app/App.tsx'
-        ? namedImportsFrom(sourcePath, source, '@/ipc/commands')
+        ? namedImportsFrom(sourcePath, source, 'src/ipc/commands')
         : [];
+    const resolvedSpecifiers = specifiers
+      .map((specifier) => normalizedFrontendModulePath(sourcePath, specifier))
+      .filter(Boolean);
     if (
       sourcePath === 'src/app/App.tsx' &&
       (
-        specifiers.some((specifier) => [
-          '@/features/workspace/monaco-runtime',
-          '@/features/workspace/editor-types',
-          '@/features/workspace/tabs',
-        ].includes(specifier)) ||
+        resolvedSpecifiers.some((resolved) => [
+          'src/features/workspace/monaco-runtime',
+          'src/features/workspace/editor-types',
+          'src/features/workspace/tabs',
+        ].includes(resolved)) ||
         appCommandImports.some((name) => [
           '*',
           'readEntry',
@@ -758,7 +764,7 @@ export function verifyPhaseFourArchitecture({ frontendSources }) {
     if (
       sourcePath === 'src/app/App.tsx' &&
       (
-        specifiers.includes('@/features/merge/staging') ||
+        resolvedSpecifiers.includes('src/features/merge/staging') ||
         appCommandImports.some((name) => [
           '*',
           'stageCopy',

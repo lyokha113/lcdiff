@@ -591,6 +591,14 @@ test('rejects non-allowlisted files under src/components/ui', () => {
   ]);
 });
 
+test('allows colocated tests for approved UI primitives', () => {
+  const sources = structuredClone(cleanPhaseFourSources);
+  sources.frontendSources['src/components/ui/button.test.tsx'] =
+    'import { Button } from "./button";\n';
+
+  assert.deepEqual(verifyPhaseFourArchitecture(sources), []);
+});
+
 test('ignores Phase-4 import text in comments and unrelated strings', () => {
   const sources = structuredClone(cleanPhaseFourSources);
   sources.frontendSources['src/lib/format.ts'] = `
@@ -612,7 +620,11 @@ test('rejects workspace lifecycle infrastructure imports from the app root', () 
     'import "@/features/workspace/monaco-runtime";\n',
     'import type { MonacoApi } from "@/features/workspace/editor-types";\n',
     'import { evictLru } from "@/features/workspace/tabs";\n',
+    'import { evictLru } from "@/features/workspace/../workspace/tabs";\n',
+    'import { evictLru } from "../features/workspace/tabs";\n',
     'import { readEntry } from "@/ipc/commands";\n',
+    'import { readEntry } from "@/ipc/../ipc/commands";\n',
+    'import { readEntry } from "../ipc/commands";\n',
   ];
 
   for (const forbiddenImport of forbiddenImports) {
@@ -627,7 +639,11 @@ test('rejects workspace lifecycle infrastructure imports from the app root', () 
 test('rejects merge staging infrastructure imports from the app root', () => {
   const forbiddenImports = [
     'import { beginStagingOperation } from "@/features/merge/staging";\n',
+    'import { beginStagingOperation } from "@/features/merge/../merge/staging";\n',
+    'import { beginStagingOperation } from "../features/merge/staging";\n',
     'import { stageViewWrite } from "@/ipc/commands";\n',
+    'import { stageViewWrite } from "@/ipc/../ipc/commands";\n',
+    'import { stageViewWrite } from "../ipc/commands";\n',
   ];
 
   for (const forbiddenImport of forbiddenImports) {
