@@ -124,9 +124,91 @@ function registeredHandlerNames(source) {
     .filter(Boolean);
 }
 
+function stripRustCommentsAndLiterals(source) {
+  const output = [...source];
+  const blank = (index) => {
+    if (output[index] !== '\n' && output[index] !== '\r') {
+      output[index] = ' ';
+    }
+  };
+
+  for (let index = 0; index < source.length; ) {
+    if (source.startsWith('//', index)) {
+      while (index < source.length && source[index] !== '\n') {
+        blank(index);
+        index += 1;
+      }
+      continue;
+    }
+
+    if (source.startsWith('/*', index)) {
+      let depth = 1;
+      blank(index);
+      blank(index + 1);
+      index += 2;
+      while (index < source.length && depth > 0) {
+        if (source.startsWith('/*', index)) {
+          depth += 1;
+          blank(index);
+          blank(index + 1);
+          index += 2;
+        } else if (source.startsWith('*/', index)) {
+          depth -= 1;
+          blank(index);
+          blank(index + 1);
+          index += 2;
+        } else {
+          blank(index);
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    const rawPrefix = source.slice(index).match(/^(?:b|c)?r(#+)?"/);
+    if (rawPrefix) {
+      const hashes = rawPrefix[1] ?? '';
+      const terminator = `"${hashes}`;
+      const start = index;
+      index += rawPrefix[0].length;
+      const end = source.indexOf(terminator, index);
+      index = end === -1 ? source.length : end + terminator.length;
+      for (let cursor = start; cursor < index; cursor += 1) {
+        blank(cursor);
+      }
+      continue;
+    }
+
+    const quotedPrefix = source.slice(index).match(/^(?:b|c)?"/);
+    if (quotedPrefix) {
+      const start = index;
+      index += quotedPrefix[0].length;
+      while (index < source.length) {
+        if (source[index] === '\\') {
+          index += Math.min(2, source.length - index);
+        } else if (source[index] === '"') {
+          index += 1;
+          break;
+        } else {
+          index += 1;
+        }
+      }
+      for (let cursor = start; cursor < index; cursor += 1) {
+        blank(cursor);
+      }
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return output.join('');
+}
+
 function tauriCommandNames(source) {
+  const code = stripRustCommentsAndLiterals(source);
   return [
-    ...source.matchAll(
+    ...code.matchAll(
       /#\s*\[\s*tauri::command\s*]\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)/g,
     ),
   ].map((match) => match[1]);
@@ -141,11 +223,18 @@ function declaredEventNames(source) {
 }
 
 function dependsOnCommands(source) {
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+  const code = stripRustCommentsAndLiterals(source);
+  if (
+    /\b(?:crate|self|super(?:::\s*super)*)\s*::\s*commands\b/.test(
+      code,
+    )
+  ) {
+    return true;
+  }
   return [...code.matchAll(/\buse\s+([\s\S]*?);/g)].some((match) =>
-    /\bcommands\b/.test(match[1]),
+    /^\s*(?:crate|self|super(?:::\s*super)*)\s*::\s*\{[\s\S]*?\bcommands\b/.test(
+      match[1],
+    ),
   );
 }
 
@@ -169,6 +258,7 @@ export function verifyPhaseTwoArchitecture({
   commandSources,
   eventSource,
   protectedSources,
+  nonCommandSources = {},
 }) {
   const violations = [];
 
@@ -178,7 +268,11 @@ export function verifyPhaseTwoArchitecture({
     }
   }
 
-  const outsideCommandSources = [libSource, ...Object.values(protectedSources)];
+  const outsideCommandSources = [
+    libSource,
+    ...Object.values(protectedSources),
+    ...Object.values(nonCommandSources),
+  ];
   if (outsideCommandSources.some((source) => tauriCommandNames(source).length > 0)) {
     violations.push(
       'Tauri commands must be defined only in src-tauri/src/commands/*.rs',
@@ -214,10 +308,28 @@ function readTrackedSource(path) {
   return readFileSync(path, 'utf8');
 }
 
+function readRustSources(directory) {
+  if (!existsSync(directory)) {
+    return {};
+  }
+  return Object.fromEntries(
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        return Object.entries(readRustSources(path));
+      }
+      return entry.isFile() && entry.name.endsWith('.rs')
+        ? [[path, readFileSync(path, 'utf8')]]
+        : [];
+    }),
+  );
+}
+
 export function verifyRepository() {
-  const mainSource = readTrackedSource('src-tauri/src/main.rs');
+  const rustSources = readRustSources('src-tauri/src');
+  const mainSource = rustSources['src-tauri/src/main.rs'];
   const coreCargoToml = readTrackedSource('crates/lcdiff-core/Cargo.toml');
-  const libSource = readTrackedSource('src-tauri/src/lib.rs');
+  const libSource = rustSources['src-tauri/src/lib.rs'];
   const protectedPaths = [
     'src-tauri/src/state.rs',
     'src-tauri/src/events.rs',
@@ -226,26 +338,27 @@ export function verifyRepository() {
     'src-tauri/src/system_fonts.rs',
   ];
   const commandDirectory = 'src-tauri/src/commands';
-  const commandSources = existsSync(commandDirectory)
-    ? Object.fromEntries(
-        readdirSync(commandDirectory)
-          .filter((name) => name.endsWith('.rs'))
-          .map((name) => {
-            const path = `${commandDirectory}/${name}`;
-            return [path, readFileSync(path, 'utf8')];
-          }),
-      )
-    : {};
+  const commandSources = Object.fromEntries(
+    Object.entries(rustSources).filter(([path]) =>
+      path.startsWith(`${commandDirectory}/`),
+    ),
+  );
+  const nonCommandSources = Object.fromEntries(
+    Object.entries(rustSources).filter(
+      ([path]) => !path.startsWith(`${commandDirectory}/`),
+    ),
+  );
 
   return [
     ...verifyPhaseOneArchitecture({ mainSource, coreCargoToml }),
     ...verifyPhaseTwoArchitecture({
       libSource,
       commandSources,
-      eventSource: readTrackedSource('src-tauri/src/events.rs'),
+      eventSource: rustSources['src-tauri/src/events.rs'],
       protectedSources: Object.fromEntries(
-        protectedPaths.map((path) => [path, readTrackedSource(path)]),
+        protectedPaths.map((path) => [path, rustSources[path]]),
       ),
+      nonCommandSources,
     }),
   ];
 }

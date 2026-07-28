@@ -184,6 +184,7 @@ const cleanPhaseTwoSources = {
     'src-tauri/src/sidecar_process.rs': 'use std::process::Command;\n',
     'src-tauri/src/system_fonts.rs': 'use font_kit::source::SystemSource;\n',
   },
+  nonCommandSources: {},
 };
 
 function verifyPhaseTwoArchitecture(sources) {
@@ -219,6 +220,34 @@ test('rejects commands imported through a grouped crate use', () => {
   ]);
 });
 
+test('rejects fully-qualified and aliased command dependencies', () => {
+  const dependencies = [
+    'fn call() { crate::commands::open_archive(); }\n',
+    'use crate::commands as workflow_commands;\nfn call() { workflow_commands::open_archive(); }\n',
+  ];
+
+  for (const dependency of dependencies) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.protectedSources['src-tauri/src/state.rs'] = dependency;
+    assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+      'src-tauri/src/state.rs must not depend on src-tauri/src/commands',
+    ]);
+  }
+});
+
+test('ignores command dependency text inside comments and strings', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.protectedSources['src-tauri/src/state.rs'] = `
+    use third_party::commands::Command;
+    // crate::commands::open_archive();
+    /* use crate::commands as workflow_commands; */
+    const NORMAL: &str = "use crate::commands::open_archive;";
+    const RAW: &str = r#"crate::commands::open_archive()"#;
+  `;
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
+});
+
 test('rejects Tauri command definitions outside commands modules', () => {
   const sources = structuredClone(cleanPhaseTwoSources);
   sources.protectedSources['src-tauri/src/system_fonts.rs'] =
@@ -227,6 +256,28 @@ test('rejects Tauri command definitions outside commands modules', () => {
   assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
     'Tauri commands must be defined only in src-tauri/src/commands/*.rs',
   ]);
+});
+
+test('rejects Tauri command definitions in any non-command backend module', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.nonCommandSources['src-tauri/src/ipc_contracts.rs'] =
+    '#[tauri::command]\nfn rogue_test_command() {}\n';
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    'Tauri commands must be defined only in src-tauri/src/commands/*.rs',
+  ]);
+});
+
+test('ignores Tauri command annotation text in comments and strings', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.nonCommandSources['src-tauri/src/ipc_contracts.rs'] = `
+    // #[tauri::command]
+    /* #[tauri::command] fn commented_out() {} */
+    const NORMAL: &str = "#[tauri::command] fn string_only() {}";
+    const RAW: &str = r#"#[tauri::command] fn raw_string_only() {}"#;
+  `;
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
 });
 
 test('rejects a changed or reordered backend handler allowlist', () => {
