@@ -1,37 +1,44 @@
 import Editor, { DiffEditor } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  clearFreeTextHistory,
-  loadFreeTextHistory,
-  recordFreeTextResult,
-  type FreeTextHistoryEntry,
-} from "./free-text-history";
+import type { Side } from "@/lib/types";
+import type { FreeTextHistoryEntry } from "./free-text-history";
 import {
   editorFontFamilyForCss,
   type EffectiveColorPattern,
   type UiPreferences,
 } from "@/features/preferences/preferences";
 
-interface FreeTextWorkspaceProps {
+export interface FreeTextWorkspaceProps {
   preferences: UiPreferences;
   effectiveColorPattern: EffectiveColorPattern;
   ignoreTrimWhitespace: boolean;
-  onMessage: (message: string) => void;
+  draftLeft: string;
+  draftRight: string;
+  history: FreeTextHistoryEntry[];
+  activeResultId: string | undefined;
+  onDraftChange: (side: Side, content: string) => void;
+  onClearDrafts: () => void;
+  onConfirmDiff: () => void;
+  onClearHistory: () => void;
+  onSelectResult: (id: string) => void;
 }
 
 export function FreeTextWorkspace({
   preferences,
   effectiveColorPattern,
   ignoreTrimWhitespace,
-  onMessage,
+  draftLeft,
+  draftRight,
+  history,
+  activeResultId,
+  onDraftChange,
+  onClearDrafts,
+  onConfirmDiff,
+  onClearHistory,
+  onSelectResult,
 }: FreeTextWorkspaceProps) {
-  const [draftLeft, setDraftLeft] = useState("");
-  const [draftRight, setDraftRight] = useState("");
-  const [history, setHistory] = useState<FreeTextHistoryEntry[]>(() => loadFreeTextHistory());
-  const [activeResultId, setActiveResultId] = useState<string | undefined>(() => history[0]?.id);
-
   const activeResult = history.find((entry) => entry.id === activeResultId);
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
   const editorOptions = useMemo<editor.IEditorConstructionOptions>(() => ({
@@ -52,24 +59,6 @@ export function FreeTextWorkspace({
     preferences.editor.wordWrap,
   ]);
 
-  function confirmDiff() {
-    const next = recordFreeTextResult({
-      left: draftLeft,
-      right: draftRight,
-      createdAt: Date.now(),
-    });
-    setHistory(next);
-    setActiveResultId(next[0]?.id);
-    onMessage("Free text diff result saved to temporary history.");
-  }
-
-  function clearHistory() {
-    clearFreeTextHistory();
-    setHistory([]);
-    setActiveResultId(undefined);
-    onMessage("Free text history cleared.");
-  }
-
   function formatHistoryTime(createdAt: number) {
     return new Intl.DateTimeFormat(undefined, {
       hour: "2-digit",
@@ -87,7 +76,7 @@ export function FreeTextWorkspace({
             value={draftLeft}
             theme={monacoTheme}
             options={{ ...editorOptions, ariaLabel: "Left free text input" }}
-            onChange={(value) => setDraftLeft(value ?? "")}
+            onChange={(value) => onDraftChange("left", value ?? "")}
           />
         </div>
         <div className="free-text-draft-pane">
@@ -97,14 +86,27 @@ export function FreeTextWorkspace({
             value={draftRight}
             theme={monacoTheme}
             options={{ ...editorOptions, ariaLabel: "Right free text input" }}
-            onChange={(value) => setDraftRight(value ?? "")}
+            onChange={(value) => onDraftChange("right", value ?? "")}
           />
         </div>
       </section>
 
       <div className="free-text-actions">
-        <Button onClick={confirmDiff}>Compare free text</Button>
-        <Button variant="outline" onClick={clearHistory} disabled={history.length === 0}>
+        <Button onClick={onConfirmDiff}>Compare free text</Button>
+        <Button
+          variant="outline"
+          disabled={!draftLeft && !draftRight}
+          onClick={() => {
+            if (
+              (draftLeft || draftRight)
+              && !globalThis.confirm("Clear both free text drafts?")
+            ) return;
+            onClearDrafts();
+          }}
+        >
+          Clear drafts
+        </Button>
+        <Button variant="outline" onClick={onClearHistory} disabled={history.length === 0}>
           Clear free text history
         </Button>
       </div>
@@ -117,7 +119,7 @@ export function FreeTextWorkspace({
               type="button"
               className={`free-text-history__item${entry.id === activeResultId ? " active" : ""}`}
               aria-pressed={entry.id === activeResultId}
-              onClick={() => setActiveResultId(entry.id)}
+              onClick={() => onSelectResult(entry.id)}
             >
               <span className="free-text-history__marker" aria-hidden="true" />
               <span className="free-text-history__content">

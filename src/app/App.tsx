@@ -63,6 +63,7 @@ import { SearchBar } from "@/features/search/SearchBar";
 import { SearchResultsPanel } from "@/features/search/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/features/workspace/DiffView";
 import { FreeTextWorkspace } from "@/features/free-text/FreeTextWorkspace";
+import { useFreeTextController } from "@/features/free-text/useFreeTextController";
 import { KeyboardShortcutsDialog } from "@/features/shell/KeyboardShortcutsDialog";
 import { useWorkspaceController } from "@/features/workspace/useWorkspaceController";
 import {
@@ -204,6 +205,7 @@ export function App() {
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const appliedEngineRef = useRef(engine);
   const mergeContextRef = useRef<MergeControllerContext | undefined>(undefined);
+  const freeText = useFreeTextController(setMessage);
   const workspace = useWorkspaceController({
     mode,
     setPairs,
@@ -1456,7 +1458,15 @@ export function App() {
                   preferences={preferences}
                   effectiveColorPattern={activeColorPattern}
                   ignoreTrimWhitespace={ignoreTrimWhitespace}
-                  onMessage={setMessage}
+                  draftLeft={freeText.draftLeft}
+                  draftRight={freeText.draftRight}
+                  history={freeText.history}
+                  activeResultId={freeText.activeResultId}
+                  onDraftChange={freeText.setDraft}
+                  onClearDrafts={freeText.clearDrafts}
+                  onConfirmDiff={freeText.confirmDiff}
+                  onClearHistory={freeText.clearHistory}
+                  onSelectResult={freeText.selectResult}
                 />
               </div>
             ) : mode === "single" ? (

@@ -795,6 +795,30 @@ describe("App file-merge wiring", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });
 
+  it("preserves Free text drafts and selected history result across mode switches", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+
+    await user.type(screen.getByLabelText("Left free text input"), "old");
+    await user.type(screen.getByLabelText("Right free text input"), "first right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.clear(screen.getByLabelText("Left free text input"));
+    await user.clear(screen.getByLabelText("Right free text input"));
+    await user.type(screen.getByLabelText("Left free text input"), "newer left");
+    await user.type(screen.getByLabelText("Right free text input"), "newer right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getAllByRole("button", { name: /characters/ })[1]);
+
+    await switchMode("Compare");
+    await switchMode("Text");
+
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("newer left");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("newer right");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("old");
+    expect(screen.getByTestId("diff-modified")).toHaveTextContent("first right");
+  });
+
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
