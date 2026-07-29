@@ -8,6 +8,7 @@ export const emptyCompareWorkspace = (): CompareWorkspaceState => ({
   activeTab: "files",
   editBuffer: "",
   viewMode: "source",
+  expandedPaths: new Set(),
 });
 
 export function focusCompareWorkspaceTab(

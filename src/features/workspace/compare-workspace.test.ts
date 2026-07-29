@@ -48,6 +48,7 @@ describe("Compare workspace state", () => {
       activeTab: "files",
       editBuffer: "",
       viewMode: "source",
+      expandedPaths: new Set(),
     });
   });
 

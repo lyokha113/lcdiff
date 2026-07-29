@@ -1462,10 +1462,10 @@ mod tests {
         let path = dir.path().join("binary.txt");
         std::fs::write(&path, b"before\0after").unwrap();
 
-        assert_eq!(
-            read_text_file_through_production(path.display().to_string()).unwrap_err(),
-            "file is not valid UTF-8 text"
-        );
+        let error = read_text_file_through_production(path.display().to_string()).unwrap_err();
+
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("file is not valid UTF-8 text"), "{error}");
     }
 
     #[test]
@@ -1474,10 +1474,10 @@ mod tests {
         let path = dir.path().join("invalid.txt");
         std::fs::write(&path, [0xff, 0xfe]).unwrap();
 
-        assert_eq!(
-            read_text_file_through_production(path.display().to_string()).unwrap_err(),
-            "file is not valid UTF-8 text"
-        );
+        let error = read_text_file_through_production(path.display().to_string()).unwrap_err();
+
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("file is not valid UTF-8 text"), "{error}");
     }
 
     #[test]

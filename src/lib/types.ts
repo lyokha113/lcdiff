@@ -83,6 +83,7 @@ export interface CompareWorkspaceState {
   activeTab: "files" | string;
   editBuffer: string;
   viewMode: ViewMode;
+  expandedPaths: Set<string>;
 }
 
 export interface CommitResult {

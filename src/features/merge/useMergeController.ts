@@ -241,18 +241,27 @@ export function useMergeController({
     const generation = beginStagingOperation(editStageGenerationRef);
     const key = viewStagingKey(entryPath);
     const original = context.preview.left?.content ?? "";
+    const previousEntry = stagedEntries[key];
+    const previousTarget = stagedTarget;
     if (content === original) {
       if (
         stagedEntries[key]?.kind === "edit" &&
         context.activeViewSource
       ) {
-        await unstageViewWrite(sourceId, entryPath);
-        setStagedEntries((current) => {
-          const next = { ...current };
-          delete next[key];
-          if (Object.keys(next).length === 0) setStagedTarget(undefined);
-          return next;
-        });
+        try {
+          await unstageViewWrite(sourceId, entryPath);
+          if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
+          setStagedEntries((current) => {
+            const next = { ...current };
+            delete next[key];
+            if (Object.keys(next).length === 0) setStagedTarget(undefined);
+            return next;
+          });
+        } catch (error) {
+          if (isCurrentStagingOperation(editStageGenerationRef, generation)) {
+            onMessage(String(error));
+          }
+        }
       }
       return;
     }
@@ -269,55 +278,76 @@ export function useMergeController({
       if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
       setStagedEntries((current) => {
         const next = { ...current };
-        delete next[key];
-        if (Object.keys(next).length === 0) setStagedTarget(undefined);
+        if (previousEntry) next[key] = previousEntry;
+        else delete next[key];
         return next;
       });
+      setStagedTarget((current) => current === "left" ? previousTarget : current);
       onMessage(String(error));
     }
-  }, [getContext, onMessage, stagedEntries]);
+  }, [getContext, onMessage, stagedEntries, stagedTarget]);
 
-  const stageFileSide = useCallback(async (side: Side, content: string) => {
+  const stageFileSide = useCallback(async (
+    side: Side,
+    entryPath: string,
+    content: string,
+    model: EntryPreview,
+  ) => {
     const context = getContext();
-    if (!context.selected) return;
-    const key = fileStagingKey(side, context.selected.path);
-    const original =
-      (side === "left"
-        ? context.preview.left?.content
-        : context.preview.right?.content) ?? "";
+    if (
+      model.path !== entryPath ||
+      context.mode !== "compare" ||
+      context.selected?.path !== entryPath ||
+      context.preview[side] !== model
+    ) {
+      return;
+    }
+    const key = fileStagingKey(side, entryPath);
+    const original = model.content;
     if (content === original) {
       if (stagedEntries[key]?.kind === "edit") await unstage(key);
       return;
     }
     const generation = beginStagingOperation(editStageGenerationRef);
+    const previousEntry = stagedEntries[key];
+    const previousTarget = stagedTarget;
     try {
       setStagedEntries((current) => ({
         ...current,
         [key]: { side, kind: "edit" },
       }));
       setStagedTarget(side);
-      await stageWrite(side, context.selected.path, content);
+      await stageWrite(side, entryPath, content);
       if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
-      onMessage(`Edited ${context.selected.path} on ${side} (unsaved)`);
+      onMessage(`Edited ${entryPath} on ${side} (unsaved)`);
     } catch (error) {
       if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
       setStagedEntries((current) => {
         const next = { ...current };
-        delete next[key];
-        if (Object.keys(next).length === 0) setStagedTarget(undefined);
+        if (previousEntry) next[key] = previousEntry;
+        else delete next[key];
         return next;
       });
+      setStagedTarget((current) => current === side ? previousTarget : current);
       onMessage(String(error));
     }
-  }, [getContext, onMessage, stagedEntries, unstage]);
+  }, [getContext, onMessage, stagedEntries, stagedTarget, unstage]);
 
   const takeAllTo = useCallback(async (target: Side) => {
     const context = getContext();
     if (!context.isTextMerge || !context.selected) return;
     const source: Side = target === "left" ? "right" : "left";
     const content = editor.getSideContent(source);
-    if (content === undefined || !editor.setSideContent(target, content)) return;
-    await stageFileSide(target, content);
+    const model = context.preview[target];
+    if (
+      content === undefined ||
+      !context.selected ||
+      !model ||
+      !editor.setSideContent(target, content)
+    ) {
+      return;
+    }
+    await stageFileSide(target, context.selected.path, content, model);
   }, [editor, getContext, stageFileSide]);
 
   const moveHunkTo = useCallback((target: Side) => {
@@ -347,8 +377,16 @@ export function useMergeController({
     const source: Side = target === "left" ? "right" : "left";
     editor.setSideContent(target, result.target);
     editor.setSideContent(source, result.source);
-    void stageFileSide(target, result.target);
-    void stageFileSide(source, result.source);
+    const context = getContext();
+    if (!context.selected) return;
+    const targetModel = context.preview[target];
+    const sourceModel = context.preview[source];
+    if (targetModel) {
+      void stageFileSide(target, context.selected.path, result.target, targetModel);
+    }
+    if (sourceModel) {
+      void stageFileSide(source, context.selected.path, result.source, sourceModel);
+    }
   }, [editor, getContext, onMessage, stageFileSide]);
 
   const pendingOps = useMemo(

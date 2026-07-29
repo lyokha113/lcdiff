@@ -609,19 +609,10 @@ try {
     }
   });
   mockedPage.on("pageerror", (error) => {
-    // Monaco throws a benign CancellationError ("Canceled") when its editors are
-    // torn down between selections; it is not a real page failure.
+    // Monaco's WordHighlighter rejects its pending Delayer with a documented
+    // cancellation while an editor is disposed. The model/widget ownership
+    // errors that this verifier guards remain unsuppressed.
     if (error.message === "Canceled" || error.name === "Canceled") return;
-    // The current Monaco diff editor can also emit this exact teardown race while
-    // switching an already-disposed model between rendered fixture workspaces.
-    if (error.message.includes("TextModel got disposed before DiffEditorWidget model got reset")) return;
-    // Monaco's diff gutter can also report a transient line-number error when
-    // the verifier switches between the Files tab and an active diff editor.
-    const errorText = (error.stack || error.message || "").toLowerCase();
-    if (
-      errorText.includes("illegal value for linenumber") &&
-      errorText.includes("editorgutter")
-    ) return;
     mockMessages.push(`pageerror: ${error.stack || error.message}`);
   });
   await mockedPage.addInitScript(() => {
@@ -1372,7 +1363,12 @@ try {
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
 
-  // Back to Compare: right chip returns.
+  // Complete the mode lifecycle through Free text before returning to Compare.
+  await mockedPage.getByRole("button", { name: "Text mode" }).click();
+  await mockedPage.getByRole("main", { name: "Free text workspace" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Clear drafts", exact: true }).waitFor({ timeout: 5_000 });
+
+  // Back to Compare: right chip returns and no disposed Monaco owner is touched.
   await mockedPage.getByRole("button", { name: "Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("group", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
@@ -1431,12 +1427,8 @@ try {
     throw new Error("signed warning Dialog reappeared after session suppression");
   }
 
-  const actionableMockMessages = mockMessages.filter((message) => {
-    const normalized = message.toLowerCase();
-    return !(normalized.includes("illegal value for linenumber") && normalized.includes("editorgutter"));
-  });
-  if (actionableMockMessages.length > 0) {
-    throw new Error(`mocked browser console/page errors:\n${actionableMockMessages.join("\n")}`);
+  if (mockMessages.length > 0) {
+    throw new Error(`mocked browser console/page errors:\n${mockMessages.join("\n")}`);
   }
   await browser.close();
   console.log("frontend render passed");

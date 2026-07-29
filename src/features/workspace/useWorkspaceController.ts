@@ -86,12 +86,19 @@ export interface WorkspaceControllerOptions {
 
 type WorkspaceProjectionState = Pick<
   CompareWorkspaceState,
-  "selected" | "preview" | "activeTab" | "editBuffer" | "viewMode"
+  "selected" | "preview" | "activeTab" | "editBuffer" | "viewMode" | "expandedPaths"
 >;
 
 function emptyWorkspaceProjection(): WorkspaceProjectionState {
-  const { selected, preview, activeTab, editBuffer, viewMode } = emptyCompareWorkspace();
-  return { selected, preview, activeTab, editBuffer, viewMode };
+  const {
+    selected,
+    preview,
+    activeTab,
+    editBuffer,
+    viewMode,
+    expandedPaths,
+  } = emptyCompareWorkspace();
+  return { selected, preview, activeTab, editBuffer, viewMode, expandedPaths };
 }
 
 const inertWorkspaceProjection = emptyWorkspaceProjection();
@@ -243,6 +250,7 @@ export function useWorkspaceController({
     activeTab,
     editBuffer,
     viewMode,
+    expandedPaths,
   } = activeProjection;
   const openTabs = mode === "compare" ? compareWorkspace.openTabs : [];
 
@@ -298,6 +306,14 @@ export function useWorkspaceController({
     }));
   }, [updateActiveProjection]);
 
+  const setExpandedPaths = useCallback((next: SetStateAction<Set<string>>) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      expandedPaths:
+        typeof next === "function" ? next(current.expandedPaths) : next,
+    }));
+  }, [updateActiveProjection]);
+
   const setOpenTabs = useCallback((next: SetStateAction<DiffTab[]>) => {
     setCompareWorkspace((current) => ({
       ...current,
@@ -329,11 +345,20 @@ export function useWorkspaceController({
   }, [mode]);
 
   const handleEditorMount = useCallback<OnMount>((editor, monaco) => {
+    singleSearchDecorations.current = [];
     editorRef.current = editor;
     monacoRef.current = monaco;
+    editor.onDidDispose(() => {
+      if (editorRef.current !== editor) return;
+      editorRef.current = undefined;
+      singleSearchDecorations.current = [];
+      if (!diffEditorRef.current) monacoRef.current = undefined;
+    });
   }, []);
 
   const handleDiffMount = useCallback<DiffOnMount>((editor, monaco) => {
+    leftSearchDecorations.current = [];
+    rightSearchDecorations.current = [];
     diffEditorRef.current = editor;
     monacoRef.current = monaco;
     const original = editor.getOriginalEditor();
@@ -350,7 +375,20 @@ export function useWorkspaceController({
       modified.onDidFocusEditorText(() => updateForSide("right")),
     ];
     updateDiffNavigatorState();
-    editor.onDidDispose(() => disposables.forEach((disposable) => disposable.dispose()));
+    let disposed = false;
+    const releaseOwnership = () => {
+      if (disposed) return;
+      disposed = true;
+      disposables.forEach((disposable) => disposable.dispose());
+      if (diffEditorRef.current !== editor) return;
+      diffEditorRef.current = undefined;
+      leftSearchDecorations.current = [];
+      rightSearchDecorations.current = [];
+      if (!editorRef.current) monacoRef.current = undefined;
+    };
+    editor.onDidDispose(releaseOwnership);
+    original.onDidDispose(releaseOwnership);
+    modified.onDidDispose(releaseOwnership);
   }, [updateDiffNavigatorState]);
 
   useEffect(() => {
@@ -407,6 +445,10 @@ export function useWorkspaceController({
 
   useEffect(() => {
     if (mode !== "compare" || activeTab === "files" || !selected) return;
+    const previewMatchesSelection = (["left", "right"] as const).every(
+      (side) => !selected[side] || preview[side]?.path === selected.path,
+    );
+    if (!previewMatchesSelection) return;
     setOpenTabs((current) =>
       current.map((tab) =>
         tab.path === activeTab ? { ...tab, pair: selected, preview, viewMode } : tab,
@@ -572,6 +614,8 @@ export function useWorkspaceController({
     const requestId = previewRequestId.current + 1;
     previewRequestId.current = requestId;
     setSelected(pair);
+    setPreview({});
+    setEditBuffer("");
     setActiveTab(pair.path);
     setViewMode("source");
     const next: Partial<Record<Side, EntryPreview>> = {};
@@ -867,10 +911,12 @@ export function useWorkspaceController({
       activeTab,
       openTabs,
       activeViewSource,
+      expandedPaths,
     },
     actions: {
       selectPair: setSelected,
       setContentFilter,
+      setExpandedPaths,
       updateEditBuffer: setEditBuffer,
       focusFiles: () => setActiveTab("files"),
       focusTab,

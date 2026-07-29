@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, File, FileArchive, Folder, FolderOpen } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,6 +19,8 @@ interface FileTreeProps {
   rightLabel?: string;
   expandAllVersion?: number;
   collapseAllVersion?: number;
+  expandedPaths?: Set<string>;
+  onExpandedPathsChange?: (paths: Set<string>) => void;
   onInspect: (pair: ComparePair) => void;
   onSelect: (pair: ComparePair) => void;
   onCopy: (from: Side, to: Side, pair: ComparePair) => void;
@@ -68,37 +70,46 @@ export function FileTree(props: FileTreeProps) {
     treeFilter,
     expandAllVersion = 0,
     collapseAllVersion = 0,
+    expandedPaths,
+    onExpandedPathsChange,
   } = props;
   const effectiveTreeFilter = mode === "compare" ? treeFilter : "all";
   const tree = useMemo(() => buildTree(visiblePairs), [visiblePairs]);
   const pathsKey = useMemo(() => visiblePairs.map((p) => p.path).join("|"), [visiblePairs]);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [localExpanded, setLocalExpanded] = useState<Set<string>>(() => new Set());
+  const expanded = expandedPaths ?? localExpanded;
+  const updateExpanded = useCallback((
+    update: Set<string> | ((current: Set<string>) => Set<string>),
+  ) => {
+    const next = typeof update === "function" ? update(expanded) : update;
+    if (expandedPaths === undefined) setLocalExpanded(next);
+    onExpandedPathsChange?.(next);
+  }, [expanded, expandedPaths, onExpandedPathsChange]);
   const lastExpandAllVersion = useRef(expandAllVersion);
   const lastCollapseAllVersion = useRef(collapseAllVersion);
   useEffect(() => {
-    setExpanded(new Set());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathsKey]);
+    if (expandedPaths === undefined) setLocalExpanded(new Set());
+  }, [expandedPaths, pathsKey]);
   useEffect(() => {
     if (expandAllVersion !== lastExpandAllVersion.current) {
       lastExpandAllVersion.current = expandAllVersion;
-      setExpanded(collectExpandablePaths(tree, nestedPairs, effectiveTreeFilter));
+      updateExpanded(collectExpandablePaths(tree, nestedPairs, effectiveTreeFilter));
     }
-  }, [effectiveTreeFilter, expandAllVersion, nestedPairs, tree]);
+  }, [effectiveTreeFilter, expandAllVersion, nestedPairs, tree, updateExpanded]);
   useEffect(() => {
     if (collapseAllVersion !== lastCollapseAllVersion.current) {
       lastCollapseAllVersion.current = collapseAllVersion;
-      setExpanded(new Set());
+      updateExpanded(new Set());
     }
-  }, [collapseAllVersion]);
+  }, [collapseAllVersion, updateExpanded]);
 
   const toggle = (path: string) =>
-    setExpanded((prev) => {
+    updateExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
-    });
+      });
 
   const twoPane = mode !== "single";
 

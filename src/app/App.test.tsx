@@ -313,6 +313,10 @@ const MODIFY_LINE_2 = {
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
 let diffEditorMounted = false;
 let diffEditorProps: { original?: string; modified?: string; options?: { readOnly?: boolean; originalEditable?: boolean } } = {};
+type DiffModelChangeEvent = { isFlush: boolean };
+const diffModelChangeHandlers: Partial<
+  Record<"left" | "right", (event: DiffModelChangeEvent) => void>
+> = {};
 type ViewEditorChangeEvent = { isFlush: boolean };
 let viewEditorProps: {
   value?: string;
@@ -325,7 +329,17 @@ function makeFakeDiffEditor() {
   const subEditor = (buf: "left" | "right", set: typeof setOriginal, reveal: typeof revealOriginal) => ({
     getValue: () => buffers[buf],
     setValue: set,
-    onDidChangeModelContent: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeModelContent: vi.fn((handler: (event: DiffModelChangeEvent) => void) => {
+      diffModelChangeHandlers[buf] = handler;
+      return {
+        dispose: vi.fn(() => {
+          if (diffModelChangeHandlers[buf] === handler) {
+            delete diffModelChangeHandlers[buf];
+          }
+        }),
+      };
+    }),
+    onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     onDidFocusEditorText: vi.fn((handler: () => void) => {
       if (buf === "left") focusOriginalEditor = handler;
@@ -468,6 +482,8 @@ describe("App file-merge wiring", () => {
     focusOriginalEditor = undefined;
     diffEditorProps = {};
     viewEditorProps = {};
+    delete diffModelChangeHandlers.left;
+    delete diffModelChangeHandlers.right;
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
     lineChanges = [MODIFY_LINE_2];
@@ -877,6 +893,86 @@ describe("App file-merge wiring", () => {
     expect(screen.getByLabelText("Right free text input")).toHaveValue("right draft");
   });
 
+  it("preserves manually expanded Compare folders across a mode cycle", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "manual/child.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "manual/child.json" },
+              right: { ...FILE_ENTRY, path: "manual/child.json" },
+            },
+          ],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(screen.getAllByText("manual")[0].closest("button")!);
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+
+    await switchMode("Text");
+    await switchMode("Compare");
+
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+    expect(screen.getAllByText("manual")[0].closest("button"))
+      .toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("preserves Expand-all per mode without expanding the other mode", async () => {
+    chooseFile
+      .mockResolvedValueOnce("/tmp/config.json")
+      .mockResolvedValueOnce("/tmp/config.json")
+      .mockResolvedValueOnce("/tmp/alpha.jar");
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "compare-only/child.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "compare-only/child.json" },
+              right: { ...FILE_ENTRY, path: "compare-only/child.json" },
+            },
+          ],
+        });
+      }
+      if (
+        cmd === "compute_view_nested_entries" &&
+        args?.nestedPath === ""
+      ) {
+        return Promise.resolve({
+          pairs: [{
+            path: "view-only/entry.json",
+            status: "onlyLeft" as const,
+            left: { path: "view-only/entry.json", kind: "text" as const },
+          }],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(screen.getByRole("button", { name: "Expand all folders" }));
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+
+    await switchMode("View");
+    await browseViewSource(user);
+    expect(screen.queryByText("entry.json")).not.toBeInTheDocument();
+
+    await switchMode("Compare");
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+    await switchMode("View");
+    expect(screen.queryByText("entry.json")).not.toBeInTheDocument();
+  });
+
   it("ignores a pending Compare preview after switching to Free text", async () => {
     let resolveLeftPreview:
       | ((preview: ReturnType<typeof entryPreview>) => void)
@@ -1171,7 +1267,11 @@ describe("App file-merge wiring", () => {
       });
     });
 
-    await waitFor(() => expect(screen.getByText("2 opened, 1 failed")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(
+        "2 opened, 1 failed — /tmp/b.jar: Error: unreadable",
+      )).toBeInTheDocument(),
+    );
     expect(
       invoke.mock.calls
         .filter(([cmd]) => cmd === "open_view_source")
@@ -1213,7 +1313,9 @@ describe("App file-merge wiring", () => {
       });
     });
 
-    expect(await screen.findByText("0 opened, 0 failed, 1 blocked")).toBeInTheDocument();
+    expect(await screen.findByText(
+      "0 opened, 0 failed, 1 blocked — /tmp/blocked.jar: Save or clear unsaved changes before opening another View source.",
+    )).toBeInTheDocument();
     expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
     expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
   });
@@ -1467,7 +1569,11 @@ describe("App file-merge wiring", () => {
       });
     });
 
-    await waitFor(() => expect(screen.getByText("Unable to load dropped text files: Error: invalid UTF-8")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(
+        "Unable to load dropped text files: Error: /tmp/fail.txt: invalid UTF-8",
+      )).toBeInTheDocument(),
+    );
     expect(screen.getByLabelText("Left free text input")).toHaveValue("contents:/tmp/left.txt");
     expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/right.txt");
   });
@@ -1840,6 +1946,90 @@ describe("App file-merge wiring", () => {
     expect(await screen.findByTestId("editor")).toHaveValue("loaded alpha-two");
   });
 
+  it("does not stage the previous Compare model into a newly selected entry while its preview loads", async () => {
+    const user = userEvent.setup();
+    let resolveNextPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "second.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "second.json" },
+              right: { ...FILE_ENTRY, path: "second.json" },
+            },
+          ],
+        });
+      }
+      if (
+        cmd === "read_entry" &&
+        args?.entryPath === "second.json" &&
+        args?.side === "left"
+      ) {
+        return new Promise((resolve) => {
+          resolveNextPreview = resolve;
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "second.json") {
+        return Promise.resolve({
+          path: "second.json",
+          kind: "text" as const,
+          language: "json",
+          details: null,
+          content: "loaded second right",
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(diffModelChangeHandlers.left).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(
+      (await screen.findAllByText("second.json"))
+        .find((cell) => cell.closest("button.tree-file"))!,
+    );
+    await waitFor(() => expect(resolveNextPreview).toBeDefined());
+    await waitFor(() =>
+      expect(diffEditorProps.options).toMatchObject({
+        originalEditable: false,
+        readOnly: true,
+      }),
+    );
+    expect(screen.getByTestId("diff-original")).toBeEmptyDOMElement();
+    invoke.mockClear();
+
+    buffers.left = "stale config edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith("stage_write", {
+      side: "left",
+      entryPath: "second.json",
+      content: "stale config edit",
+    });
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveNextPreview?.({
+        path: "second.json",
+        kind: "text",
+        language: "json",
+        details: null,
+        content: "loaded second left",
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("diff-original"))
+      .toHaveTextContent("loaded second left");
+  });
+
   it("ignores stale stage_view_write failure after a newer edit succeeds", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
@@ -1868,6 +2058,96 @@ describe("App file-merge wiring", () => {
 
     await waitFor(() => expect(screen.getByText("1 pending")).toBeInTheDocument());
     expect(screen.queryByText("Error: stale view stage failure")).not.toBeInTheDocument();
+  });
+
+  it("keeps the prior View pending projection when a replacement write fails", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    let writeCount = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "stage_view_write") {
+        writeCount += 1;
+        if (writeCount === 2) throw new Error("replacement view write failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const editor = await screen.findByTestId("editor");
+
+    fireEvent.change(editor, { target: { value: "first staged view edit" } });
+    expect(await screen.findByText("Edited alpha.json (unsaved)")).toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: "failed replacement view edit" } });
+
+    expect(await screen.findByText("Error: replacement view write failed"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getByLabelText("Save to archive (1)")).toBeEnabled();
+  });
+
+  it("keeps the prior Compare pending projection when a replacement write fails", async () => {
+    const user = userEvent.setup();
+    let writeCount = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "stage_write") {
+        writeCount += 1;
+        if (writeCount === 2) throw new Error("replacement compare write failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(diffModelChangeHandlers.left).toBeDefined());
+
+    buffers.left = "first staged compare edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Edited config.json on left (unsaved)"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+
+    buffers.left = "failed replacement compare edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Error: replacement compare write failed"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getByLabelText("Save to archive (1)")).toBeEnabled();
+  });
+
+  it("surfaces a failed View unstage while retaining the pending edit", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const editor = await screen.findByTestId("editor");
+    fireEvent.change(editor, { target: { value: "staged before failed unstage" } });
+    expect(await screen.findByText("Edited alpha.json (unsaved)")).toBeInTheDocument();
+
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "unstage_view_write") {
+        throw new Error("view unstage failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    fireEvent.change(editor, {
+      target: { value: "view:/tmp/alpha.jar:alpha.json" },
+    });
+
+    expect(await screen.findByText("Error: view unstage failed")).toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
   });
 
   it("unstages View edits with a bare entry path", async () => {

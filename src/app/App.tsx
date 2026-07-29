@@ -126,10 +126,10 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 const VIEW_ROOT_KEY = "";
 
 type OpenViewPathOutcome =
-  | { status: "opened" }
-  | { status: "failed"; error: string }
-  | { status: "blocked" }
-  | { status: "cancelled" };
+  | { path: string; status: "opened" }
+  | { path: string; status: "failed"; error: string }
+  | { path: string; status: "blocked"; error: string }
+  | { path: string; status: "cancelled" };
 
 // Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
@@ -158,6 +158,15 @@ function summaryAsArchive(source: ViewSource | undefined): ArchiveSummary | unde
 function dropSideForPosition(mode: Mode, x: number, width: number): Side {
   if (mode === "single") return "left";
   return x < width / 2 ? "left" : "right";
+}
+
+async function readDroppedTextFile(path: string) {
+  try {
+    return await readTextFile(path);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${path}: ${detail}`);
+  }
 }
 
 export function App() {
@@ -241,10 +250,12 @@ export function App() {
     activeTab,
     openTabs,
     activeViewSource,
+    expandedPaths,
   } = workspace.state;
   const {
     selectPair,
     setContentFilter,
+    setExpandedPaths,
     updateEditBuffer,
     focusFiles,
     focusTab,
@@ -536,31 +547,34 @@ export function App() {
       viewDropGenerationRef.current += 1;
     }
     if (stagedTarget) {
-      setMessage("Save or clear unsaved changes before opening another View source.");
-      return { status: "blocked" };
+      const error = "Save or clear unsaved changes before opening another View source.";
+      setMessage(error);
+      return { path, status: "blocked", error };
     }
     const generation = viewRequestGenerationRef.current + 1;
     viewRequestGenerationRef.current = generation;
     try {
       const validatedPath = await validatePath(path);
-      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       const summary = await openViewSourceCommand(validatedPath);
-      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
       resetWorkspace({ target: "view" });
       activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
       await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
-      if (!isCurrentViewRequest(generation, summary.id)) return { status: "cancelled" };
+      if (!isCurrentViewRequest(generation, summary.id)) {
+        return { path, status: "cancelled" };
+      }
       setMessage(`Opened ${summary.path}`);
-      return { status: "opened" };
+      return { path, status: "opened" };
     } catch (error) {
-      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       const message = String(error);
       setPathErrors((current) => ({ ...current, left: message }));
       setMessage(message);
-      return { status: "failed", error: message };
+      return { path, status: "failed", error: message };
     }
   }, [loadViewPairs, resetWorkspace, stagedTarget]);
 
@@ -713,7 +727,16 @@ export function App() {
           if (blocked > 0) {
             summary.push(`${blocked} blocked`);
           }
-          setMessage(summary.join(", "));
+          const failures = outcomes.filter(
+            (outcome): outcome is Extract<
+              OpenViewPathOutcome,
+              { status: "failed" | "blocked" }
+            > => outcome.status === "failed" || outcome.status === "blocked",
+          );
+          const details = failures
+            .map((outcome) => `${outcome.path}: ${outcome.error}`)
+            .join("; ");
+          setMessage(`${summary.join(", ")}${details ? ` — ${details}` : ""}`);
           return;
         }
 
@@ -724,13 +747,15 @@ export function App() {
 
         try {
           if (droppedPaths.length === 1) {
-            const file = await readTextFile(droppedPaths[0]);
+            const file = await readDroppedTextFile(droppedPaths[0]);
             freeText.setDraft(
               dropSideForPosition(mode, position.x, window.innerWidth),
               file.content,
             );
           } else {
-            const [left, right] = await Promise.all(droppedPaths.map(readTextFile));
+            const [left, right] = await Promise.all(
+              droppedPaths.map(readDroppedTextFile),
+            );
             freeText.setDrafts(left.content, right.content);
           }
         } catch (error) {
@@ -1400,7 +1425,12 @@ export function App() {
       entryCopyEnabled={mode === "compare"}
       diffEditableSides={diffEditableSides}
       hunkMerge={mode === "compare" && isTextMerge}
-      onDiffEditEither={(side, content) => void stageFileSide(side, content)}
+      onDiffEditEither={(side, content) => {
+        const entryPath = selected?.path;
+        const model = preview[side];
+        if (!entryPath || !model || model.path !== entryPath) return;
+        void stageFileSide(side, entryPath, content, model);
+      }}
       onTakeAll={(t) => void takeAllTo(t)}
       onMoveHunk={(t) => void moveHunkTo(t)}
       diffNavigator={diffNavigator}
@@ -1575,6 +1605,8 @@ export function App() {
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                     onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
                     onCopy={(from, to, pair) => void copy(from, to, pair)}
@@ -1600,6 +1632,8 @@ export function App() {
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                     onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
                     onCopy={(from, to, pair) => void copy(from, to, pair)}

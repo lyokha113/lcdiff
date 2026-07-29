@@ -24,13 +24,14 @@ pub(crate) async fn read_text_file_from_path(path: String) -> Result<TextFileCon
         let bytes = std::fs::read(&canonical).map_err(|error| {
             format!("failed to read text file {}: {error}", canonical.display())
         })?;
+        let invalid_text_error =
+            || format!("file is not valid UTF-8 text: {}", canonical.display());
         if bytes.contains(&0) {
-            return Err("file is not valid UTF-8 text".to_owned());
+            return Err(invalid_text_error());
         }
         Ok(TextFileContent {
             path: canonical.display().to_string(),
-            content: String::from_utf8(bytes)
-                .map_err(|_| "file is not valid UTF-8 text".to_owned())?,
+            content: String::from_utf8(bytes).map_err(|_| invalid_text_error())?,
         })
     })
     .await

@@ -215,6 +215,10 @@ export function DiffView({
         {mode === "compare" || mode === "text" ? (
           <DiffEditor
             height="100%"
+            originalModelPath="inmemory://lcdiff/compare/original"
+            modifiedModelPath="inmemory://lcdiff/compare/modified"
+            keepCurrentOriginalModel
+            keepCurrentModifiedModel
             language={preview.left?.language ?? preview.right?.language ?? "plaintext"}
             original={preview.left?.content ?? ""}
             modified={preview.right?.content ?? ""}

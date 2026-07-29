@@ -42,7 +42,10 @@ test('allows comments and formatting around the exact desktop entrypoint', () =>
 
 test('rejects any extra crate attribute on the desktop entrypoint', () => {
   const errors = verifyPhaseOneArchitecture({
-    mainSource: '#![allow(dead_code)]\nfn main() { lcdiff_desktop::run(); }\n',
+    mainSource:
+      '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]\n' +
+      '#![allow(dead_code)]\n' +
+      'fn main() { lcdiff_desktop::run(); }\n',
     coreCargoToml: cleanCoreCargoToml,
   });
   assert.deepEqual(errors, [desktopEntrypointMessage]);
