@@ -1257,7 +1257,14 @@ export function App() {
   const viewEditModel = preview.left;
 
   function handleViewEdit(content: string, updateBuffer: boolean) {
-    if (!viewEditSourceId || !viewEditEntryPath || !viewEditModel) return;
+    if (
+      !viewEditSourceId ||
+      !viewEditEntryPath ||
+      !viewEditModel ||
+      viewEditModel.path !== viewEditEntryPath
+    ) {
+      return;
+    }
     const current = mergeContextRef.current;
     if (
       !current ||

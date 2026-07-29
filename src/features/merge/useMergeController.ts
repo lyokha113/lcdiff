@@ -231,6 +231,7 @@ export function useMergeController({
   ) => {
     const context = getContext();
     if (
+      model.path !== entryPath ||
       context.activeViewSource?.id !== sourceId ||
       context.selected?.path !== entryPath ||
       context.preview.left !== model

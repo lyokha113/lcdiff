@@ -1101,6 +1101,59 @@ describe("App file-merge wiring", () => {
     expect(screen.getByText("1 pending")).toBeInTheDocument();
   });
 
+  it("does not edit or stage the old View model while a new entry preview is loading", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    let resolveNextPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_view_entry" && args?.entryPath === "alpha-two.json") {
+        return new Promise((resolve) => {
+          resolveNextPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const installedContent = viewEditorProps.value;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "alpha-two.json",
+      }),
+    );
+    const transitionOnChange = viewEditorProps.onChange;
+    invoke.mockClear();
+
+    await act(async () => {
+      transitionOnChange?.("stale transitional edit", { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("editor")).toHaveValue(installedContent);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveNextPreview?.({
+        path: "alpha-two.json",
+        kind: "text",
+        language: "json",
+        details: null,
+        content: "loaded alpha-two",
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("editor")).toHaveValue("loaded alpha-two");
+  });
+
   it("ignores stale stage_view_write failure after a newer edit succeeds", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
