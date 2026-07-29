@@ -161,6 +161,8 @@ describe("Free text workspace", () => {
 
     expect(monacoMockState.diffOptions).toMatchObject({
       readOnly: true,
+      domReadOnly: true,
+      originalEditable: false,
       ignoreTrimWhitespace: true,
       originalAriaLabel: "Left confirmed free text result",
       modifiedAriaLabel: "Right confirmed free text result",

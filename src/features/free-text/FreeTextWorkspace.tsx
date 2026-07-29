@@ -143,6 +143,8 @@ export function FreeTextWorkspace({
               options={{
                 ...editorOptions,
                 readOnly: true,
+                domReadOnly: true,
+                originalEditable: false,
                 renderSideBySide: true,
                 useInlineViewWhenSpaceIsLimited: false,
                 ignoreTrimWhitespace,
