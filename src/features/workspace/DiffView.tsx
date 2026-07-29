@@ -10,6 +10,11 @@ export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
 }
 
+export interface DiffEditableSides {
+  left: boolean;
+  right: boolean;
+}
+
 interface DiffViewProps {
   mode: Mode;
   selected?: ComparePair;
@@ -28,7 +33,7 @@ interface DiffViewProps {
   onEditBlur: (content: string) => void;
   fileMerge: boolean;
   entryCopyEnabled?: boolean;
-  diffEditable?: boolean;
+  diffEditableSides: DiffEditableSides;
   hunkMerge: boolean;
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
@@ -59,13 +64,12 @@ export function DiffView({
   contentFilter, onContentFilterChange,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
-  fileMerge, entryCopyEnabled = true, diffEditable, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  fileMerge, entryCopyEnabled = true, diffEditableSides, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
-  const resolvedDiffEditable = diffEditable ?? hunkMerge;
-  const diffEditableRef = useRef(resolvedDiffEditable);
+  const editableSidesRef = useRef(diffEditableSides);
   const onDiffEditEitherRef = useRef(onDiffEditEither);
-  diffEditableRef.current = resolvedDiffEditable;
+  editableSidesRef.current = diffEditableSides;
   onDiffEditEitherRef.current = onDiffEditEither;
 
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
@@ -217,9 +221,9 @@ export function DiffView({
             theme={monacoTheme}
             options={{
               ...editorOptions,
-              readOnly: !resolvedDiffEditable,
-              originalEditable: resolvedDiffEditable,
-              renderMarginRevertIcon: resolvedDiffEditable,
+              originalEditable: diffEditableSides.left,
+              readOnly: !diffEditableSides.right,
+              renderMarginRevertIcon: hunkMerge,
               renderSideBySide: true,
               useInlineViewWhenSpaceIsLimited: false,
               ignoreTrimWhitespace,
@@ -233,12 +237,14 @@ export function DiffView({
               const orig = editor.getOriginalEditor();
               const mod = editor.getModifiedEditor();
               const d1 = orig.onDidChangeModelContent((event) => {
-                if (event.isFlush) return;
-                if (diffEditableRef.current) onDiffEditEitherRef.current("left", orig.getValue());
+                if (!event.isFlush && editableSidesRef.current.left) {
+                  onDiffEditEitherRef.current("left", orig.getValue());
+                }
               });
               const d2 = mod.onDidChangeModelContent((event) => {
-                if (event.isFlush) return;
-                if (diffEditableRef.current) onDiffEditEitherRef.current("right", mod.getValue());
+                if (!event.isFlush && editableSidesRef.current.right) {
+                  onDiffEditEitherRef.current("right", mod.getValue());
+                }
               });
               editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });
             }}
@@ -250,7 +256,10 @@ export function DiffView({
             value={editable ? editValue : (preview.left?.content ?? "")}
             theme={monacoTheme}
             options={{ ...editorOptions, readOnly: !editable }}
-            onChange={(value) => editable && onEditChange(value)}
+            onChange={(value, event) => {
+              if (!editable || event.isFlush) return;
+              onEditChange(value);
+            }}
             onMount={(editor, monaco) => {
               onEditorMount(editor, monaco);
               editor.onDidBlurEditorText(() => editable && onEditBlur(editor.getValue()));

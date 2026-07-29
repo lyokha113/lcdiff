@@ -223,17 +223,22 @@ export function useMergeController({
     }
   }, [getContext, onMessage, stagedEntries]);
 
-  const stageEdit = useCallback(async (entryPath: string, content: string) => {
+  const stageEdit = useCallback(async (
+    entryPath: string,
+    content: string,
+    sourceId: string,
+  ) => {
+    const context = getContext();
+    if (context.activeViewSource?.id !== sourceId) return;
     const generation = beginStagingOperation(editStageGenerationRef);
     const key = viewStagingKey(entryPath);
-    const context = getContext();
     const original = context.preview.left?.content ?? "";
     if (content === original) {
       if (
         stagedEntries[key]?.kind === "edit" &&
         context.activeViewSource
       ) {
-        await unstageViewWrite(context.activeViewSource.id, entryPath);
+        await unstageViewWrite(sourceId, entryPath);
         setStagedEntries((current) => {
           const next = { ...current };
           delete next[key];
@@ -244,13 +249,12 @@ export function useMergeController({
       return;
     }
     try {
-      if (!context.activeViewSource) return;
       setStagedEntries((current) => ({
         ...current,
         [key]: { side: "left", kind: "edit" },
       }));
       setStagedTarget("left");
-      await stageViewWrite(context.activeViewSource.id, entryPath, content);
+      await stageViewWrite(sourceId, entryPath, content);
       if (!isCurrentStagingOperation(editStageGenerationRef, generation)) return;
       onMessage(`Edited ${entryPath} (unsaved)`);
     } catch (error) {

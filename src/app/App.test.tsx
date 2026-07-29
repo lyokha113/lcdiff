@@ -307,6 +307,12 @@ const MODIFY_LINE_2 = {
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
 let diffEditorMounted = false;
 let diffEditorProps: { original?: string; modified?: string; options?: { readOnly?: boolean; originalEditable?: boolean } } = {};
+type ViewEditorChangeEvent = { isFlush: boolean };
+let viewEditorProps: {
+  value?: string;
+  onChange?: (value: string | undefined, event: ViewEditorChangeEvent) => void;
+  options?: { ariaLabel?: string; readOnly?: boolean };
+} = {};
 function makeFakeDiffEditor() {
   // App's search-highlight effect calls deltaDecorations/revealLineInCenter on
   // each sub-editor whenever preview changes, so the fakes must expose them.
@@ -348,19 +354,18 @@ vi.mock("@/features/workspace/monaco-runtime", () => ({}));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
-  default: (props: {
-    value?: string;
-    onChange?: (value: string | undefined) => void;
-    options?: { ariaLabel?: string; readOnly?: boolean };
-  }) => (
-    <textarea
-      data-testid="editor"
-      aria-label={props.options?.ariaLabel}
-      readOnly={props.options?.readOnly}
-      value={props.value}
-      onChange={(event) => props.onChange?.(event.target.value)}
-    />
-  ),
+  default: (props: typeof viewEditorProps) => {
+    viewEditorProps = props;
+    return (
+      <textarea
+        data-testid="editor"
+        aria-label={props.options?.ariaLabel}
+        readOnly={props.options?.readOnly}
+        value={props.value}
+        onChange={(event) => props.onChange?.(event.target.value, { isFlush: false })}
+      />
+    );
+  },
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: (props: {
@@ -456,6 +461,7 @@ describe("App file-merge wiring", () => {
     revealModified.mockClear();
     focusOriginalEditor = undefined;
     diffEditorProps = {};
+    viewEditorProps = {};
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
     lineChanges = [MODIFY_LINE_2];
@@ -984,6 +990,58 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
   });
 
+  it("does not stage a View write when Monaco flushes the old model during a source switch", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const lateOnChange = viewEditorProps.onChange;
+    const unchangedContent = viewEditorProps.value;
+
+    await browseViewSource(user);
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    invoke.mockClear();
+
+    await act(async () => {
+      lateOnChange?.(unchangedContent, { isFlush: true });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late unchanged View callback after its source is no longer active", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const lateOnChange = viewEditorProps.onChange;
+    const unchangedContent = viewEditorProps.value;
+
+    await browseViewSource(user);
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    invoke.mockClear();
+
+    await act(async () => {
+      lateOnChange?.(unchangedContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+  });
+
   it("ignores stale stage_view_write failure after a newer edit succeeds", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
@@ -1090,6 +1148,29 @@ describe("App file-merge wiring", () => {
     await user.click(screen.getByRole("button", { name: "All" }));
     expect((await screen.findAllByText("same.txt")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("config.json").length).toBeGreaterThan(0);
+  });
+
+  it("allows editing the existing text pane in a one-sided Compare preview", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [{
+            path: "config.json",
+            status: "onlyLeft" as const,
+            left: FILE_ENTRY,
+          }],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+
+    await driveIntoFileCompare(user);
+
+    expect(diffEditorProps.options).toMatchObject({
+      originalEditable: true,
+      readOnly: true,
+    });
   });
 
   it("ignores a stale View entry read after switching sources", async () => {

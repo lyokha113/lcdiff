@@ -36,6 +36,7 @@ type RenderDiffViewOverrides = Partial<
   Pick<
     React.ComponentProps<typeof DiffView>,
     | "contentFilter"
+    | "diffEditableSides"
     | "editable"
     | "editValue"
     | "fileMerge"
@@ -43,6 +44,8 @@ type RenderDiffViewOverrides = Partial<
     | "ignoreTrimWhitespace"
     | "diffNavigator"
     | "onContentFilterChange"
+    | "onDiffEditEither"
+    | "preview"
   >
 >;
 
@@ -69,6 +72,7 @@ function renderDiffView(
     onEditChange: vi.fn(),
     onEditBlur: vi.fn(),
     fileMerge: false,
+    diffEditableSides: { left: false, right: false },
     hunkMerge: false,
     onDiffEditEither: vi.fn(),
     onTakeAll: vi.fn(),
@@ -91,6 +95,14 @@ function renderDiffView(
   );
 
   return props;
+}
+
+function diffOptions() {
+  return (
+    diffEditorMock.mock.calls.at(-1)?.[0] as
+      | { options?: Record<string, unknown> }
+      | undefined
+  )?.options;
 }
 
 beforeEach(() => {
@@ -248,6 +260,87 @@ describe("DiffView", () => {
     renderDiffView("compare", DEFAULT_UI_PREFERENCES);
     expect(screen.getByTestId("diff-editor")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Diff view mode" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a missing right pane read-only while allowing the existing left text to be edited", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      preview: {
+        left: {
+          path: "left-only.json",
+          kind: "text",
+          language: "json",
+          content: "{\"left\":true}",
+        },
+      },
+      diffEditableSides: { left: true, right: false },
+    });
+
+    expect(diffOptions()).toMatchObject({
+      originalEditable: true,
+      readOnly: true,
+      renderMarginRevertIcon: false,
+    });
+  });
+
+  it("keeps a missing left pane read-only while allowing the existing right text to be edited", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      preview: {
+        right: {
+          path: "right-only.json",
+          kind: "text",
+          language: "json",
+          content: "{\"right\":true}",
+        },
+      },
+      diffEditableSides: { left: false, right: true },
+    });
+
+    expect(diffOptions()).toMatchObject({
+      originalEditable: false,
+      readOnly: false,
+      renderMarginRevertIcon: false,
+    });
+  });
+
+  it("forwards model edits only from the independently editable diff side", () => {
+    const onDiffEditEither = vi.fn();
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      diffEditableSides: { left: true, right: false },
+      onDiffEditEither,
+    });
+
+    let onLeftChange: ((event: { isFlush: boolean }) => void) | undefined;
+    let onRightChange: ((event: { isFlush: boolean }) => void) | undefined;
+    const originalEditor = {
+      getValue: () => "changed left",
+      onDidChangeModelContent: vi.fn((handler) => {
+        onLeftChange = handler;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const modifiedEditor = {
+      getValue: () => "changed right",
+      onDidChangeModelContent: vi.fn((handler) => {
+        onRightChange = handler;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const onMount = (
+      diffEditorMock.mock.calls.at(-1)?.[0] as
+        | { onMount?: (editor: unknown, monaco: unknown) => void }
+        | undefined
+    )?.onMount;
+
+    onMount?.({
+      getOriginalEditor: () => originalEditor,
+      getModifiedEditor: () => modifiedEditor,
+      onDidDispose: vi.fn(),
+    }, {});
+    onLeftChange?.({ isFlush: false });
+    onRightChange?.({ isFlush: false });
+
+    expect(onDiffEditEither).toHaveBeenCalledTimes(1);
+    expect(onDiffEditEither).toHaveBeenCalledWith("left", "changed left");
   });
 
   it("renders the compact diff navigator in compare mode", async () => {

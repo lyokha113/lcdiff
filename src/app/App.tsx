@@ -1041,11 +1041,14 @@ export function App() {
   // where both sides show the same entry as editable text — standalone plain
   // files AND text entries inside jar/zip archives. `isFileMerge` (sourceKind
   // file) only changes the copy-arrow wording now.
-  const isTextMerge =
-    mode === "compare" &&
-    isEditableTextPreview(preview.left) &&
-    isEditableTextPreview(preview.right);
-  const isDiffEditable = isTextMerge;
+  const leftText = isEditableTextPreview(preview.left);
+  const rightText = isEditableTextPreview(preview.right);
+  const oneSided = Boolean(preview.left) !== Boolean(preview.right);
+  const diffEditableSides = {
+    left: mode === "compare" && leftText && (rightText || oneSided),
+    right: mode === "compare" && rightText && (leftText || oneSided),
+  };
+  const isTextMerge = mode === "compare" && leftText && rightText;
 
   const isEditableEntry =
     mode === "single" &&
@@ -1267,12 +1270,18 @@ export function App() {
       onEditChange={(value) => {
         const content = value ?? "";
         updateEditBuffer(content);
-        if (selected) void stageEdit(selected.path, content);
+        if (selected && activeViewSource) {
+          void stageEdit(selected.path, content, activeViewSource.id);
+        }
       }}
-      onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
+      onEditBlur={(content) => {
+        if (selected && activeViewSource) {
+          void stageEdit(selected.path, content, activeViewSource.id);
+        }
+      }}
       fileMerge={isFileMerge}
       entryCopyEnabled={mode === "compare"}
-      diffEditable={isDiffEditable}
+      diffEditableSides={diffEditableSides}
       hunkMerge={mode === "compare" && isTextMerge}
       onDiffEditEither={(side, content) => void stageFileSide(side, content)}
       onTakeAll={(t) => void takeAllTo(t)}
