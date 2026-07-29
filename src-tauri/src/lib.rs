@@ -1808,13 +1808,18 @@ mod tests {
             .path()
             .to_owned();
         let target_before = std::fs::read(&target_path).unwrap();
-        let forbidden_target = Archive::open(forbidden_target.to_string_lossy()).unwrap();
+        let mut forbidden_target = Some(Archive::open(forbidden_target.to_string_lossy()).unwrap());
 
         let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
             let target_error = shared_state
                 .lock()
                 .unwrap()
-                .install_archive(forbidden_target, Side::Left)
+                .install_archive(
+                    forbidden_target
+                        .take()
+                        .expect("cleanup probe runs only until its first failure"),
+                    Side::Left,
+                )
                 .unwrap_err();
             assert!(target_error.contains("temporary merge target"));
             std::fs::remove_dir_all(owned_dir).unwrap();
@@ -1829,6 +1834,112 @@ mod tests {
         assert_eq!(std::fs::read(restored_target).unwrap(), target_before);
         assert!(!state.left_plan.is_empty());
         assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_discard_blocks_source_replacement_while_plan_is_detached() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        shared_state
+            .lock()
+            .unwrap()
+            .stage_copy(Side::Right, Side::Left, "source.txt")
+            .unwrap();
+        let mut replacement_source =
+            Some(Archive::open(replacement_source.to_string_lossy()).unwrap());
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |_| {
+            let replacement_error = shared_state
+                .lock()
+                .unwrap()
+                .install_archive(
+                    replacement_source
+                        .take()
+                        .expect("cleanup probe runs only until its first failure"),
+                    Side::Right,
+                )
+                .unwrap_err();
+            assert!(replacement_error.contains("discarded"));
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+        assert!(!state.left_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_cleanup_disarms_owner_and_retries_recreated_path_once() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let recreated_marker = original_target_dir.join("recreated-after-delete.txt");
+        let mut attempts = Vec::new();
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            std::fs::write(&recreated_marker, "still-owned").unwrap();
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        assert_eq!(
+            attempts.as_slice(),
+            std::slice::from_ref(&original_target_dir)
+        );
+        assert!(recreated_marker.is_file());
+        let recovery_target_dir = {
+            let state = shared_state.lock().unwrap();
+            assert!(state.temp_merge_session.is_some());
+            let recovery_target = state.right.as_ref().unwrap().path();
+            assert!(recovery_target.is_file());
+            recovery_target.parent().unwrap().to_owned()
+        };
+        assert_ne!(recovery_target_dir, original_target_dir);
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            match std::fs::remove_dir_all(owned_dir) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(retry_attempts.len(), 2);
+        assert_eq!(retry_attempts[0], original_target_dir);
+        assert_eq!(retry_attempts[1], recovery_target_dir);
+        assert!(!recreated_marker.exists());
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
     }
 
     #[test]

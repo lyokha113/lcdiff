@@ -46,6 +46,37 @@ pub(crate) struct TempMergeSession {
     creation: TempTargetCreation,
     applied_source_count: usize,
     exported_path: Option<PathBuf>,
+    pending_cleanup_paths: Vec<OwnedTempPath>,
+}
+
+struct OwnedTempPath {
+    path: Option<PathBuf>,
+}
+
+impl OwnedTempPath {
+    fn from_temp_dir(temp_dir: TempDir) -> Self {
+        Self {
+            path: Some(temp_dir.keep()),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        self.path
+            .as_deref()
+            .expect("owned cleanup path is still armed")
+    }
+
+    fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for OwnedTempPath {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
 }
 
 struct TempTargetSourceSnapshot {
@@ -374,11 +405,16 @@ impl AppState {
     }
 
     fn ensure_replaceable_side(&self, side: Side) -> Result<(), String> {
+        if self.temp_merge_discarding.is_some() {
+            return Err(
+                "temporary merge target or source cannot be replaced while session is being discarded"
+                    .to_owned(),
+            );
+        }
         let fixed_target = self
             .temp_merge_session
             .as_ref()
-            .map(|session| session.target_side)
-            .or(self.temp_merge_discarding);
+            .map(|session| session.target_side);
         if fixed_target == Some(side) {
             return Err("temporary merge target cannot be replaced".to_owned());
         }
@@ -645,6 +681,7 @@ fn build_prepared_temp_target(
         creation,
         applied_source_count: 0,
         exported_path: None,
+        pending_cleanup_paths: Vec::new(),
     };
     Ok(PreparedTempTarget {
         source_snapshot,
@@ -719,10 +756,6 @@ impl DetachedTempTarget {
         Ok(())
     }
 
-    fn owned_temp_dir(&self) -> &Path {
-        self.session.temp_dir.path()
-    }
-
     fn prepare_recovery(&self) -> Result<TempTargetRecovery, String> {
         let temp_dir = tempfile::Builder::new()
             .prefix("lcdiff-temp-merge-recovery-")
@@ -745,10 +778,13 @@ impl DetachedTempTarget {
         })
     }
 
-    fn adopt_recovery(&mut self, recovery: TempTargetRecovery) {
+    fn activate_recovery(&mut self, recovery: TempTargetRecovery) -> Vec<OwnedTempPath> {
+        let original_temp_dir = std::mem::replace(&mut self.session.temp_dir, recovery.temp_dir);
         self.archive = recovery.archive;
-        self.session.temp_dir = recovery.temp_dir;
         self.session.working_path = recovery.working_path;
+        let mut cleanup_paths = std::mem::take(&mut self.session.pending_cleanup_paths);
+        cleanup_paths.push(OwnedTempPath::from_temp_dir(original_temp_dir));
+        cleanup_paths
     }
 }
 
@@ -767,7 +803,7 @@ fn restore_discard_failure(
 
 fn discard_temp_target_with(
     shared_state: &SharedState,
-    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+    mut cleanup: impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(), String> {
     let replacement_nested = fresh_nested_cache()?;
     let mut detached = {
@@ -783,8 +819,19 @@ fn discard_temp_target_with(
         Ok(recovery) => recovery,
         Err(error) => return restore_discard_failure(shared_state, detached, error),
     };
-    if let Err(error) = cleanup(detached.owned_temp_dir()) {
-        detached.adopt_recovery(recovery);
+    let mut cleanup_paths = detached.activate_recovery(recovery);
+    let mut cleanup_failure = None;
+    for (index, owned_path) in cleanup_paths.iter_mut().enumerate() {
+        match cleanup(owned_path.path()) {
+            Ok(()) => owned_path.disarm(),
+            Err(error) => {
+                cleanup_failure = Some((index, error));
+                break;
+            }
+        }
+    }
+    if let Some((failed_index, error)) = cleanup_failure {
+        detached.session.pending_cleanup_paths = cleanup_paths.split_off(failed_index);
         return restore_discard_failure(shared_state, detached, error);
     }
     {
@@ -799,13 +846,17 @@ fn discard_temp_target_with(
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn discard_temp_target(shared_state: &SharedState) -> Result<(), String> {
-    discard_temp_target_with(shared_state, |path| std::fs::remove_dir_all(path))
+    discard_temp_target_with(shared_state, |path| match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    })
 }
 
 #[cfg(test)]
 pub(crate) fn discard_temp_target_with_cleanup(
     shared_state: &SharedState,
-    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+    cleanup: impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(), String> {
     discard_temp_target_with(shared_state, cleanup)
 }
