@@ -23,9 +23,11 @@ import {
   deepSearchViewSource,
   listSystemFonts,
   openArchive,
+  openCompareSources,
   openViewSource as openViewSourceCommand,
   pendingOpenPaths,
   platformHints,
+  readTextFile,
   search as searchArchive,
   searchViewSource,
   setEngine,
@@ -187,6 +189,10 @@ export function App() {
     hasSeenOnboarding("compare") ? null : 0,
   );
   const [pendingOpen, setPendingOpen] = useState<{ side: Side; path: string }>();
+  const [pendingComparePair, setPendingComparePair] = useState<{
+    leftPath: string;
+    rightPath: string;
+  }>();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
@@ -552,6 +558,7 @@ export function App() {
   const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
     try {
       if (!confirmed && workspace.openTabsCount > 0) {
+        setPendingComparePair(undefined);
         setPendingOpen({ side, path });
         return undefined;
       }
@@ -576,6 +583,35 @@ export function App() {
       return message;
     }
   }, [refreshDiff, resetWorkspace, workspace.openTabsCount]);
+
+  const openDroppedComparePair = useCallback(async (
+    leftPath: string,
+    rightPath: string,
+    confirmed = false,
+  ) => {
+    if (!confirmed && workspace.openTabsCount > 0) {
+      setPendingOpen(undefined);
+      setPendingComparePair({ leftPath, rightPath });
+      return;
+    }
+    try {
+      const result = await openCompareSources(leftPath, rightPath);
+      searchStreamId.current += 1;
+      setSearching(false);
+      setPaths({ left: result.left.path, right: result.right.path });
+      setPathErrors({});
+      setArchives({ left: result.left, right: result.right });
+      setPairs(result.diff.pairs);
+      setNestedPairs({});
+      resetWorkspace();
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
+      setMessage(`Opened ${result.left.path} and ${result.right.path}`);
+    } catch (error) {
+      setMessage(String(error));
+    }
+  }, [resetWorkspace, workspace.openTabsCount]);
 
   const openTextMode = useCallback(() => {
     if (stagedTarget) {
@@ -636,15 +672,55 @@ export function App() {
     if (!isTauriRuntime()) return;
     return subscribeWindowDragDrop((event) => {
       if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-      if (mode === "text") {
-        setMessage("File drops are not available in Free text mode.");
-        return;
-      }
-      const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
-      if (mode === "single") void openViewPath(event.payload.paths[0]);
-      else void openPath(side, event.payload.paths[0]);
+      const { paths: droppedPaths, position } = event.payload;
+      const openDroppedPaths = async () => {
+        if (mode === "compare") {
+          if (droppedPaths.length === 2) {
+            await openDroppedComparePair(droppedPaths[0], droppedPaths[1]);
+            return;
+          }
+          if (droppedPaths.length > 2) {
+            setMessage("Drop one source or exactly two sources to compare.");
+            return;
+          }
+          const side = dropSideForPosition(mode, position.x, window.innerWidth);
+          await openPath(side, droppedPaths[0]);
+          return;
+        }
+
+        if (mode === "single") {
+          const failures: string[] = [];
+          for (const path of droppedPaths) {
+            const error = await openViewPath(path);
+            if (error) failures.push(`${path}: ${error}`);
+          }
+          setMessage(`${droppedPaths.length - failures.length} opened, ${failures.length} failed`);
+          return;
+        }
+
+        if (droppedPaths.length > 2) {
+          setMessage("Drop one or two text files.");
+          return;
+        }
+
+        try {
+          if (droppedPaths.length === 1) {
+            const file = await readTextFile(droppedPaths[0]);
+            freeText.setDraft(
+              dropSideForPosition(mode, position.x, window.innerWidth),
+              file.content,
+            );
+          } else {
+            const [left, right] = await Promise.all(droppedPaths.map(readTextFile));
+            freeText.setDrafts(left.content, right.content);
+          }
+        } catch (error) {
+          setMessage(`Unable to load dropped text files: ${String(error)}`);
+        }
+      };
+      void openDroppedPaths();
     });
-  }, [mode, openPath, openViewPath]);
+  }, [freeText, mode, openDroppedComparePair, openPath, openViewPath]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -1553,7 +1629,15 @@ export function App() {
         onOpenChange={updateShortcutDialogOpen}
         platform={currentPlatform()}
       />
-      <Dialog open={pendingOpen !== undefined} onOpenChange={(open) => !open && setPendingOpen(undefined)}>
+      <Dialog
+        open={pendingOpen !== undefined || pendingComparePair !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingOpen(undefined);
+            setPendingComparePair(undefined);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Close open diffs?</DialogTitle>
@@ -1562,12 +1646,23 @@ export function App() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingOpen(undefined)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingOpen(undefined);
+                setPendingComparePair(undefined);
+              }}
+            >
+              Cancel
+            </Button>
             <Button
               onClick={() => {
                 const target = pendingOpen;
+                const pair = pendingComparePair;
                 setPendingOpen(undefined);
-                if (target) void openPath(target.side, target.path, true);
+                setPendingComparePair(undefined);
+                if (pair) void openDroppedComparePair(pair.leftPath, pair.rightPath, true);
+                else if (target) void openPath(target.side, target.path, true);
               }}
             >
               Open anyway

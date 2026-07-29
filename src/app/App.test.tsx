@@ -109,8 +109,14 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
       return (args?.raw as string) ?? "/tmp/config.json";
     case "open_archive":
       return fileSummary(args?.side as "left" | "right");
+    case "open_compare_sources":
+      return { left: fileSummary("left"), right: fileSummary("right"), diff: onePairDiff };
     case "open_view_source":
       return viewSummary(args?.path as string);
+    case "read_text_file": {
+      const path = args?.path as string;
+      return { path, content: `contents:${path}` };
+    }
     case "list_view_sources":
       return [];
     case "compute_diff":
@@ -852,7 +858,194 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
   });
 
-  it("ignores file picker, native open, and drag/drop source opens in Free text mode", async () => {
+  it("opens exactly two dropped Compare sources through the atomic pair command", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/left.jar", "/tmp/right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(invoke).toHaveBeenCalledWith("open_compare_sources", {
+      leftPath: "/tmp/left.jar",
+      rightPath: "/tmp/right.jar",
+    });
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("preserves Compare sources when the atomic dropped pair fails", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/existing.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Change left source" })).toHaveTextContent("config.json"),
+    );
+
+    invoke.mockClear();
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "open_compare_sources") throw new Error("pair failed");
+      return defaultInvoke(cmd, args);
+    });
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/new-left.jar", "/tmp/new-right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText("Error: pair failed")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Change left source" })).toHaveTextContent("config.json");
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("confirms before replacing open Compare diffs with a dropped pair", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "left" },
+    ));
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "right" },
+    ));
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/new-left.jar", "/tmp/new-right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Close open diffs?" })).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_compare_sources")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_compare_sources", {
+      leftPath: "/tmp/new-left.jar",
+      rightPath: "/tmp/new-right.jar",
+    }));
+  });
+
+  it("routes one dropped Compare source by position and rejects larger drops", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/right.jar"],
+          position: { x: window.innerWidth, y: 10 },
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/right.jar", side: "right" }),
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("compute_diff"));
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/one.jar", "/tmp/two.jar", "/tmp/three.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("opens dropped View sources sequentially and reports partial failures", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/b.jar") {
+        throw new Error("unreadable");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/a.jar", "/tmp/b.jar", "/tmp/c.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText("2 opened, 1 failed")).toBeInTheDocument());
+    expect(
+      invoke.mock.calls
+        .filter(([cmd]) => cmd === "open_view_source")
+        .map(([, args]) => args),
+    ).toEqual([
+      { path: "/tmp/a.jar" },
+      { path: "/tmp/b.jar" },
+      { path: "/tmp/c.jar" },
+    ]);
+    expect(screen.getByRole("tab", { name: /a\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /c\.jar/ })).toBeInTheDocument();
+  });
+
+  it("loads one dropped text file into its positioned Free text draft", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
@@ -863,26 +1056,71 @@ describe("App file-merge wiring", () => {
     await waitFor(() => expect(appActionHandler).toBeDefined());
     await waitFor(() => expect(dragDropHandler).toBeDefined());
 
-    chooseFile.mockClear();
     invoke.mockClear();
 
-    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
     await act(async () => {
-      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
-      appActionHandler?.({ payload: { actionId: "file.openRightFile" } });
       dragDropHandler?.({
         payload: {
           type: "drop",
-          paths: ["/tmp/dropped.jar"],
+          paths: ["/tmp/dropped.txt"],
+          position: { x: window.innerWidth, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_text_file", { path: "/tmp/dropped.txt" }),
+    );
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/dropped.txt");
+  });
+
+  it("publishes two dropped text files atomically and preserves drafts when either read fails", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+    await user.type(screen.getByLabelText("Left free text input"), "kept left");
+    await user.type(screen.getByLabelText("Right free text input"), "kept right");
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/left.txt", "/tmp/right.txt"],
           position: { x: 10, y: 10 },
         },
       });
     });
 
-    expect(chooseFile).not.toHaveBeenCalled();
-    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
-    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Left free text input")).toHaveValue("contents:/tmp/left.txt"),
+    );
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/right.txt");
+
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "read_text_file" && args?.path === "/tmp/fail.txt") {
+        throw new Error("invalid UTF-8");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/replace-left.txt", "/tmp/fail.txt"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText("Unable to load dropped text files: Error: invalid UTF-8")).toBeInTheDocument());
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("contents:/tmp/left.txt");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/right.txt");
   });
 
   it("opens OS-launched files through the View workspace", async () => {
