@@ -192,9 +192,7 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
           onClick={() => onToggle(fullPath)}
         >
           <span className="tree-half tree-half-left" style={halfIndent}>
-            {chevron}
-            {folderIcon}
-            <span className="tree-name">{node.name}</span>
+            <SideCell present={node.hasLeft} chevron={chevron} icon={folderIcon} name={node.name} />
           </span>
           {twoPane && (
             <span className="tree-mid">
@@ -203,9 +201,12 @@ function FileTreeNode({ node, depth, basePath, expanded, onToggle, ...props }: N
           )}
           {twoPane && (
             <span className="tree-half tree-half-right" style={halfIndent}>
-              <span className="tree-chevron tree-chevron-spacer" aria-hidden="true" />
-              {folderIcon}
-              <span className="tree-name">{node.name}</span>
+              <SideCell
+                present={node.hasRight}
+                chevron={<span className="tree-chevron tree-chevron-spacer" aria-hidden="true" />}
+                icon={folderIcon}
+                name={node.name}
+              />
             </span>
           )}
         </button>

@@ -1133,7 +1133,7 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByText("stale alpha")).not.toBeInTheDocument();
   });
 
-  it("hides compare-only controls in multi-source View mode", async () => {
+  it("keeps tree expansion controls while hiding compare-only controls in multi-source View mode", async () => {
     const user = userEvent.setup();
     chooseFile
       .mockResolvedValueOnce("/tmp/alpha.jar")
@@ -1146,7 +1146,7 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Tree filter" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Tree expansion" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();

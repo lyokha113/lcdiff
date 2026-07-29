@@ -6,6 +6,8 @@ export interface TreeFolder {
   path: string;
   children: TreeNode[];
   diffCount: number;
+  hasLeft: boolean;
+  hasRight: boolean;
 }
 export interface TreeFile {
   kind: "file";
@@ -20,7 +22,9 @@ interface MutableFolder extends TreeFolder {
 }
 
 function newFolder(name: string, path: string): MutableFolder {
-  return { kind: "folder", name, path, children: [], diffCount: 0, childMap: new Map() };
+  return {
+    kind: "folder", name, path, children: [], diffCount: 0, hasLeft: false, hasRight: false, childMap: new Map(),
+  };
 }
 
 export function isDirectoryPair(pair: ComparePair): boolean {
@@ -46,6 +50,8 @@ export function buildTree(pairs: ComparePair[]): TreeNode[] {
     if (isDirectoryPair(pair)) continue;
     const segments = pair.path.split("/").filter(Boolean);
     let folder = root;
+    folder.hasLeft ||= Boolean(pair.left);
+    folder.hasRight ||= Boolean(pair.right);
     for (let i = 0; i < segments.length - 1; i += 1) {
       const name = segments[i];
       const path = segments.slice(0, i + 1).join("/");
@@ -55,6 +61,8 @@ export function buildTree(pairs: ComparePair[]): TreeNode[] {
         folder.childMap.set(name, next);
       }
       folder = next;
+      folder.hasLeft ||= Boolean(pair.left);
+      folder.hasRight ||= Boolean(pair.right);
     }
     const leafName = segments[segments.length - 1] ?? pair.path;
     const file: TreeFile = { kind: "file", name: leafName, path: pair.path, pair };
@@ -93,6 +101,8 @@ function finalize(folder: MutableFolder, fileLists: Map<MutableFolder, TreeFile[
       name: child.name,
       path: child.path,
       diffCount: child.diffCount,
+      hasLeft: child.hasLeft,
+      hasRight: child.hasRight,
       children: finalize(child, fileLists),
     }));
   const rawFiles = fileLists.get(folder) ?? [];

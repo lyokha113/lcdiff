@@ -92,6 +92,16 @@ describe("FileTree", () => {
     expect(screen.getAllByText("rightish.txt").length).toBe(1);
     expect(container.querySelectorAll(".tree-gap").length).toBe(2);
   });
+  it("renders a one-sided folder name once with a gap on its missing side", () => {
+    const { container } = setup({
+      visiblePairs: [
+        { path: "pkg/left.txt", status: "onlyLeft", left: { path: "pkg/left.txt", kind: "text" } },
+      ],
+    });
+
+    expect(screen.getAllByText("pkg")).toHaveLength(1);
+    expect(container.querySelectorAll(".tree-gap")).toHaveLength(1);
+  });
   it("shows a single column with no header in single mode", () => {
     const { container } = setup({ mode: "single" });
     expect(container.querySelector(".tree-header")).toBeNull();
