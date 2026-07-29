@@ -652,11 +652,14 @@ export function App() {
       setMessage("File opens are not available in Free text mode.");
       return;
     }
+    if (modeRef.current === "compare") {
+      resetWorkspace({ preserveState: true });
+    }
     modeRef.current = "single";
     setMode("single");
     setView("workspace");
     void openViewPath(path);
-  }, [openViewPath]);
+  }, [openViewPath, resetWorkspace]);
 
   useEffect(() => {
     if (view !== "workspace") return;

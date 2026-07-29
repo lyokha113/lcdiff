@@ -1511,6 +1511,58 @@ describe("App file-merge wiring", () => {
     expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
   });
 
+  it("invalidates a pending Compare preview before OS-open validation resolves", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    let resolveOsValidation: ((path: string) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      if (cmd === "validate_path" && args?.raw === "/tmp/from-finder.jar") {
+        return new Promise((resolve) => {
+          resolveOsValidation = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } });
+    });
+    await waitFor(() => expect(resolveOsValidation).toBeDefined());
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview during OS validation",
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOsValidation?.("/tmp/from-finder.jar");
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /from-finder\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview during OS validation"))
+      .not.toBeInTheDocument();
+  });
+
   it("ignores OS-launched files while Free text is active", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -2241,6 +2293,84 @@ describe("App file-merge wiring", () => {
       .toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("diff-original")).toHaveTextContent("left: source");
     expect(screen.queryByText("left: late bytecode")).not.toBeInTheDocument();
+  });
+
+  it("invalidates pending Compare disassembly before OS-open validation resolves", async () => {
+    let resolveLeftBytecode: ((content: string) => void) | undefined;
+    let resolveOsValidation: ((path: string) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "App.class",
+              status: "different" as const,
+              left: { path: "App.class", kind: "class" as const },
+              right: { path: "App.class", kind: "class" as const },
+            },
+          ],
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "App.class") {
+        return Promise.resolve({
+          path: "App.class",
+          kind: "class" as const,
+          language: "java",
+          content: `${args?.side}: source`,
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftBytecode = resolve;
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "right") {
+        return Promise.resolve("right: bytecode");
+      }
+      if (cmd === "validate_path" && args?.raw === "/tmp/from-finder.jar") {
+        return new Promise((resolve) => {
+          resolveOsValidation = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    const classCells = await screen.findAllByText("App.class");
+    await user.click(classCells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Show bytecode" }));
+    await waitFor(() => expect(resolveLeftBytecode).toBeDefined());
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } });
+    });
+    await waitFor(() => expect(resolveOsValidation).toBeDefined());
+    await act(async () => {
+      resolveLeftBytecode?.("left: late bytecode during OS validation");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOsValidation?.("/tmp/from-finder.jar");
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /from-finder\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.getByRole("button", { name: "Show source" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("left: source");
+    expect(screen.queryByText("left: late bytecode during OS validation"))
+      .not.toBeInTheDocument();
   });
 
   it("shows the content line filter only on an active Compare diff tab", async () => {
