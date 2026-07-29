@@ -105,12 +105,14 @@ function hasTauriDependency(coreCargoToml) {
 export const phaseOneRules = [
   {
     message:
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      'src-tauri/src/main.rs must be the Windows GUI attribute plus the thin lcdiff_desktop::run() entrypoint',
     violates: ({ mainSource }) => {
-      const code = stripRustCommentsAndLiterals(mainSource);
-      return !/^\s*fn\s+main\s*\(\s*\)\s*\{\s*lcdiff_desktop\s*::\s*run\s*\(\s*\)\s*;\s*}\s*$/.test(
-        code,
-      );
+      const code = stripRustCommentsAndLiterals(mainSource, false);
+      const windowsGuiAttribute =
+        String.raw`#!\s*\[\s*cfg_attr\s*\(\s*not\s*\(\s*debug_assertions\s*\)\s*,\s*windows_subsystem\s*=\s*"windows"\s*\)\s*]\s*`;
+      const thinMain =
+        String.raw`fn\s+main\s*\(\s*\)\s*\{\s*lcdiff_desktop\s*::\s*run\s*\(\s*\)\s*;\s*}\s*`;
+      return !new RegExp(`^\\s*${windowsGuiAttribute}${thinMain}$`).test(code);
     },
   },
   {
@@ -148,7 +150,7 @@ function registeredHandlerNames(source) {
     .filter(Boolean);
 }
 
-function stripRustCommentsAndLiterals(source) {
+function stripRustCommentsAndLiterals(source, stripLiterals = true) {
   const output = [...source];
   const blank = (index) => {
     if (output[index] !== '\n' && output[index] !== '\r') {
@@ -189,7 +191,7 @@ function stripRustCommentsAndLiterals(source) {
       continue;
     }
 
-    const rawPrefix = source.slice(index).match(/^(?:b|c)?r(#+)?"/);
+    const rawPrefix = stripLiterals && source.slice(index).match(/^(?:b|c)?r(#+)?"/);
     if (rawPrefix) {
       const hashes = rawPrefix[1] ?? '';
       const terminator = `"${hashes}`;
@@ -203,7 +205,7 @@ function stripRustCommentsAndLiterals(source) {
       continue;
     }
 
-    const quotedPrefix = source.slice(index).match(/^(?:b|c)?"/);
+    const quotedPrefix = stripLiterals && source.slice(index).match(/^(?:b|c)?"/);
     if (quotedPrefix) {
       const start = index;
       index += quotedPrefix[0].length;

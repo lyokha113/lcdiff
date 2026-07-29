@@ -5,8 +5,14 @@ import * as architecture from './verify-architecture.mjs';
 
 const { verifyPhaseOneArchitecture } = architecture;
 
-const cleanMain = 'fn main() {\n    lcdiff_desktop::run();\n}\n';
+const cleanMain = `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+fn main() {
+  lcdiff_desktop::run();
+}
+`;
 const cleanCoreCargoToml = '[dependencies]\nserde = "1"\n';
+const desktopEntrypointMessage =
+  'src-tauri/src/main.rs must be the Windows GUI attribute plus the thin lcdiff_desktop::run() entrypoint';
 
 test('accepts a Phase-1 compliant source pair', () => {
   assert.deepEqual(
@@ -22,6 +28,7 @@ test('allows comments and formatting around the exact desktop entrypoint', () =>
   assert.deepEqual(
     verifyPhaseOneArchitecture({
       mainSource: `
+        #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
         // The binary delegates all composition to the library crate.
         fn main ( ) {
           lcdiff_desktop :: run ( ) ;
@@ -31,6 +38,14 @@ test('allows comments and formatting around the exact desktop entrypoint', () =>
     }),
     [],
   );
+});
+
+test('rejects any extra crate attribute on the desktop entrypoint', () => {
+  const errors = verifyPhaseOneArchitecture({
+    mainSource: '#![allow(dead_code)]\nfn main() { lcdiff_desktop::run(); }\n',
+    coreCargoToml: cleanCoreCargoToml,
+  });
+  assert.deepEqual(errors, [desktopEntrypointMessage]);
 });
 
 test('rejects every non-composition desktop entrypoint shape', () => {
@@ -49,7 +64,7 @@ test('rejects every non-composition desktop entrypoint shape', () => {
         coreCargoToml: cleanCoreCargoToml,
       }),
       [
-        'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+        desktopEntrypointMessage,
       ],
     );
   }
@@ -62,7 +77,7 @@ test('rejects AppState ownership in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define struct AppState',
     ],
   );
@@ -75,7 +90,7 @@ test('rejects Tauri commands in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define #[tauri::command] handlers',
     ],
   );
@@ -88,7 +103,7 @@ test('rejects event emission in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not call .emit(',
     ],
   );
@@ -161,7 +176,7 @@ test('reports every independent Phase-1 violation together', () => {
       coreCargoToml: '[dependencies]\ntauri = "2"\n',
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define struct AppState',
       'src-tauri/src/main.rs must not define #[tauri::command] handlers',
       'src-tauri/src/main.rs must not call .emit(',
