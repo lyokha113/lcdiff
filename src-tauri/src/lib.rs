@@ -202,7 +202,7 @@ mod tests {
         fs::File,
         io::Write,
         path::{Path, PathBuf},
-        sync::{Arc, mpsc},
+        sync::{Arc, Mutex, mpsc},
     };
 
     use tempfile::tempdir;
@@ -216,6 +216,7 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
+    use super::state::{install_prepared_compare_archives, prepare_compare_archives};
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
         class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
@@ -1413,7 +1414,7 @@ mod tests {
     }
 
     fn open_compare_sources_through_production(
-        state: &mut AppState,
+        state: &super::state::SharedState,
         left_path: String,
         right_path: String,
     ) -> Result<
@@ -1427,7 +1428,10 @@ mod tests {
         let (left, right, diff) = tauri::async_runtime::block_on(
             open_compare_archives_from_paths(left_path, right_path),
         )?;
-        let (left_summary, right_summary) = state.install_compare_archives(left, right)?;
+        let prepared = prepare_compare_archives(left, right)?;
+        let (left_summary, right_summary, displaced) =
+            install_prepared_compare_archives(state, prepared)?;
+        drop(displaced);
         Ok((left_summary, right_summary, diff))
     }
 
@@ -1496,24 +1500,30 @@ mod tests {
         create_zip(&old_right, &[("old-right.txt", b"right")]);
         create_zip(&candidate_left, &[("new-left.txt", b"new")]);
 
-        let mut state = AppState::new(None);
-        load_archive_through_production(&mut state, old_left.to_str().unwrap(), Side::Left)
-            .unwrap();
-        load_archive_through_production(&mut state, old_right.to_str().unwrap(), Side::Right)
-            .unwrap();
-        let before_left = state.left.as_ref().map(|archive| archive.path().to_owned());
-        let before_right = state
-            .right
-            .as_ref()
-            .map(|archive| archive.path().to_owned());
+        let state = Arc::new(Mutex::new(AppState::new(None)));
+        let (before_left, before_right) = {
+            let mut state = state.lock().unwrap();
+            load_archive_through_production(&mut state, old_left.to_str().unwrap(), Side::Left)
+                .unwrap();
+            load_archive_through_production(&mut state, old_right.to_str().unwrap(), Side::Right)
+                .unwrap();
+            (
+                state.left.as_ref().map(|archive| archive.path().to_owned()),
+                state
+                    .right
+                    .as_ref()
+                    .map(|archive| archive.path().to_owned()),
+            )
+        };
 
         let result = open_compare_sources_through_production(
-            &mut state,
+            &state,
             candidate_left.display().to_string(),
             dir.path().join("missing-right.jar").display().to_string(),
         );
 
         assert!(result.is_err());
+        let state = state.lock().unwrap();
         assert_eq!(
             state.left.as_ref().map(|archive| archive.path().to_owned()),
             before_left
@@ -1525,6 +1535,54 @@ mod tests {
                 .map(|archive| archive.path().to_owned()),
             before_right
         );
+    }
+
+    #[test]
+    fn compare_pair_install_returns_displaced_resources_after_unlock() {
+        let dir = tempdir().unwrap();
+        let old_left = dir.path().join("old-left.jar");
+        let old_right = dir.path().join("old-right.jar");
+        let new_left = dir.path().join("new-left.jar");
+        let new_right = dir.path().join("new-right.jar");
+        create_zip(&old_left, &[("old-left.txt", b"left")]);
+        create_zip(&old_right, &[("old-right.txt", b"right")]);
+        create_zip(&new_left, &[("new-left.txt", b"new left")]);
+        create_zip(&new_right, &[("new-right.txt", b"new right")]);
+
+        let mut initial = AppState::new(None);
+        load_archive_through_production(&mut initial, old_left.to_str().unwrap(), Side::Left)
+            .unwrap();
+        load_archive_through_production(&mut initial, old_right.to_str().unwrap(), Side::Right)
+            .unwrap();
+        let old_left_cache = Arc::downgrade(&initial.left_nested);
+        let old_right_cache = Arc::downgrade(&initial.right_nested);
+        let state = Arc::new(Mutex::new(initial));
+        let prepared = prepare_compare_archives(
+            Archive::open(new_left.to_string_lossy()).unwrap(),
+            Archive::open(new_right.to_string_lossy()).unwrap(),
+        )
+        .unwrap();
+
+        let (left, right, displaced) = install_prepared_compare_archives(&state, prepared).unwrap();
+
+        assert!(state.try_lock().is_ok(), "state lock must be released");
+        assert_eq!(left.path, new_left.display().to_string());
+        assert_eq!(right.path, new_right.display().to_string());
+        assert_eq!(
+            displaced.0.as_ref().map(Archive::path),
+            Some(old_left.as_path())
+        );
+        assert_eq!(
+            displaced.1.as_ref().map(Archive::path),
+            Some(old_right.as_path())
+        );
+        assert!(old_left_cache.upgrade().is_some());
+        assert!(old_right_cache.upgrade().is_some());
+
+        drop(displaced);
+
+        assert!(old_left_cache.upgrade().is_none());
+        assert!(old_right_cache.upgrade().is_none());
     }
 
     fn open_view_source_through_production(

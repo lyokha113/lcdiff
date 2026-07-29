@@ -293,25 +293,6 @@ impl AppState {
         Ok(summary)
     }
 
-    pub(crate) fn install_compare_archives(
-        &mut self,
-        left: Archive,
-        right: Archive,
-    ) -> Result<(ArchiveSummary, ArchiveSummary), String> {
-        if self.any_pending() {
-            return Err("save staged copies before changing an archive".to_owned());
-        }
-        let left_summary = summarize(&left);
-        let right_summary = summarize(&right);
-        let left_nested = fresh_nested_cache()?;
-        let right_nested = fresh_nested_cache()?;
-        self.left = Some(left);
-        self.right = Some(right);
-        self.left_nested = left_nested;
-        self.right_nested = right_nested;
-        Ok((left_summary, right_summary))
-    }
-
     pub(crate) fn stage_copy(
         &mut self,
         from: Side,
@@ -431,6 +412,22 @@ pub(crate) struct CompareSourcesResult {
     pub(crate) diff: lcdiff_core::ArchiveDiff,
 }
 
+pub(crate) struct PreparedCompareArchives {
+    left: Archive,
+    right: Archive,
+    left_summary: ArchiveSummary,
+    right_summary: ArchiveSummary,
+    left_nested: Arc<Mutex<NestedArchiveCache>>,
+    right_nested: Arc<Mutex<NestedArchiveCache>>,
+}
+
+type DisplacedCompareArchives = (
+    Option<Archive>,
+    Option<Archive>,
+    Arc<Mutex<NestedArchiveCache>>,
+    Arc<Mutex<NestedArchiveCache>>,
+);
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ViewSourceSummary {
@@ -499,6 +496,47 @@ fn fresh_nested_cache() -> Result<Arc<Mutex<NestedArchiveCache>>, String> {
     NestedArchiveCache::new()
         .map(|cache| Arc::new(Mutex::new(cache)))
         .map_err(|error| error.to_string())
+}
+
+pub(crate) fn prepare_compare_archives(
+    left: Archive,
+    right: Archive,
+) -> Result<PreparedCompareArchives, String> {
+    let left_summary = summarize(&left);
+    let right_summary = summarize(&right);
+    let left_nested = fresh_nested_cache()?;
+    let right_nested = fresh_nested_cache()?;
+    Ok(PreparedCompareArchives {
+        left,
+        right,
+        left_summary,
+        right_summary,
+        left_nested,
+        right_nested,
+    })
+}
+
+pub(crate) fn install_prepared_compare_archives(
+    shared_state: &SharedState,
+    prepared: PreparedCompareArchives,
+) -> Result<(ArchiveSummary, ArchiveSummary, DisplacedCompareArchives), String> {
+    let mut state = shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?;
+    if state.any_pending() {
+        drop(state);
+        drop(prepared);
+        return Err("save staged copies before changing an archive".to_owned());
+    }
+    let displaced = (
+        state.left.replace(prepared.left),
+        state.right.replace(prepared.right),
+        std::mem::replace(&mut state.left_nested, prepared.left_nested),
+        std::mem::replace(&mut state.right_nested, prepared.right_nested),
+    );
+    let installed = (prepared.left_summary, prepared.right_summary, displaced);
+    drop(state);
+    Ok(installed)
 }
 
 fn summarize(archive: &Archive) -> ArchiveSummary {
