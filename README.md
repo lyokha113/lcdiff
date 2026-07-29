@@ -47,10 +47,12 @@ source its own entry workspace.
 
 | Area | What LCDiff provides |
 | --- | --- |
-| Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
+| Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. Each keeps its in-session context when you switch modes. |
 | Broad source support | Open JAR, ZIP, WAR, EAR, directories, and common text files from pickers, drag-and-drop, or the operating system. |
 | Lazy archive browser | Navigate large archives without eagerly extracting everything; nested archives expand only when requested. |
-| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and file-status filters. |
+| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and file-status filters. Drop exactly two sources together to open a Compare pair, and stage edits to supported text entries even when the entry exists on only one side. |
+| View source tabs | Drop multiple sources into **View** to open them as independent source tabs; use **Expand all folders** and **Collapse all folders** in Files to navigate each source quickly. |
+| Free-text inputs | Paste or type drafts, drop one or two UTF-8 text files into the left/right drafts, and use **Clear drafts** to start over without clearing temporary result history. |
 | Java decompilation | Read-only Java through Vineflower, CFR, JD-Core, or JD-Core v0, with ASM Textifier bytecode as a separate view. |
 | Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, **All / Differences** line display, whitespace controls, font settings, and compact layouts. Differences keeps local context and lets Monaco reveal collapsed unchanged regions on demand. |
 | Binary inspection | Size, CRC, SHA-256, metadata, and hex previews when an entry is not safely renderable as text. |
@@ -112,7 +114,8 @@ paru -S lcdiff
 
 Download `LCDiff-<version>-windows-x64-setup.exe` on Windows 10 or 11.
 Unsigned builds may display a SmartScreen warning until Authenticode signing is
-configured.
+configured. Release builds use the Windows GUI subsystem, so the packaged app
+launches without a console window.
 
 ## Automatic updates
 
@@ -140,13 +143,16 @@ can install it manually.
 3. Filter the file tree by differences and select an entry.
 4. Use **All** to inspect full content or **Differences** to focus on changed
    blocks with nearby context; expand a collapsed region when you need it.
-5. Inspect the diff, then stage an entry or text hunk in the intended direction.
+5. Inspect the diff, then stage an entry, text hunk, or supported one-sided
+   text edit in the intended direction.
 6. Review pending changes and save the target.
 
 ### Compare pasted text
 
-Choose **Free text**, edit both drafts, and confirm the comparison. Confirmed
-results are read-only and kept in bounded local temporary history until cleared.
+Choose **Free text**, edit or drop one or two UTF-8 text files into the drafts,
+and confirm the comparison. **Clear drafts** clears both inputs without removing
+the confirmed results, which remain read-only in bounded local temporary history
+until cleared.
 
 ### Search
 

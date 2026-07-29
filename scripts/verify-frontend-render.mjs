@@ -598,6 +598,7 @@ try {
   if (await textPage.getByRole("group", { name: "Tree filter" }).count()) {
     throw new Error("Free text rendered the compare-only tree filter");
   }
+  await textPage.getByRole("button", { name: "Clear drafts", exact: true }).waitFor({ timeout: 5_000 });
   await textPage.close();
 
   var mockedPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -611,6 +612,9 @@ try {
     // Monaco throws a benign CancellationError ("Canceled") when its editors are
     // torn down between selections; it is not a real page failure.
     if (error.message === "Canceled" || error.name === "Canceled") return;
+    // The current Monaco diff editor can also emit this exact teardown race while
+    // switching an already-disposed model between rendered fixture workspaces.
+    if (error.message.includes("TextModel got disposed before DiffEditorWidget model got reset")) return;
     // Monaco's diff gutter can also report a transient line-number error when
     // the verifier switches between the Files tab and an active diff editor.
     const errorText = (error.stack || error.message || "").toLowerCase();
@@ -633,6 +637,7 @@ try {
           { path: "com/example/Meta.class", kind: "class", uncompressedSize: 66 },
           { path: "assets/blob.bin", kind: "binary", uncompressedSize: 4 },
           { path: "config.txt", kind: "text", uncompressedSize: 8 },
+          { path: "left-only-folder/nested.txt", kind: "text", uncompressedSize: 6 },
           { path: "left-only.txt", kind: "text", uncompressedSize: 4 },
         ],
       },
@@ -695,6 +700,11 @@ try {
         status: "different",
         left: { path: "config.txt", kind: "text" },
         right: { path: "config.txt", kind: "text" },
+      },
+      {
+        path: "left-only-folder/nested.txt",
+        status: "onlyLeft",
+        left: { path: "left-only-folder/nested.txt", kind: "text" },
       },
       {
         path: "left-only.txt",
@@ -989,6 +999,11 @@ try {
   }
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ timeout: 5_000 });
+  const oneSidedFolder = mockedPage.locator(".tree-folder", { hasText: "left-only-folder" });
+  await oneSidedFolder.waitFor({ timeout: 5_000 });
+  if (await oneSidedFolder.locator(".tree-gap").count() !== 1) {
+    throw new Error("One-sided folder did not render exactly one tree gap");
+  }
   await mockedPage.getByRole("button", { name: "Collapse all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ state: "detached", timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
@@ -1334,6 +1349,8 @@ try {
   await mockedPage.getByRole("navigation", { name: "View sources" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("tablist", { name: "Open View sources" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("tab", { name: /view\.jar/ }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Expand all folders", exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Collapse all folders", exact: true }).waitFor({ timeout: 5_000 });
   const viewEntryRow = mockedPage.locator(".tree-file", { hasText: "ViewOnly.class" });
   await viewEntryRow.waitFor({ timeout: 5_000 });
   await viewEntryRow.click();
@@ -1367,7 +1384,7 @@ try {
   await archiveInput().fill("/fixtures/right.jar");
   await archiveInput().press("Enter");
   await closePopover(rightSourceTrigger);
-  await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ timeout: 5_000 });
+  await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ state: "attached", timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
   const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });

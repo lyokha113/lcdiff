@@ -30,6 +30,25 @@ GitHub-hosted `windows-latest` runners for future `v*` tags. The workflow calls
 `scripts\build-windows.ps1`, uploads `artifacts/windows/*` as a workflow
 artifact, and attaches the installer to the matching GitHub Release.
 
+### Windows GUI subsystem
+
+Run this on the Windows release runner after creating the release bundles:
+
+```powershell
+scripts\build-windows.ps1 -Bundles nsis
+scripts\verify-windows-gui-subsystem.ps1 -Path target\release\lcdiff-desktop.exe
+```
+
+Pass evidence:
+
+- The packaged release app launches without a console window.
+- `scripts\verify-windows-gui-subsystem.ps1` reports PE subsystem `2`
+  (`IMAGE_SUBSYSTEM_WINDOWS_GUI`) for `target\release\lcdiff-desktop.exe`.
+
+This is an external Windows gate. A macOS local run can verify the release-only
+source attribute and its architecture guard, but cannot claim the packaged
+Windows launch or PE result.
+
 ## Linux Release Builder
 
 Linux release assets are built by `.github/workflows/linux-release.yml` on
