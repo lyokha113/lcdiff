@@ -1045,6 +1045,215 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("tab", { name: /c\.jar/ })).toBeInTheDocument();
   });
 
+  it("reports a blocked View drop without counting a staged edit as opened", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    fireEvent.change(await screen.findByTestId("editor"), {
+      target: { value: "staged View edit" },
+    });
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/blocked.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(await screen.findByText("0 opened, 0 failed, 1 blocked")).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+  });
+
+  it("stops a cancelled View drop instead of opening its remaining paths", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-a.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-a.jar", "/tmp/never-open.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/newest-b.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(screen.getByText("1 opened, 0 failed")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-a.jar"));
+    });
+
+    await waitFor(() =>
+      expect(invoke.mock.calls.some(([, args]) => args?.path === "/tmp/never-open.jar")).toBe(false),
+    );
+    expect(screen.getByRole("tab", { name: /newest-b\.jar/ })).toBeInTheDocument();
+    expect(screen.queryByText(/cancelled/)).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite a newer OS-open result", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-os.jar"] } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_view_source",
+      { path: "/tmp/from-os.jar" },
+    ));
+    await waitFor(() => expect(screen.getByText("Opened /tmp/from-os.jar")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    await waitFor(() => expect(screen.getByText("Opened /tmp/from-os.jar")).toBeInTheDocument());
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite Free text mode", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Text mode" }));
+    expect(screen.getByText("Free text is ready. Edit both sides, then compare when you want a result.")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite Compare mode", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
   it("loads one dropped text file into its positioned Free text draft", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {

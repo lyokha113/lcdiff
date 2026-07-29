@@ -125,6 +125,12 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const VIEW_ROOT_KEY = "";
 
+type OpenViewPathOutcome =
+  | { status: "opened" }
+  | { status: "failed"; error: string }
+  | { status: "blocked" }
+  | { status: "cancelled" };
+
 // Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
 
@@ -208,6 +214,7 @@ export function App() {
   const modeRef = useRef(mode);
   const activeViewSourceIdRef = useRef<string | undefined>(undefined);
   const viewRequestGenerationRef = useRef(0);
+  const viewDropGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const appliedEngineRef = useRef(engine);
   const mergeContextRef = useRef<MergeControllerContext | undefined>(undefined);
@@ -521,18 +528,24 @@ export function App() {
     }
   }, [activeViewSource, loadViewPairs, mode]);
 
-  const openViewPath = useCallback(async (path: string) => {
+  const openViewPath = useCallback(async (
+    path: string,
+    dropGeneration?: number,
+  ): Promise<OpenViewPathOutcome> => {
+    if (dropGeneration === undefined) {
+      viewDropGenerationRef.current += 1;
+    }
     if (stagedTarget) {
       setMessage("Save or clear unsaved changes before opening another View source.");
-      return undefined;
+      return { status: "blocked" };
     }
     const generation = viewRequestGenerationRef.current + 1;
     viewRequestGenerationRef.current = generation;
     try {
       const validatedPath = await validatePath(path);
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
       const summary = await openViewSourceCommand(validatedPath);
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
       clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
       setPaths((current) => ({ ...current, left: summary.path }));
@@ -543,15 +556,15 @@ export function App() {
       activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
       await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
-      if (!isCurrentViewRequest(generation, summary.id)) return undefined;
+      if (!isCurrentViewRequest(generation, summary.id)) return { status: "cancelled" };
       setMessage(`Opened ${summary.path}`);
-      return undefined;
+      return { status: "opened" };
     } catch (error) {
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
       const message = String(error);
       setPathErrors((current) => ({ ...current, left: message }));
       setMessage(message);
-      return message;
+      return { status: "failed", error: message };
     }
   }, [loadViewPairs, resetWorkspace, stagedTarget]);
 
@@ -620,6 +633,7 @@ export function App() {
     }
     modeRef.current = "text";
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     searchStreamId.current += 1;
     cancelableSearchActiveRef.current = false;
     setSearching(false);
@@ -689,12 +703,23 @@ export function App() {
         }
 
         if (mode === "single") {
-          const failures: string[] = [];
+          const dropGeneration = viewDropGenerationRef.current + 1;
+          viewDropGenerationRef.current = dropGeneration;
+          const outcomes: OpenViewPathOutcome[] = [];
           for (const path of droppedPaths) {
-            const error = await openViewPath(path);
-            if (error) failures.push(`${path}: ${error}`);
+            const outcome = await openViewPath(path, dropGeneration);
+            outcomes.push(outcome);
+            if (outcome.status === "cancelled") break;
           }
-          setMessage(`${droppedPaths.length - failures.length} opened, ${failures.length} failed`);
+          if (viewDropGenerationRef.current !== dropGeneration) return;
+          const opened = outcomes.filter((outcome) => outcome.status === "opened").length;
+          const failed = outcomes.filter((outcome) => outcome.status === "failed").length;
+          const blocked = outcomes.filter((outcome) => outcome.status === "blocked").length;
+          const summary = [`${opened} opened`, `${failed} failed`];
+          if (blocked > 0) {
+            summary.push(`${blocked} blocked`);
+          }
+          setMessage(summary.join(", "));
           return;
         }
 
@@ -856,6 +881,7 @@ export function App() {
       return;
     }
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     activeViewSourceIdRef.current = sourceId;
     clearViewSearchState(cancelableSearchActiveRef.current);
     selectWorkspaceViewSource(sourceId);
@@ -868,6 +894,7 @@ export function App() {
       return;
     }
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     void closeViewSourceCommand(sourceId).catch(() => undefined);
     const { closedActive, nextSourceId } = closeWorkspaceViewSourceTab(sourceId);
     activeViewSourceIdRef.current = nextSourceId;
@@ -880,7 +907,10 @@ export function App() {
       return;
     }
     modeRef.current = next;
-    if (next !== "single") viewRequestGenerationRef.current += 1;
+    if (next !== "single") {
+      viewRequestGenerationRef.current += 1;
+      viewDropGenerationRef.current += 1;
+    }
     setMode(next);
     setView("workspace");
   }
@@ -888,6 +918,7 @@ export function App() {
   function openEntry(entry: HistoryEntry) {
     modeRef.current = entry.mode;
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     setMode(entry.mode);
     setView("workspace");
     if (entry.mode === "single") {
@@ -915,6 +946,7 @@ export function App() {
     }
     modeRef.current = next;
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
       resetWorkspace({
