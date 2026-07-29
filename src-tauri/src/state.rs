@@ -6,13 +6,69 @@ use std::{
 
 use lcdiff_core::{
     Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions, CommitResult,
-    DEFAULT_DECOMPILE_ENGINE, DecompileEngine, MergePlan, NestedArchiveCache, edit,
+    DEFAULT_DECOMPILE_ENGINE, DecompileEngine, MergePlan, NestedArchiveCache, create_empty_archive,
+    edit, export_archive_atomic,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use tempfile::TempDir;
 
 use crate::{Side, sidecar_process::SidecarClient};
 
 pub(crate) type SharedState = Arc<Mutex<AppState>>;
+
+// Command registration follows in a later task; these lifecycle contracts are
+// exercised directly by stored-state tests until then.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum TempTargetCreation {
+    Empty { extension: String },
+    CopyCurrent,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TempMergeSessionSummary {
+    pub(crate) id: String,
+    pub(crate) target_side: Side,
+    pub(crate) working_name: String,
+    pub(crate) entry_count: usize,
+    pub(crate) applied_source_count: usize,
+    pub(crate) exported_path: Option<String>,
+}
+
+#[allow(dead_code)]
+pub(crate) struct TempMergeSession {
+    id: String,
+    target_side: Side,
+    temp_dir: TempDir,
+    working_path: PathBuf,
+    creation: TempTargetCreation,
+    applied_source_count: usize,
+    exported_path: Option<PathBuf>,
+}
+
+#[allow(dead_code)]
+impl TempMergeSession {
+    fn summary(&self, archive: &Archive) -> TempMergeSessionSummary {
+        TempMergeSessionSummary {
+            id: self.id.clone(),
+            target_side: self.target_side,
+            working_name: self
+                .working_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.working_path.display().to_string()),
+            entry_count: archive.entries().count(),
+            applied_source_count: self.applied_source_count,
+            exported_path: self
+                .exported_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+        }
+    }
+}
 
 pub(crate) struct AppState {
     pub(crate) left: Option<Archive>,
@@ -22,6 +78,7 @@ pub(crate) struct AppState {
     pub(crate) view_sources: BTreeMap<String, ViewSourceState>,
     pub(crate) left_plan: MergePlan,
     pub(crate) right_plan: MergePlan,
+    pub(crate) temp_merge_session: Option<TempMergeSession>,
     pub(crate) engine: DecompileEngine,
     pub(crate) sidecar: Arc<Mutex<SidecarClient>>,
     pub(crate) prefetch_sidecar: Arc<Mutex<SidecarClient>>,
@@ -54,6 +111,7 @@ impl AppState {
             view_sources: BTreeMap::new(),
             left_plan: MergePlan::new(),
             right_plan: MergePlan::new(),
+            temp_merge_session: None,
             engine: DEFAULT_DECOMPILE_ENGINE,
             sidecar: Arc::new(Mutex::new(sidecar)),
             prefetch_sidecar: Arc::new(Mutex::new(prefetch_sidecar)),
@@ -269,6 +327,13 @@ impl AppState {
     /// Legacy single-target lock: only one side may carry pending ops unless both
     /// sources are standalone files. Returns Err if `side` would violate it.
     fn ensure_can_stage(&self, side: Side) -> Result<(), String> {
+        if self
+            .temp_merge_session
+            .as_ref()
+            .is_some_and(|session| session.target_side.opposite() == side)
+        {
+            return Err("temporary merge source cannot be modified".to_owned());
+        }
         if self.both_sides_are_files() {
             return Ok(());
         }
@@ -279,11 +344,23 @@ impl AppState {
         Ok(())
     }
 
+    fn ensure_replaceable_side(&self, side: Side) -> Result<(), String> {
+        if self
+            .temp_merge_session
+            .as_ref()
+            .is_some_and(|session| session.target_side == side)
+        {
+            return Err("temporary merge target cannot be replaced".to_owned());
+        }
+        Ok(())
+    }
+
     pub(crate) fn install_archive(
         &mut self,
         archive: Archive,
         side: Side,
     ) -> Result<ArchiveSummary, String> {
+        self.ensure_replaceable_side(side)?;
         if self.any_pending() {
             return Err("save staged copies before changing an archive".to_owned());
         }
@@ -291,6 +368,97 @@ impl AppState {
         *archive_mut(self, side) = Some(archive);
         *nested_cache_mut(self, side) = fresh_nested_cache()?;
         Ok(summary)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn create_temp_target(
+        &mut self,
+        source_side: Side,
+        creation: TempTargetCreation,
+    ) -> Result<TempMergeSessionSummary, String> {
+        if self.temp_merge_session.is_some() {
+            return Err("a temporary merge session is already active".to_owned());
+        }
+        let source = archive(self, source_side)
+            .ok_or("source archive is not loaded")?
+            .clone();
+        let target_side = source_side.opposite();
+        if archive(self, target_side).is_some() {
+            return Err("temporary merge target side must be empty".to_owned());
+        }
+        if self.any_pending() {
+            return Err(
+                "clear pending changes before creating a temporary merge target".to_owned(),
+            );
+        }
+
+        let temp_dir = tempfile::Builder::new()
+            .prefix("lcdiff-temp-merge-")
+            .tempdir()
+            .map_err(|error| error.to_string())?;
+        let working_name = match &creation {
+            TempTargetCreation::Empty { extension } => {
+                format!("temporary-target.{extension}")
+            }
+            TempTargetCreation::CopyCurrent => source
+                .path()
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or_else(|| "source archive has no file name".to_owned())?,
+        };
+        let working_path = temp_dir.path().join(&working_name);
+        match &creation {
+            TempTargetCreation::Empty { .. } => {
+                create_empty_archive(&working_path).map_err(|error| error.to_string())?;
+            }
+            TempTargetCreation::CopyCurrent => {
+                export_archive_atomic(source.path(), &working_path)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        let working_archive =
+            Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
+        let target_nested = fresh_nested_cache()?;
+        let id = temp_dir
+            .path()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "temporary merge session has no identifier".to_owned())?;
+        let session = TempMergeSession {
+            id,
+            target_side,
+            temp_dir,
+            working_path: working_archive.path().to_owned(),
+            creation,
+            applied_source_count: 0,
+            exported_path: None,
+        };
+        let summary = session.summary(&working_archive);
+
+        *archive_mut(self, target_side) = Some(working_archive);
+        *nested_cache_mut(self, target_side) = target_nested;
+        self.temp_merge_session = Some(session);
+        Ok(summary)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn discard_temp_target(&mut self) -> Result<(), String> {
+        let target_side = self
+            .temp_merge_session
+            .as_ref()
+            .map(|session| session.target_side)
+            .ok_or_else(|| "temporary merge session is not active".to_owned())?;
+        let target_nested = fresh_nested_cache()?;
+
+        self.plan_mut(target_side).clear();
+        *archive_mut(self, target_side) = None;
+        *nested_cache_mut(self, target_side) = target_nested;
+        let session = self
+            .temp_merge_session
+            .take()
+            .expect("temporary merge session checked above");
+        drop(session);
+        Ok(())
     }
 
     pub(crate) fn stage_copy(
@@ -523,6 +691,8 @@ pub(crate) fn install_prepared_compare_archives(
     let mut state = shared_state
         .lock()
         .map_err(|_| "state lock is poisoned".to_owned())?;
+    state.ensure_replaceable_side(Side::Left)?;
+    state.ensure_replaceable_side(Side::Right)?;
     if state.any_pending() {
         drop(state);
         drop(prepared);

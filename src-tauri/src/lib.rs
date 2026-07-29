@@ -216,7 +216,9 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
-    use super::state::{install_prepared_compare_archives, prepare_compare_archives};
+    use super::state::{
+        TempTargetCreation, install_prepared_compare_archives, prepare_compare_archives,
+    };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
         class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
@@ -1402,6 +1404,292 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn empty_temp_target_creates_opposite_archive_and_session_summary() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+
+        let summary = state
+            .create_temp_target(
+                Side::Left,
+                TempTargetCreation::Empty {
+                    extension: "jar".to_owned(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert!(summary.working_name.ends_with(".jar"));
+        assert_eq!(summary.entry_count, 0);
+        assert_eq!(summary.applied_source_count, 0);
+        assert_eq!(summary.exported_path, None);
+        assert!(state.right.as_ref().unwrap().path().is_file());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn copy_current_temp_target_creates_opposite_copy_without_mutating_source() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let source_before = std::fs::read(state.left.as_ref().unwrap().path()).unwrap();
+
+        let summary = state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(
+            std::fs::read(state.left.as_ref().unwrap().path()).unwrap(),
+            source_before
+        );
+        assert_ne!(
+            state.right.as_ref().unwrap().path(),
+            state.left.as_ref().unwrap().path()
+        );
+        assert_eq!(
+            std::fs::read(state.right.as_ref().unwrap().path()).unwrap(),
+            source_before
+        );
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_uses_left_when_declared_source_is_right() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+
+        let summary = state
+            .create_temp_target(Side::Right, TempTargetCreation::CopyCurrent)
+            .unwrap();
+
+        assert_eq!(summary.target_side, Side::Left);
+        assert!(state.left.is_some());
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+    }
+
+    #[test]
+    fn temp_target_creation_requires_declared_source_empty_target_and_no_pending_plan() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let other = dir.path().join("other.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&other, &[("other.txt", b"other")]);
+
+        let mut wrong_source = AppState::default();
+        load_archive_through_production(&mut wrong_source, other.to_str().unwrap(), Side::Right)
+            .unwrap();
+        assert!(
+            wrong_source
+                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap_err()
+                .contains("source")
+        );
+
+        let mut occupied_target = AppState::default();
+        load_archive_through_production(&mut occupied_target, source.to_str().unwrap(), Side::Left)
+            .unwrap();
+        load_archive_through_production(&mut occupied_target, other.to_str().unwrap(), Side::Right)
+            .unwrap();
+        assert!(
+            occupied_target
+                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap_err()
+                .contains("target")
+        );
+
+        let mut pending = AppState::default();
+        load_archive_through_production(&mut pending, source.to_str().unwrap(), Side::Left)
+            .unwrap();
+        pending
+            .stage_write(Side::Left, "source.txt", "changed")
+            .unwrap();
+        assert!(
+            pending
+                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap_err()
+                .contains("pending")
+        );
+        assert!(pending.right.is_none());
+        assert!(pending.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn failed_temp_target_creation_preserves_compare_state() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let source_path = state.left.as_ref().unwrap().path().to_owned();
+        let source_cache = Arc::clone(&state.left_nested);
+
+        let error = state
+            .create_temp_target(
+                Side::Left,
+                TempTargetCreation::Empty {
+                    extension: "txt".to_owned(),
+                },
+            )
+            .unwrap_err();
+
+        assert!(error.contains("temporary archive"));
+        assert_eq!(state.left.as_ref().unwrap().path(), source_path);
+        assert!(Arc::ptr_eq(&state.left_nested, &source_cache));
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_allows_source_replacement_but_rejects_target_replacement_and_second_session() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement = dir.path().join("replacement.jar");
+        let forbidden_target = dir.path().join("forbidden.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement, &[("replacement.txt", b"replacement")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+
+        let second_error = state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap_err();
+        assert!(second_error.contains("already"));
+
+        state
+            .install_archive(
+                Archive::open(replacement.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), replacement);
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+
+        let target_error = state
+            .install_archive(
+                Archive::open(forbidden_target.to_string_lossy()).unwrap(),
+                Side::Right,
+            )
+            .unwrap_err();
+        assert!(target_error.contains("temporary merge target"));
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+    }
+
+    #[test]
+    fn temp_target_rejects_atomic_compare_pair_replacement() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_left = dir.path().join("replacement-left.jar");
+        let replacement_right = dir.path().join("replacement-right.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_left, &[("left.txt", b"left")]);
+        create_zip(&replacement_right, &[("right.txt", b"right")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let error = open_compare_sources_through_production(
+            &shared_state,
+            replacement_left.display().to_string(),
+            replacement_right.display().to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge target"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), source);
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_staging_can_modify_only_fixed_target_side() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+
+        let source_error = state
+            .stage_copy(Side::Right, Side::Left, "source.txt")
+            .unwrap_err();
+        assert!(source_error.contains("temporary merge source"));
+        assert!(state.left_plan.is_empty());
+
+        state
+            .stage_copy(Side::Left, Side::Right, "source.txt")
+            .unwrap();
+        assert!(!state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn discard_temp_target_clears_target_and_only_removes_owned_temp_directory() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let source_before = std::fs::read(&source).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        state
+            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        state
+            .stage_copy(Side::Left, Side::Right, "source.txt")
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+        let owned_temp_dir = target_path.parent().unwrap().to_owned();
+
+        state.discard_temp_target().unwrap();
+
+        assert!(source.is_file());
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        assert!(!target_path.exists());
+        assert!(!owned_temp_dir.exists());
+        assert!(state.left.is_some());
+        assert!(state.right.is_none());
+        assert!(state.right_plan.is_empty());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn discard_temp_target_without_session_preserves_loaded_archives() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+
+        assert!(
+            state
+                .discard_temp_target()
+                .unwrap_err()
+                .contains("not active")
+        );
+        assert_eq!(state.left.as_ref().unwrap().path(), source);
+        assert!(source.is_file());
     }
 
     fn load_archive_through_production(
