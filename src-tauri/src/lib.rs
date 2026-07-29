@@ -217,7 +217,10 @@ mod tests {
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
     use super::state::{
-        TempTargetCreation, install_prepared_compare_archives, prepare_compare_archives,
+        TempTargetCreation, create_temp_target, discard_temp_target,
+        discard_temp_target_with_cleanup, install_prepared_compare_archives,
+        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
+        prepare_temp_target_with_lock_probe,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -1414,14 +1417,14 @@ mod tests {
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
 
-        let summary = state
-            .create_temp_target(
-                Side::Left,
-                TempTargetCreation::Empty {
-                    extension: "jar".to_owned(),
-                },
-            )
-            .unwrap();
+        let summary = create_temp_target_in_state(
+            &mut state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
 
         assert_eq!(summary.target_side, Side::Right);
         assert!(summary.working_name.ends_with(".jar"));
@@ -1441,9 +1444,9 @@ mod tests {
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
         let source_before = std::fs::read(state.left.as_ref().unwrap().path()).unwrap();
 
-        let summary = state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
-            .unwrap();
+        let summary =
+            create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap();
 
         assert_eq!(summary.target_side, Side::Right);
         assert_eq!(summary.entry_count, 1);
@@ -1470,13 +1473,100 @@ mod tests {
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
 
-        let summary = state
-            .create_temp_target(Side::Right, TempTargetCreation::CopyCurrent)
-            .unwrap();
+        let summary =
+            create_temp_target_in_state(&mut state, Side::Right, TempTargetCreation::CopyCurrent)
+                .unwrap();
 
         assert_eq!(summary.target_side, Side::Left);
         assert!(state.left.is_some());
         assert_eq!(state.right.as_ref().unwrap().path(), source);
+    }
+
+    #[test]
+    fn temp_target_preparation_releases_shared_state_lock_before_filesystem_work() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let prepared = prepare_temp_target_with_lock_probe(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::CopyCurrent,
+            || assert!(shared_state.try_lock().is_ok()),
+        )
+        .unwrap();
+        let summary = install_prepared_temp_target(&shared_state, prepared).unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+    }
+
+    #[test]
+    fn prepared_temp_target_rechecks_source_before_publish() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement = dir.path().join("replacement.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        let prepared =
+            prepare_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap();
+        shared_state
+            .lock()
+            .unwrap()
+            .install_archive(
+                Archive::open(replacement.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+
+        let error = install_prepared_temp_target(&shared_state, prepared).unwrap_err();
+
+        assert!(error.contains("changed"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), replacement);
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_rejects_file_and_directory_sources_before_creation() {
+        let dir = tempdir().unwrap();
+        let text = dir.path().join("source.txt");
+        let folder = dir.path().join("source-folder");
+        std::fs::write(&text, "text").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("entry.txt"), "entry").unwrap();
+
+        for source in [&text, &folder] {
+            let mut state = AppState::default();
+            load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left)
+                .unwrap();
+            let shared_state = Arc::new(Mutex::new(state));
+            let mut entered_filesystem_phase = false;
+
+            let result = prepare_temp_target_with_lock_probe(
+                &shared_state,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+                || entered_filesystem_phase = true,
+            );
+            let error = match result {
+                Ok(_) => panic!("non-archive source entered temporary target preparation"),
+                Err(error) => error,
+            };
+
+            assert!(error.contains("archive source"));
+            assert!(!entered_filesystem_phase);
+            let state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+        }
     }
 
     #[test]
@@ -1491,10 +1581,13 @@ mod tests {
         load_archive_through_production(&mut wrong_source, other.to_str().unwrap(), Side::Right)
             .unwrap();
         assert!(
-            wrong_source
-                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
-                .unwrap_err()
-                .contains("source")
+            create_temp_target_in_state(
+                &mut wrong_source,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+            )
+            .unwrap_err()
+            .contains("source")
         );
 
         let mut occupied_target = AppState::default();
@@ -1503,10 +1596,13 @@ mod tests {
         load_archive_through_production(&mut occupied_target, other.to_str().unwrap(), Side::Right)
             .unwrap();
         assert!(
-            occupied_target
-                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
-                .unwrap_err()
-                .contains("target")
+            create_temp_target_in_state(
+                &mut occupied_target,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+            )
+            .unwrap_err()
+            .contains("target")
         );
 
         let mut pending = AppState::default();
@@ -1516,8 +1612,7 @@ mod tests {
             .stage_write(Side::Left, "source.txt", "changed")
             .unwrap();
         assert!(
-            pending
-                .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+            create_temp_target_in_state(&mut pending, Side::Left, TempTargetCreation::CopyCurrent,)
                 .unwrap_err()
                 .contains("pending")
         );
@@ -1535,14 +1630,14 @@ mod tests {
         let source_path = state.left.as_ref().unwrap().path().to_owned();
         let source_cache = Arc::clone(&state.left_nested);
 
-        let error = state
-            .create_temp_target(
-                Side::Left,
-                TempTargetCreation::Empty {
-                    extension: "txt".to_owned(),
-                },
-            )
-            .unwrap_err();
+        let error = create_temp_target_in_state(
+            &mut state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "txt".to_owned(),
+            },
+        )
+        .unwrap_err();
 
         assert!(error.contains("temporary archive"));
         assert_eq!(state.left.as_ref().unwrap().path(), source_path);
@@ -1562,14 +1657,13 @@ mod tests {
         create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
-        state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
             .unwrap();
         let target_path = state.right.as_ref().unwrap().path().to_owned();
 
-        let second_error = state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
-            .unwrap_err();
+        let second_error =
+            create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap_err();
         assert!(second_error.contains("already"));
 
         state
@@ -1602,8 +1696,7 @@ mod tests {
         create_zip(&replacement_right, &[("right.txt", b"right")]);
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
-        state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
             .unwrap();
         let target_path = state.right.as_ref().unwrap().path().to_owned();
         let shared_state = Arc::new(Mutex::new(state));
@@ -1629,8 +1722,7 @@ mod tests {
         create_zip(&source, &[("source.txt", b"source")]);
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
-        state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
             .unwrap();
 
         let source_error = state
@@ -1653,8 +1745,7 @@ mod tests {
         let source_before = std::fs::read(&source).unwrap();
         let mut state = AppState::default();
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
-        state
-            .create_temp_target(Side::Left, TempTargetCreation::CopyCurrent)
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
             .unwrap();
         state
             .stage_copy(Side::Left, Side::Right, "source.txt")
@@ -1662,7 +1753,7 @@ mod tests {
         let target_path = state.right.as_ref().unwrap().path().to_owned();
         let owned_temp_dir = target_path.parent().unwrap().to_owned();
 
-        state.discard_temp_target().unwrap();
+        discard_temp_target_in_state(&mut state).unwrap();
 
         assert!(source.is_file());
         assert_eq!(std::fs::read(&source).unwrap(), source_before);
@@ -1683,13 +1774,206 @@ mod tests {
         load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
 
         assert!(
-            state
-                .discard_temp_target()
+            discard_temp_target_in_state(&mut state)
                 .unwrap_err()
                 .contains("not active")
         );
         assert_eq!(state.left.as_ref().unwrap().path(), source);
         assert!(source.is_file());
+    }
+
+    #[test]
+    fn temp_target_cleanup_failure_restores_left_session_and_plan() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let forbidden_target = dir.path().join("forbidden-target.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Right, Side::Left, "source.txt")
+                .unwrap();
+        }
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_before = std::fs::read(&target_path).unwrap();
+        let forbidden_target = Archive::open(forbidden_target.to_string_lossy()).unwrap();
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            let target_error = shared_state
+                .lock()
+                .unwrap()
+                .install_archive(forbidden_target, Side::Left)
+                .unwrap_err();
+            assert!(target_error.contains("temporary merge target"));
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        let state = shared_state.lock().unwrap();
+        let restored_target = state.left.as_ref().unwrap().path();
+        assert!(restored_target.is_file());
+        assert_eq!(std::fs::read(restored_target).unwrap(), target_before);
+        assert!(!state.left_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn right_source_temp_target_guards_left_target_and_right_source() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        let forbidden_target = dir.path().join("forbidden-target.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        let mut state = shared_state.lock().unwrap();
+        let target_path = state.left.as_ref().unwrap().path().to_owned();
+
+        assert!(
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap_err()
+                .contains("temporary merge source")
+        );
+        state
+            .install_archive(
+                Archive::open(replacement_source.to_string_lossy()).unwrap(),
+                Side::Right,
+            )
+            .unwrap();
+        state
+            .stage_copy(Side::Right, Side::Left, "replacement.txt")
+            .unwrap();
+        assert!(!state.left_plan.is_empty());
+        assert!(
+            state
+                .install_archive(
+                    Archive::open(forbidden_target.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap_err()
+                .contains("temporary merge target")
+        );
+        assert_eq!(state.left.as_ref().unwrap().path(), target_path);
+    }
+
+    #[test]
+    fn right_source_temp_target_rejects_atomic_compare_pair_replacement() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_left = dir.path().join("replacement-left.jar");
+        let replacement_right = dir.path().join("replacement-right.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_left, &[("left.txt", b"left")]);
+        create_zip(&replacement_right, &[("right.txt", b"right")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        let error = open_compare_sources_through_production(
+            &shared_state,
+            replacement_left.display().to_string(),
+            replacement_right.display().to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge target"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), target_path);
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+    }
+
+    #[test]
+    fn discard_left_temp_target_preserves_right_source_and_removes_owned_directory() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let source_before = std::fs::read(&source).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Right, Side::Left, "source.txt")
+                .unwrap();
+        }
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let owned_temp_dir = target_path.parent().unwrap().to_owned();
+
+        discard_temp_target(&shared_state).unwrap();
+
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        assert!(!target_path.exists());
+        assert!(!owned_temp_dir.exists());
+        let state = shared_state.lock().unwrap();
+        assert!(state.left.is_none());
+        assert!(state.left_plan.is_empty());
+        assert!(state.right.is_some());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    fn with_shared_state<R>(
+        state: &mut AppState,
+        action: impl FnOnce(&super::state::SharedState) -> R,
+    ) -> R {
+        let shared_state = Arc::new(Mutex::new(std::mem::take(state)));
+        let result = action(&shared_state);
+        let mutex = match Arc::try_unwrap(shared_state) {
+            Ok(mutex) => mutex,
+            Err(_) => panic!("production state helper retained a shared-state clone"),
+        };
+        *state = mutex.into_inner().unwrap();
+        result
+    }
+
+    fn create_temp_target_in_state(
+        state: &mut AppState,
+        source_side: Side,
+        creation: TempTargetCreation,
+    ) -> Result<super::state::TempMergeSessionSummary, String> {
+        with_shared_state(state, |shared_state| {
+            create_temp_target(shared_state, source_side, creation)
+        })
+    }
+
+    fn discard_temp_target_in_state(state: &mut AppState) -> Result<(), String> {
+        with_shared_state(state, discard_temp_target)
     }
 
     fn load_archive_through_production(

@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
+    io,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, atomic::AtomicU64},
 };
 
@@ -18,7 +19,6 @@ pub(crate) type SharedState = Arc<Mutex<AppState>>;
 
 // Command registration follows in a later task; these lifecycle contracts are
 // exercised directly by stored-state tests until then.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum TempTargetCreation {
@@ -26,7 +26,6 @@ pub(crate) enum TempTargetCreation {
     CopyCurrent,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TempMergeSessionSummary {
@@ -38,18 +37,43 @@ pub(crate) struct TempMergeSessionSummary {
     pub(crate) exported_path: Option<String>,
 }
 
-#[allow(dead_code)]
 pub(crate) struct TempMergeSession {
     id: String,
     target_side: Side,
     temp_dir: TempDir,
     working_path: PathBuf,
+    #[allow(dead_code)]
     creation: TempTargetCreation,
     applied_source_count: usize,
     exported_path: Option<PathBuf>,
 }
 
-#[allow(dead_code)]
+struct TempTargetSourceSnapshot {
+    source_side: Side,
+    source: Archive,
+}
+
+pub(crate) struct PreparedTempTarget {
+    source_snapshot: TempTargetSourceSnapshot,
+    working_archive: Archive,
+    target_nested: Arc<Mutex<NestedArchiveCache>>,
+    session: TempMergeSession,
+}
+
+struct DetachedTempTarget {
+    target_side: Side,
+    archive: Archive,
+    nested: Arc<Mutex<NestedArchiveCache>>,
+    plan: MergePlan,
+    session: TempMergeSession,
+}
+
+struct TempTargetRecovery {
+    temp_dir: TempDir,
+    working_path: PathBuf,
+    archive: Archive,
+}
+
 impl TempMergeSession {
     fn summary(&self, archive: &Archive) -> TempMergeSessionSummary {
         TempMergeSessionSummary {
@@ -79,6 +103,7 @@ pub(crate) struct AppState {
     pub(crate) left_plan: MergePlan,
     pub(crate) right_plan: MergePlan,
     pub(crate) temp_merge_session: Option<TempMergeSession>,
+    temp_merge_discarding: Option<Side>,
     pub(crate) engine: DecompileEngine,
     pub(crate) sidecar: Arc<Mutex<SidecarClient>>,
     pub(crate) prefetch_sidecar: Arc<Mutex<SidecarClient>>,
@@ -112,6 +137,7 @@ impl AppState {
             left_plan: MergePlan::new(),
             right_plan: MergePlan::new(),
             temp_merge_session: None,
+            temp_merge_discarding: None,
             engine: DEFAULT_DECOMPILE_ENGINE,
             sidecar: Arc::new(Mutex::new(sidecar)),
             prefetch_sidecar: Arc::new(Mutex::new(prefetch_sidecar)),
@@ -327,6 +353,9 @@ impl AppState {
     /// Legacy single-target lock: only one side may carry pending ops unless both
     /// sources are standalone files. Returns Err if `side` would violate it.
     fn ensure_can_stage(&self, side: Side) -> Result<(), String> {
+        if self.temp_merge_discarding.is_some() {
+            return Err("temporary merge target is being discarded".to_owned());
+        }
         if self
             .temp_merge_session
             .as_ref()
@@ -345,11 +374,12 @@ impl AppState {
     }
 
     fn ensure_replaceable_side(&self, side: Side) -> Result<(), String> {
-        if self
+        let fixed_target = self
             .temp_merge_session
             .as_ref()
-            .is_some_and(|session| session.target_side == side)
-        {
+            .map(|session| session.target_side)
+            .or(self.temp_merge_discarding);
+        if fixed_target == Some(side) {
             return Err("temporary merge target cannot be replaced".to_owned());
         }
         Ok(())
@@ -370,18 +400,19 @@ impl AppState {
         Ok(summary)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn create_temp_target(
-        &mut self,
+    fn temp_target_source_snapshot(
+        &self,
         source_side: Side,
-        creation: TempTargetCreation,
-    ) -> Result<TempMergeSessionSummary, String> {
-        if self.temp_merge_session.is_some() {
+    ) -> Result<TempTargetSourceSnapshot, String> {
+        if self.temp_merge_session.is_some() || self.temp_merge_discarding.is_some() {
             return Err("a temporary merge session is already active".to_owned());
         }
         let source = archive(self, source_side)
             .ok_or("source archive is not loaded")?
             .clone();
+        if source.metadata().source_kind != ArchiveSourceKind::Archive {
+            return Err("temporary merge source must be an archive source".to_owned());
+        }
         let target_side = source_side.opposite();
         if archive(self, target_side).is_some() {
             return Err("temporary merge target side must be empty".to_owned());
@@ -391,74 +422,79 @@ impl AppState {
                 "clear pending changes before creating a temporary merge target".to_owned(),
             );
         }
+        Ok(TempTargetSourceSnapshot {
+            source_side,
+            source,
+        })
+    }
 
-        let temp_dir = tempfile::Builder::new()
-            .prefix("lcdiff-temp-merge-")
-            .tempdir()
-            .map_err(|error| error.to_string())?;
-        let working_name = match &creation {
-            TempTargetCreation::Empty { extension } => {
-                format!("temporary-target.{extension}")
-            }
-            TempTargetCreation::CopyCurrent => source
-                .path()
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .ok_or_else(|| "source archive has no file name".to_owned())?,
-        };
-        let working_path = temp_dir.path().join(&working_name);
-        match &creation {
-            TempTargetCreation::Empty { .. } => {
-                create_empty_archive(&working_path).map_err(|error| error.to_string())?;
-            }
-            TempTargetCreation::CopyCurrent => {
-                export_archive_atomic(source.path(), &working_path)
-                    .map_err(|error| error.to_string())?;
-            }
+    fn install_prepared_temp_target(
+        &mut self,
+        prepared: PreparedTempTarget,
+    ) -> Result<TempMergeSessionSummary, String> {
+        let current = self.temp_target_source_snapshot(prepared.source_snapshot.source_side)?;
+        if !same_archive_snapshot(&current.source, &prepared.source_snapshot.source) {
+            return Err(
+                "source archive changed while temporary target was being prepared".to_owned(),
+            );
         }
-        let working_archive =
-            Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
-        let target_nested = fresh_nested_cache()?;
-        let id = temp_dir
-            .path()
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .ok_or_else(|| "temporary merge session has no identifier".to_owned())?;
-        let session = TempMergeSession {
-            id,
-            target_side,
-            temp_dir,
-            working_path: working_archive.path().to_owned(),
-            creation,
-            applied_source_count: 0,
-            exported_path: None,
-        };
-        let summary = session.summary(&working_archive);
+        let target_side = prepared.session.target_side;
+        let summary = prepared.session.summary(&prepared.working_archive);
 
-        *archive_mut(self, target_side) = Some(working_archive);
-        *nested_cache_mut(self, target_side) = target_nested;
-        self.temp_merge_session = Some(session);
+        *archive_mut(self, target_side) = Some(prepared.working_archive);
+        *nested_cache_mut(self, target_side) = prepared.target_nested;
+        self.temp_merge_session = Some(prepared.session);
         Ok(summary)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn discard_temp_target(&mut self) -> Result<(), String> {
+    fn detach_temp_target(
+        &mut self,
+        replacement_nested: Arc<Mutex<NestedArchiveCache>>,
+    ) -> Result<DetachedTempTarget, String> {
         let target_side = self
             .temp_merge_session
             .as_ref()
             .map(|session| session.target_side)
             .ok_or_else(|| "temporary merge session is not active".to_owned())?;
-        let target_nested = fresh_nested_cache()?;
+        if archive(self, target_side).is_none() {
+            return Err("temporary merge target archive is not loaded".to_owned());
+        }
 
-        self.plan_mut(target_side).clear();
-        *archive_mut(self, target_side) = None;
-        *nested_cache_mut(self, target_side) = target_nested;
         let session = self
             .temp_merge_session
             .take()
             .expect("temporary merge session checked above");
-        drop(session);
-        Ok(())
+        let archive = archive_mut(self, target_side)
+            .take()
+            .expect("temporary merge target archive checked above");
+        let nested = std::mem::replace(nested_cache_mut(self, target_side), replacement_nested);
+        let plan = std::mem::replace(self.plan_mut(target_side), MergePlan::new());
+        self.temp_merge_discarding = Some(target_side);
+        Ok(DetachedTempTarget {
+            target_side,
+            archive,
+            nested,
+            plan,
+            session,
+        })
+    }
+
+    fn restore_detached_temp_target(&mut self, detached: DetachedTempTarget) {
+        debug_assert_eq!(self.temp_merge_discarding, Some(detached.target_side));
+        debug_assert!(archive(self, detached.target_side).is_none());
+        debug_assert!(self.plan(detached.target_side).is_empty());
+        debug_assert!(self.temp_merge_session.is_none());
+
+        *archive_mut(self, detached.target_side) = Some(detached.archive);
+        *nested_cache_mut(self, detached.target_side) = detached.nested;
+        *self.plan_mut(detached.target_side) = detached.plan;
+        self.temp_merge_session = Some(detached.session);
+        self.temp_merge_discarding = None;
+    }
+
+    fn finish_temp_target_discard(&mut self, target_side: Side) {
+        debug_assert_eq!(self.temp_merge_discarding, Some(target_side));
+        self.temp_merge_discarding = None;
     }
 
     pub(crate) fn stage_copy(
@@ -555,6 +591,223 @@ impl AppState {
         }
         Err("staged entry is not found".to_owned())
     }
+}
+
+fn same_archive_snapshot(left: &Archive, right: &Archive) -> bool {
+    left.path() == right.path()
+        && left.metadata() == right.metadata()
+        && left.entries().eq(right.entries())
+}
+
+fn build_prepared_temp_target(
+    source_snapshot: TempTargetSourceSnapshot,
+    creation: TempTargetCreation,
+) -> Result<PreparedTempTarget, String> {
+    let target_side = source_snapshot.source_side.opposite();
+    let temp_dir = tempfile::Builder::new()
+        .prefix("lcdiff-temp-merge-")
+        .tempdir()
+        .map_err(|error| error.to_string())?;
+    let working_name = match &creation {
+        TempTargetCreation::Empty { extension } => {
+            format!("temporary-target.{extension}")
+        }
+        TempTargetCreation::CopyCurrent => source_snapshot
+            .source
+            .path()
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "source archive has no file name".to_owned())?,
+    };
+    let working_path = temp_dir.path().join(&working_name);
+    match &creation {
+        TempTargetCreation::Empty { .. } => {
+            create_empty_archive(&working_path).map_err(|error| error.to_string())?;
+        }
+        TempTargetCreation::CopyCurrent => {
+            export_archive_atomic(source_snapshot.source.path(), &working_path)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let working_archive =
+        Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
+    let target_nested = fresh_nested_cache()?;
+    let id = temp_dir
+        .path()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| "temporary merge session has no identifier".to_owned())?;
+    let session = TempMergeSession {
+        id,
+        target_side,
+        temp_dir,
+        working_path: working_archive.path().to_owned(),
+        creation,
+        applied_source_count: 0,
+        exported_path: None,
+    };
+    Ok(PreparedTempTarget {
+        source_snapshot,
+        working_archive,
+        target_nested,
+        session,
+    })
+}
+
+fn prepare_temp_target_with_probe(
+    shared_state: &SharedState,
+    source_side: Side,
+    creation: TempTargetCreation,
+    probe: impl FnOnce(),
+) -> Result<PreparedTempTarget, String> {
+    let source_snapshot = {
+        let state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.temp_target_source_snapshot(source_side)?
+    };
+    probe();
+    build_prepared_temp_target(source_snapshot, creation)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn prepare_temp_target(
+    shared_state: &SharedState,
+    source_side: Side,
+    creation: TempTargetCreation,
+) -> Result<PreparedTempTarget, String> {
+    prepare_temp_target_with_probe(shared_state, source_side, creation, || {})
+}
+
+#[cfg(test)]
+pub(crate) fn prepare_temp_target_with_lock_probe(
+    shared_state: &SharedState,
+    source_side: Side,
+    creation: TempTargetCreation,
+    probe: impl FnOnce(),
+) -> Result<PreparedTempTarget, String> {
+    prepare_temp_target_with_probe(shared_state, source_side, creation, probe)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn install_prepared_temp_target(
+    shared_state: &SharedState,
+    prepared: PreparedTempTarget,
+) -> Result<TempMergeSessionSummary, String> {
+    let mut state = shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?;
+    state.install_prepared_temp_target(prepared)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn create_temp_target(
+    shared_state: &SharedState,
+    source_side: Side,
+    creation: TempTargetCreation,
+) -> Result<TempMergeSessionSummary, String> {
+    let prepared = prepare_temp_target(shared_state, source_side, creation)?;
+    install_prepared_temp_target(shared_state, prepared)
+}
+
+impl DetachedTempTarget {
+    fn clear_nested_handles(&self) -> Result<(), String> {
+        self.nested
+            .lock()
+            .map_err(|_| "temporary target cache lock is poisoned".to_owned())?
+            .clear();
+        Ok(())
+    }
+
+    fn owned_temp_dir(&self) -> &Path {
+        self.session.temp_dir.path()
+    }
+
+    fn prepare_recovery(&self) -> Result<TempTargetRecovery, String> {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("lcdiff-temp-merge-recovery-")
+            .tempdir()
+            .map_err(|error| error.to_string())?;
+        let working_name = self
+            .session
+            .working_path
+            .file_name()
+            .ok_or_else(|| "temporary merge target has no working file name".to_owned())?;
+        let working_path = temp_dir.path().join(working_name);
+        export_archive_atomic(&self.session.working_path, &working_path)
+            .map_err(|error| error.to_string())?;
+        let archive =
+            Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
+        Ok(TempTargetRecovery {
+            temp_dir,
+            working_path: archive.path().to_owned(),
+            archive,
+        })
+    }
+
+    fn adopt_recovery(&mut self, recovery: TempTargetRecovery) {
+        self.archive = recovery.archive;
+        self.session.temp_dir = recovery.temp_dir;
+        self.session.working_path = recovery.working_path;
+    }
+}
+
+fn restore_discard_failure(
+    shared_state: &SharedState,
+    detached: DetachedTempTarget,
+    error: impl std::fmt::Display,
+) -> Result<(), String> {
+    let mut state = match shared_state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    state.restore_detached_temp_target(detached);
+    Err(format!("failed to discard temporary merge target: {error}"))
+}
+
+fn discard_temp_target_with(
+    shared_state: &SharedState,
+    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<(), String> {
+    let replacement_nested = fresh_nested_cache()?;
+    let mut detached = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.detach_temp_target(replacement_nested)?
+    };
+    if let Err(error) = detached.clear_nested_handles() {
+        return restore_discard_failure(shared_state, detached, error);
+    }
+    let recovery = match detached.prepare_recovery() {
+        Ok(recovery) => recovery,
+        Err(error) => return restore_discard_failure(shared_state, detached, error),
+    };
+    if let Err(error) = cleanup(detached.owned_temp_dir()) {
+        detached.adopt_recovery(recovery);
+        return restore_discard_failure(shared_state, detached, error);
+    }
+    {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.finish_temp_target_discard(detached.target_side);
+    }
+    drop(detached);
+    Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn discard_temp_target(shared_state: &SharedState) -> Result<(), String> {
+    discard_temp_target_with(shared_state, |path| std::fs::remove_dir_all(path))
+}
+
+#[cfg(test)]
+pub(crate) fn discard_temp_target_with_cleanup(
+    shared_state: &SharedState,
+    cleanup: impl FnOnce(&Path) -> io::Result<()>,
+) -> Result<(), String> {
+    discard_temp_target_with(shared_state, cleanup)
 }
 
 #[derive(Clone, Debug, Serialize)]
