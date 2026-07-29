@@ -1252,6 +1252,30 @@ export function App() {
             }
           : undefined;
 
+  const viewEditSourceId = activeViewSource?.id;
+  const viewEditEntryPath = selected?.path;
+  const viewEditModel = preview.left;
+
+  function handleViewEdit(content: string, updateBuffer: boolean) {
+    if (!viewEditSourceId || !viewEditEntryPath || !viewEditModel) return;
+    const current = mergeContextRef.current;
+    if (
+      !current ||
+      current.activeViewSource?.id !== viewEditSourceId ||
+      current.selected?.path !== viewEditEntryPath ||
+      current.preview.left !== viewEditModel
+    ) {
+      return;
+    }
+    if (updateBuffer) updateEditBuffer(content);
+    void stageEdit(
+      viewEditEntryPath,
+      content,
+      viewEditSourceId,
+      viewEditModel,
+    );
+  }
+
   const diffView = (
     <DiffView
       mode={mode}
@@ -1268,16 +1292,10 @@ export function App() {
       editable={isEditableEntry}
       editValue={editBuffer}
       onEditChange={(value) => {
-        const content = value ?? "";
-        updateEditBuffer(content);
-        if (selected && activeViewSource) {
-          void stageEdit(selected.path, content, activeViewSource.id);
-        }
+        handleViewEdit(value ?? "", true);
       }}
       onEditBlur={(content) => {
-        if (selected && activeViewSource) {
-          void stageEdit(selected.path, content, activeViewSource.id);
-        }
+        handleViewEdit(content, false);
       }}
       fileMerge={isFileMerge}
       entryCopyEnabled={mode === "compare"}

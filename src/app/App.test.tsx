@@ -35,7 +35,7 @@ let appActionHandler: ((event: { payload: { actionId: string } }) => void) | und
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
 let dragDropHandler: ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) | undefined;
 const viewRootEntries: Record<string, string[]> = {
-  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json"],
+  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json", "alpha-two.json"],
   "view:/tmp/beta.jar": ["beta.json"],
   "view:/tmp/from-finder.jar": ["finder.json"],
 };
@@ -1004,6 +1004,7 @@ describe("App file-merge wiring", () => {
     const unchangedContent = viewEditorProps.value;
 
     await browseViewSource(user);
+    await user.click(await screen.findByText("beta.json"));
     expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
     invoke.mockClear();
 
@@ -1030,7 +1031,9 @@ describe("App file-merge wiring", () => {
     const unchangedContent = viewEditorProps.value;
 
     await browseViewSource(user);
+    await user.click(await screen.findByText("beta.json"));
     expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTestId("editor")).toHaveValue("view:/tmp/beta.jar:beta.json");
     invoke.mockClear();
 
     await act(async () => {
@@ -1040,6 +1043,62 @@ describe("App file-merge wiring", () => {
 
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
     expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor")).toHaveValue("view:/tmp/beta.jar:beta.json");
+  });
+
+  it("does not stage a stale View edit callback for another entry in the active source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const staleOnChange = viewEditorProps.onChange;
+    const staleContent = viewEditorProps.value;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    expect(await screen.findByTestId("editor"))
+      .toHaveValue("view:/tmp/alpha.jar:alpha-two.json");
+    invoke.mockClear();
+
+    await act(async () => {
+      staleOnChange?.(staleContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor"))
+      .toHaveValue("view:/tmp/alpha.jar:alpha-two.json");
+  });
+
+  it("does not let a stale callback unstage legitimate work from another View entry", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    fireEvent.change(await screen.findByTestId("editor"), {
+      target: { value: "legitimate alpha edit" },
+    });
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    const staleOnChange = viewEditorProps.onChange;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    const currentContent = viewEditorProps.value;
+    expect(currentContent).toBe("view:/tmp/alpha.jar:alpha-two.json");
+    invoke.mockClear();
+
+    await act(async () => {
+      staleOnChange?.(currentContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "unstage_view_write")).toBe(false);
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
   });
 
   it("ignores stale stage_view_write failure after a newer edit succeeds", async () => {

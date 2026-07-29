@@ -227,9 +227,16 @@ export function useMergeController({
     entryPath: string,
     content: string,
     sourceId: string,
+    model: EntryPreview,
   ) => {
     const context = getContext();
-    if (context.activeViewSource?.id !== sourceId) return;
+    if (
+      context.activeViewSource?.id !== sourceId ||
+      context.selected?.path !== entryPath ||
+      context.preview.left !== model
+    ) {
+      return;
+    }
     const generation = beginStagingOperation(editStageGenerationRef);
     const key = viewStagingKey(entryPath);
     const original = context.preview.left?.content ?? "";
