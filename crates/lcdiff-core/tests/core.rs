@@ -36,6 +36,22 @@ fn exports_archive_without_mutating_source() {
 }
 
 #[test]
+fn exporting_to_same_file_or_hard_link_alias_is_a_no_op() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("source.jar");
+    create_zip(&source, &[("a.txt", b"A")]);
+    let alias = dir.path().join("source-alias.jar");
+    std::fs::hard_link(&source, &alias).unwrap();
+
+    export_archive_atomic(&source, &source).unwrap();
+    assert!(same_file::is_same_file(&source, &alias).unwrap());
+
+    export_archive_atomic(&source, &alias).unwrap();
+
+    assert!(same_file::is_same_file(&source, &alias).unwrap());
+}
+
+#[test]
 fn validates_quotes_and_opens_archive() {
     let dir = tempdir().unwrap();
     let archive_path = dir.path().join("sample.jar");

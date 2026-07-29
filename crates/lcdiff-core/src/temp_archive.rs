@@ -1,8 +1,4 @@
-use std::{
-    ffi::OsStr,
-    fs::File,
-    path::Path,
-};
+use std::{ffi::OsStr, fs::File, path::Path};
 
 use zip::ZipWriter;
 

@@ -2064,6 +2064,7 @@ name = "lcdiff-core"
 version = "0.3.11"
 dependencies = [
  "crc32fast",
+ "same-file",
  "serde",
  "serde_json",
  "tempfile",
