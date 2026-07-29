@@ -94,6 +94,8 @@ function emptyWorkspaceProjection(): WorkspaceProjectionState {
   return { selected, preview, activeTab, editBuffer, viewMode };
 }
 
+const inertWorkspaceProjection = emptyWorkspaceProjection();
+
 function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
   return {
     path: tab.entryPath,
@@ -229,7 +231,12 @@ export function useWorkspaceController({
     () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
     [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
   );
-  const activeProjection = mode === "single" ? viewProjection : compareWorkspace;
+  const activeProjection =
+    mode === "single"
+      ? viewProjection
+      : mode === "compare"
+        ? compareWorkspace
+        : inertWorkspaceProjection;
   const {
     selected,
     preview,
@@ -237,10 +244,11 @@ export function useWorkspaceController({
     editBuffer,
     viewMode,
   } = activeProjection;
-  const openTabs = compareWorkspace.openTabs;
+  const openTabs = mode === "compare" ? compareWorkspace.openTabs : [];
 
   const updateActiveProjection = useCallback(
     (update: (current: WorkspaceProjectionState) => WorkspaceProjectionState) => {
+      if (mode === "text") return;
       if (mode === "single") {
         setViewProjection(update);
         return;

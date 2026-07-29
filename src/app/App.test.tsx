@@ -906,6 +906,65 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByText("late Compare preview")).not.toBeInTheDocument();
   });
 
+  it("ignores a pending Compare preview after switching to View", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("View");
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview",
+      });
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview")).not.toBeInTheDocument();
+  });
+
+  it("keeps retained Compare sources inert while Free text is active", async () => {
+    summarySourceKind = "archive";
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    const refresh = screen.getByRole("button", { name: "Refresh sources" });
+    expect(refresh).toBeDisabled();
+    invoke.mockClear();
+
+    fireEvent.keyDown(window, { key: "r", ...cmdOrCtrl() });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "compute_diff")).toBe(false);
+  });
+
+  it("keeps Free text tab shortcuts inert without closing retained Compare tabs", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "w", ...cmdOrCtrl() });
+    await switchMode("Compare");
+
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
+  });
+
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -2129,6 +2188,61 @@ describe("App file-merge wiring", () => {
       .toHaveAttribute("aria-pressed", "true");
   });
 
+  it("ignores pending Compare disassembly after switching to View", async () => {
+    let resolveLeftBytecode: ((content: string) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "App.class",
+              status: "different" as const,
+              left: { path: "App.class", kind: "class" as const },
+              right: { path: "App.class", kind: "class" as const },
+            },
+          ],
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "App.class") {
+        return Promise.resolve({
+          path: "App.class",
+          kind: "class" as const,
+          language: "java",
+          content: `${args?.side}: source`,
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftBytecode = resolve;
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "right") {
+        return Promise.resolve("right: bytecode");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    const classCells = await screen.findAllByText("App.class");
+    await user.click(classCells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Show bytecode" }));
+    await waitFor(() => expect(resolveLeftBytecode).toBeDefined());
+
+    await switchMode("View");
+    await act(async () => {
+      resolveLeftBytecode?.("left: late bytecode");
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.getByRole("button", { name: "Show source" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("left: source");
+    expect(screen.queryByText("left: late bytecode")).not.toBeInTheDocument();
+  });
+
   it("shows the content line filter only on an active Compare diff tab", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
@@ -2178,7 +2292,7 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
   });
 
-  it("clears stale Compare tabs when switching to View mode", async () => {
+  it("hides retained Compare tabs while View is active", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
 
@@ -2188,6 +2302,10 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
   });
 
   it("wires diff navigator state from Monaco line changes and reveals the next block", async () => {

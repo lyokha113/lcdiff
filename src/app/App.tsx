@@ -854,6 +854,7 @@ export function App() {
   }
 
   function refreshSources() {
+    if (mode === "text") return;
     if (mode === "single") {
       if (activeViewSource) void openViewPath(activeViewSource.path);
       return;
@@ -934,6 +935,9 @@ export function App() {
     if (next !== mode && stagedTarget) {
       setMessage(`Save or clear unsaved changes before switching to ${next === "single" ? "View" : "Compare"} mode.`);
       return;
+    }
+    if (mode === "compare" && next !== "compare") {
+      resetWorkspace({ preserveState: true });
     }
     modeRef.current = next;
     viewRequestGenerationRef.current += 1;
@@ -1164,9 +1168,12 @@ export function App() {
   const sourceChipArchives = mode === "single"
     ? { left: summaryAsArchive(activeViewSource) }
     : archives;
-  const loadedSourceCount = mode === "single"
-    ? viewWorkspace.sources.length
-    : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
+  const loadedSourceCount =
+    mode === "text"
+      ? 0
+      : mode === "single"
+        ? viewWorkspace.sources.length
+        : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
   const actionOpenTabs = mode === "single"
     ? (activeViewSource?.entryTabs ?? []).map((tab) => tab.entryPath)
     : openTabs.map((tab) => tab.path);
@@ -1435,10 +1442,12 @@ export function App() {
         pendingOps={merge.pendingOps}
         onUnstageOne={(entryPath) => void unstage(entryPath)}
         canRefresh={Boolean(
-          mode === "single"
-            ? activeViewSource
-            : (archives.left && archives.left.metadata.sourceKind !== "text") ||
-              (archives.right && archives.right.metadata.sourceKind !== "text"),
+          mode !== "text" && (
+            mode === "single"
+              ? activeViewSource
+              : (archives.left && archives.left.metadata.sourceKind !== "text") ||
+                (archives.right && archives.right.metadata.sourceKind !== "text")
+          ),
         )}
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
