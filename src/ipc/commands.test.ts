@@ -24,11 +24,13 @@ import {
   listSystemFonts,
   listViewSources,
   openArchive,
+  openCompareSources,
   openViewSource,
   pendingOpenPaths,
   platformHints,
   prefetchSiblings,
   readEntry,
+  readTextFile,
   readViewEntry,
   search,
   searchViewSource,
@@ -45,6 +47,7 @@ import type {
   ArchiveEntry,
   ArchiveSourceKind,
   CommitResult,
+  CompareSourcesResult,
   DeepSearchMatch,
   EntryPreview,
   OsOpenPathsPayload,
@@ -52,6 +55,7 @@ import type {
   PlatformHints,
   SearchHit,
   SearchProgress,
+  TextFileContent,
   ViewSourceSummary,
 } from "@/ipc/types";
 
@@ -80,6 +84,11 @@ describe("typed IPC command facade", () => {
       call: () => openArchive("/tmp/a.jar", "left"),
       args: { path: "/tmp/a.jar", side: "left" },
     },
+    {
+      name: "open_compare_sources",
+      call: () => openCompareSources("/tmp/left.jar", "/tmp/right.jar"),
+      args: { leftPath: "/tmp/left.jar", rightPath: "/tmp/right.jar" },
+    },
     { name: "compute_diff", call: () => computeDiff() },
     {
       name: "compute_nested_diff",
@@ -96,6 +105,11 @@ describe("typed IPC command facade", () => {
       name: "read_entry",
       call: () => readEntry("right", "pkg/Main.class"),
       args: { side: "right", entryPath: "pkg/Main.class" },
+    },
+    {
+      name: "read_text_file",
+      call: () => readTextFile("/tmp/notes.txt"),
+      args: { path: "/tmp/notes.txt" },
     },
     {
       name: "read_view_entry",
@@ -254,8 +268,48 @@ describe("wire DTO declarations", () => {
     };
     const paths: OsOpenPathsPayload = { paths: ["/tmp/a.jar"] };
     const action: AppActionPayload = { actionId: "open-left-file" };
+    const textFile: TextFileContent = {
+      path: "/tmp/notes.txt",
+      content: "hello",
+    };
+    const compareSources: CompareSourcesResult = {
+      left: {
+        path: "/tmp/left.jar",
+        metadata: {
+          sourceKind: "archive",
+          signed: false,
+          multiRelease: false,
+          zip64: false,
+        },
+        entries: [],
+      },
+      right: {
+        path: "/tmp/right.jar",
+        metadata: {
+          sourceKind: "archive",
+          signed: false,
+          multiRelease: false,
+          zip64: false,
+        },
+        entries: [],
+      },
+      diff: { pairs: [] },
+    };
 
-    expect({ entry, viewSource, hints, preview, commit, hit, progress, match, paths, action }).toBeDefined();
+    expect({
+      entry,
+      viewSource,
+      hints,
+      preview,
+      commit,
+      hit,
+      progress,
+      match,
+      paths,
+      action,
+      textFile,
+      compareSources,
+    }).toBeDefined();
     expectTypeOf<ArchiveSourceKind>().toEqualTypeOf<"archive" | "directory" | "file">();
     expectTypeOf<PairStatus>().toEqualTypeOf<"onlyLeft" | "onlyRight" | "identical" | "different">();
     expectTypeOf<EntryPreview["details"]>().toEqualTypeOf<string | null>();

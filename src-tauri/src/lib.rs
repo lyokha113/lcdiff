@@ -22,14 +22,15 @@ use commands::{
     cancel_deep_search, clear_staged, close_view_source, commit_merge, commit_view, compute_diff,
     compute_nested_diff, compute_view_nested_entries, deep_search, deep_search_view_source,
     disassemble, disassemble_view_entry, list_system_fonts, list_view_sources, open_archive,
-    open_view_source, pending_open_paths, platform_hints, prefetch_siblings, read_entry,
-    read_view_entry, search, search_view_source, set_engine, stage_copy, stage_view_write,
-    stage_write, unstage, unstage_view_write, validate_path,
+    open_compare_sources, open_view_source, pending_open_paths, platform_hints, prefetch_siblings,
+    read_entry, read_text_file, read_view_entry, search, search_view_source, set_engine,
+    stage_copy, stage_view_write, stage_write, unstage, unstage_view_write, validate_path,
 };
 #[cfg(test)]
 use commands::{
     class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
-    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview, search_archive,
+    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview,
+    read_text_file_from_path, search_archive,
 };
 use menu::{
     handle_menu_event, handle_run_event, install_app_menu, open_paths_from_args, path_strings,
@@ -160,11 +161,13 @@ pub fn run() {
             platform_hints,
             list_system_fonts,
             open_archive,
+            open_compare_sources,
             compute_diff,
             compute_nested_diff,
             open_view_source,
             list_view_sources,
             read_entry,
+            read_text_file,
             read_view_entry,
             compute_view_nested_entries,
             close_view_source,
@@ -205,7 +208,9 @@ mod tests {
     use tempfile::tempdir;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
-    use super::archive_access::{open_archive_from_path, open_view_archive_from_path};
+    use super::archive_access::{
+        open_archive_from_path, open_compare_archives_from_paths, open_view_archive_from_path,
+    };
     use super::events::AppActionPayload;
     use super::menu::{MENU_ACTIONS, close_window_placement, store_and_emit_open_paths};
     #[cfg(not(target_os = "macos"))]
@@ -215,8 +220,8 @@ mod tests {
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
         class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
         language_for_path, one_sided_diff, platform_hints_from, read_entry_preview,
-        resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
-        search_archive, side_snapshot, validate_path,
+        read_text_file_from_path, resolve_optional_side_nested_archive, resolve_view_entry,
+        resolve_view_nested_archive, search_archive, side_snapshot, validate_path,
     };
     use lcdiff_core::{Archive, ArchiveSourceKind, DecompileEngine};
     #[cfg(not(target_os = "macos"))]
@@ -1405,6 +1410,121 @@ mod tests {
     ) -> Result<super::state::ArchiveSummary, String> {
         let archive = tauri::async_runtime::block_on(open_archive_from_path(path.to_owned()))?;
         state.install_archive(archive, side)
+    }
+
+    fn open_compare_sources_through_production(
+        state: &mut AppState,
+        left_path: String,
+        right_path: String,
+    ) -> Result<
+        (
+            super::state::ArchiveSummary,
+            super::state::ArchiveSummary,
+            lcdiff_core::ArchiveDiff,
+        ),
+        String,
+    > {
+        let (left, right, diff) = tauri::async_runtime::block_on(
+            open_compare_archives_from_paths(left_path, right_path),
+        )?;
+        let (left_summary, right_summary) = state.install_compare_archives(left, right)?;
+        Ok((left_summary, right_summary, diff))
+    }
+
+    fn read_text_file_through_production(
+        path: String,
+    ) -> Result<super::state::TextFileContent, String> {
+        tauri::async_runtime::block_on(read_text_file_from_path(path))
+    }
+
+    #[test]
+    fn read_text_file_returns_canonical_path_and_valid_utf8_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "hello \u{1f30d}\n").unwrap();
+
+        let content = read_text_file_through_production(path.display().to_string()).unwrap();
+
+        assert_eq!(
+            content.path,
+            std::fs::canonicalize(&path).unwrap().display().to_string()
+        );
+        assert_eq!(content.content, "hello \u{1f30d}\n");
+    }
+
+    #[test]
+    fn read_text_file_rejects_nul_binary_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("binary.txt");
+        std::fs::write(&path, b"before\0after").unwrap();
+
+        assert_eq!(
+            read_text_file_through_production(path.display().to_string()).unwrap_err(),
+            "file is not valid UTF-8 text"
+        );
+    }
+
+    #[test]
+    fn read_text_file_rejects_invalid_utf8_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("invalid.txt");
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+
+        assert_eq!(
+            read_text_file_through_production(path.display().to_string()).unwrap_err(),
+            "file is not valid UTF-8 text"
+        );
+    }
+
+    #[test]
+    fn read_text_file_rejects_directories() {
+        let dir = tempdir().unwrap();
+
+        let error =
+            read_text_file_through_production(dir.path().display().to_string()).unwrap_err();
+
+        assert!(error.contains("regular file"), "{error}");
+    }
+
+    #[test]
+    fn compare_pair_install_is_atomic_when_right_open_fails() {
+        let dir = tempdir().unwrap();
+        let old_left = dir.path().join("old-left.jar");
+        let old_right = dir.path().join("old-right.jar");
+        let candidate_left = dir.path().join("candidate-left.jar");
+        create_zip(&old_left, &[("old-left.txt", b"left")]);
+        create_zip(&old_right, &[("old-right.txt", b"right")]);
+        create_zip(&candidate_left, &[("new-left.txt", b"new")]);
+
+        let mut state = AppState::new(None);
+        load_archive_through_production(&mut state, old_left.to_str().unwrap(), Side::Left)
+            .unwrap();
+        load_archive_through_production(&mut state, old_right.to_str().unwrap(), Side::Right)
+            .unwrap();
+        let before_left = state.left.as_ref().map(|archive| archive.path().to_owned());
+        let before_right = state
+            .right
+            .as_ref()
+            .map(|archive| archive.path().to_owned());
+
+        let result = open_compare_sources_through_production(
+            &mut state,
+            candidate_left.display().to_string(),
+            dir.path().join("missing-right.jar").display().to_string(),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(
+            state.left.as_ref().map(|archive| archive.path().to_owned()),
+            before_left
+        );
+        assert_eq!(
+            state
+                .right
+                .as_ref()
+                .map(|archive| archive.path().to_owned()),
+            before_right
+        );
     }
 
     fn open_view_source_through_production(

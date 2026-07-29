@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use lcdiff_core::{
-    ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitResult, EntryKind, PairStatus,
+    ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitResult, EntryKind,
+    PairStatus,
 };
 use serde_json::{json, to_value};
 
@@ -11,20 +12,22 @@ use super::{
         APP_ACTION, AppActionPayload, DeepSearchMatch, OS_OPEN_PATHS, OsOpenPathsPayload,
         SEARCH_PROGRESS, SEARCH_RESULT, SearchProgress,
     },
-    state::{ArchiveSummary, ViewSourceSummary},
+    state::{ArchiveSummary, CompareSourcesResult, TextFileContent, ViewSourceSummary},
     system_fonts::SystemFont,
 };
 
-const COMMAND_NAMES: [&str; 30] = [
+const COMMAND_NAMES: [&str; 32] = [
     "validate_path",
     "platform_hints",
     "list_system_fonts",
     "open_archive",
+    "open_compare_sources",
     "compute_diff",
     "compute_nested_diff",
     "open_view_source",
     "list_view_sources",
     "read_entry",
+    "read_text_file",
     "read_view_entry",
     "compute_view_nested_entries",
     "close_view_source",
@@ -71,16 +74,18 @@ const COMMAND_SOURCES: [&str; 5] = [
 const EVENTS_SOURCE: &str = include_str!("events.rs");
 const MENU_SOURCE: &str = include_str!("menu.rs");
 
-const COMMAND_SIGNATURE_NAMES: [&str; 30] = [
+const COMMAND_SIGNATURE_NAMES: [&str; 32] = [
     "validate_path",
     "platform_hints",
     "pending_open_paths",
     "open_archive",
+    "open_compare_sources",
     "compute_diff",
     "compute_nested_diff",
     "open_view_source",
     "list_view_sources",
     "read_entry",
+    "read_text_file",
     "read_view_entry",
     "compute_view_nested_entries",
     "close_view_source",
@@ -104,16 +109,18 @@ const COMMAND_SIGNATURE_NAMES: [&str; 30] = [
     "list_system_fonts",
 ];
 
-const COMMAND_SIGNATURES: [&str; 30] = [
+const COMMAND_SIGNATURES: [&str; 32] = [
     "fnvalidate_path(raw:String)->Result<String,String>",
     "fnplatform_hints()->PlatformHints",
     "fnpending_open_paths(state:State<'_,SharedState>)->Result<Vec<String>,String>",
     "asyncfnopen_archive(path:String,side:Side,state:State<'_,SharedState>,)->Result<ArchiveSummary,String>",
+    "asyncfnopen_compare_sources(left_path:String,right_path:String,state:State<'_,SharedState>,)->Result<CompareSourcesResult,String>",
     "asyncfncompute_diff(state:State<'_,SharedState>)->Result<ArchiveDiff,String>",
     "asyncfncompute_nested_diff(nested_path:String,state:State<'_,SharedState>,)->Result<ArchiveDiff,String>",
     "asyncfnopen_view_source(path:String,state:State<'_,SharedState>,)->Result<ViewSourceSummary,String>",
     "fnlist_view_sources(state:State<'_,SharedState>,)->Result<Vec<ViewSourceSummary>,String>",
     "asyncfnread_entry(side:Side,entry_path:String,state:State<'_,SharedState>,)->Result<EntryPreview,String>",
+    "asyncfnread_text_file(path:String)->Result<TextFileContent,String>",
     "asyncfnread_view_entry(source_id:String,entry_path:String,state:State<'_,SharedState>,)->Result<EntryPreview,String>",
     "asyncfncompute_view_nested_entries(source_id:String,nested_path:String,state:State<'_,SharedState>,)->Result<ArchiveDiff,String>",
     "fnclose_view_source(source_id:String,state:State<'_,SharedState>,)->Result<(),String>",
@@ -385,6 +392,62 @@ fn serializes_summary_and_preview_dtos_with_required_nulls() {
             "language": "java",
             "details": null,
             "content": "class Main {}",
+        }),
+    );
+}
+
+#[test]
+fn serializes_text_file_and_compare_source_dtos_with_exact_keys() {
+    assert_eq!(
+        to_value(TextFileContent {
+            path: "/tmp/notes.txt".to_owned(),
+            content: "hello".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "path": "/tmp/notes.txt",
+            "content": "hello",
+        }),
+    );
+    assert_eq!(
+        to_value(CompareSourcesResult {
+            left: ArchiveSummary {
+                path: "left.jar".to_owned(),
+                metadata: metadata(),
+                entries: Vec::new(),
+            },
+            right: ArchiveSummary {
+                path: "right.jar".to_owned(),
+                metadata: metadata(),
+                entries: Vec::new(),
+            },
+            diff: ArchiveDiff { pairs: Vec::new() },
+        })
+        .unwrap(),
+        json!({
+            "left": {
+                "path": "left.jar",
+                "metadata": {
+                    "sourceKind": "archive",
+                    "signed": true,
+                    "multiRelease": false,
+                    "zip64": true,
+                },
+                "entries": [],
+            },
+            "right": {
+                "path": "right.jar",
+                "metadata": {
+                    "sourceKind": "archive",
+                    "signed": true,
+                    "multiRelease": false,
+                    "zip64": true,
+                },
+                "entries": [],
+            },
+            "diff": {
+                "pairs": [],
+            },
         }),
     );
 }

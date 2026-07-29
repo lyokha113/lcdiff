@@ -8,8 +8,39 @@ use crate::{
     EntryPreview, Side,
     archive_access::{resolve_side_entry, resolve_view_entry},
     sidecar_process::SidecarClient,
-    state::{SharedState, side_snapshot},
+    state::{SharedState, TextFileContent, side_snapshot},
 };
+
+pub(crate) async fn read_text_file_from_path(path: String) -> Result<TextFileContent, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let canonical = std::fs::canonicalize(&path)
+            .map_err(|error| format!("failed to canonicalize text file path {path}: {error}"))?;
+        if !canonical.is_file() {
+            return Err(format!(
+                "text file path is not a regular file: {}",
+                canonical.display()
+            ));
+        }
+        let bytes = std::fs::read(&canonical).map_err(|error| {
+            format!("failed to read text file {}: {error}", canonical.display())
+        })?;
+        if bytes.contains(&0) {
+            return Err("file is not valid UTF-8 text".to_owned());
+        }
+        Ok(TextFileContent {
+            path: canonical.display().to_string(),
+            content: String::from_utf8(bytes)
+                .map_err(|_| "file is not valid UTF-8 text".to_owned())?,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn read_text_file(path: String) -> Result<TextFileContent, String> {
+    read_text_file_from_path(path).await
+}
 
 #[tauri::command]
 pub(crate) async fn read_entry(

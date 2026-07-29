@@ -1,10 +1,26 @@
-use lcdiff_core::{Archive, Error as CoreError, validate_path as validate_archive_path};
+use lcdiff_core::{
+    Archive, ArchiveDiff, Error as CoreError, compare, validate_path as validate_archive_path,
+};
 
 use crate::state::{SideSnapshot, ViewSourceSnapshot};
 
 pub(crate) async fn open_archive_from_path(path: String) -> Result<Archive, String> {
     tauri::async_runtime::spawn_blocking(move || {
         Archive::open(path).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn open_compare_archives_from_paths(
+    left_path: String,
+    right_path: String,
+) -> Result<(Archive, Archive, ArchiveDiff), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let left = Archive::open(left_path).map_err(|error| error.to_string())?;
+        let right = Archive::open(right_path).map_err(|error| error.to_string())?;
+        let diff = compare(&left, &right);
+        Ok((left, right, diff))
     })
     .await
     .map_err(|error| error.to_string())?

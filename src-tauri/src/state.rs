@@ -293,6 +293,25 @@ impl AppState {
         Ok(summary)
     }
 
+    pub(crate) fn install_compare_archives(
+        &mut self,
+        left: Archive,
+        right: Archive,
+    ) -> Result<(ArchiveSummary, ArchiveSummary), String> {
+        if self.any_pending() {
+            return Err("save staged copies before changing an archive".to_owned());
+        }
+        let left_summary = summarize(&left);
+        let right_summary = summarize(&right);
+        let left_nested = fresh_nested_cache()?;
+        let right_nested = fresh_nested_cache()?;
+        self.left = Some(left);
+        self.right = Some(right);
+        self.left_nested = left_nested;
+        self.right_nested = right_nested;
+        Ok((left_summary, right_summary))
+    }
+
     pub(crate) fn stage_copy(
         &mut self,
         from: Side,
@@ -389,12 +408,27 @@ impl AppState {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ArchiveSummary {
     pub(crate) path: String,
     pub(crate) metadata: ArchiveMetadata,
     pub(crate) entries: Vec<ArchiveEntry>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TextFileContent {
+    pub(crate) path: String,
+    pub(crate) content: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CompareSourcesResult {
+    pub(crate) left: ArchiveSummary,
+    pub(crate) right: ArchiveSummary,
+    pub(crate) diff: lcdiff_core::ArchiveDiff,
 }
 
 #[derive(Clone, Serialize)]

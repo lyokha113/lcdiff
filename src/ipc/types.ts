@@ -37,6 +37,17 @@ export interface ArchiveDiff {
   pairs: ComparePair[];
 }
 
+export interface TextFileContent {
+  path: string;
+  content: string;
+}
+
+export interface CompareSourcesResult {
+  left: ArchiveSummary;
+  right: ArchiveSummary;
+  diff: ArchiveDiff;
+}
+
 export interface ViewSourceSummary {
   id: string;
   path: string;

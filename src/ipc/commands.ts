@@ -3,6 +3,7 @@ import type {
   ArchiveDiff,
   ArchiveSummary,
   CommitResult,
+  CompareSourcesResult,
   Engine,
   EntryPreview,
   PlatformHints,
@@ -10,6 +11,7 @@ import type {
   SearchOptions,
   Side,
   SystemFont,
+  TextFileContent,
   ViewSourceSummary,
 } from "@/ipc/types";
 
@@ -27,6 +29,13 @@ export function listSystemFonts(): Promise<SystemFont[]> {
 
 export function openArchive(path: string, side: Side): Promise<ArchiveSummary> {
   return invoke("open_archive", { path, side });
+}
+
+export function openCompareSources(
+  leftPath: string,
+  rightPath: string,
+): Promise<CompareSourcesResult> {
+  return invoke("open_compare_sources", { leftPath, rightPath });
 }
 
 export function computeDiff(): Promise<ArchiveDiff> {
@@ -47,6 +56,10 @@ export function listViewSources(): Promise<ViewSourceSummary[]> {
 
 export function readEntry(side: Side, entryPath: string): Promise<EntryPreview> {
   return invoke("read_entry", { side, entryPath });
+}
+
+export function readTextFile(path: string): Promise<TextFileContent> {
+  return invoke("read_text_file", { path });
 }
 
 export function readViewEntry(sourceId: string, entryPath: string): Promise<EntryPreview> {
