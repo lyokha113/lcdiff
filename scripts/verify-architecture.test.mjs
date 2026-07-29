@@ -318,6 +318,103 @@ test('rejects command submodule dependencies through commands root reexports', (
   }
 });
 
+test('rejects command submodule dependencies through transitive commands root aliases', () => {
+  const transitiveRootAliases = [
+    `
+      use crate::commands as workflows;
+      use workflows as forwarding;
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use crate::{commands as workflows};
+      use workflows::{self as forwarding};
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use super as workflows;
+      use workflows as forwarding;
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use super::super::commands as workflows;
+      use workflows as forwarding;
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use crate::commands as workflows;
+      use workflows as forwarding;
+      use forwarding as final_root;
+      fn call() { final_root::open_archive(); }
+    `,
+    `
+      use crate::commands as workflows;
+      use {workflows as forwarding};
+      use forwarding::{open_archive as load_archive};
+    `,
+    `
+      use crate::commands as workflows;
+      use self::workflows as forwarding;
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use crate::commands as workflows;
+      use self::{workflows as forwarding};
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use crate::commands as workflows;
+      mod nested {
+        use super::workflows::{self as forwarding};
+        fn call() { forwarding::open_archive(); }
+      }
+    `,
+    `
+      pub(crate) use crate::commands as workflows;
+      pub(super) use workflows as forwarding;
+      fn call() { forwarding::open_archive(); }
+    `,
+    `
+      use crate::commands as workflows;
+      use workflows as forwarding;
+      use forwarding::*;
+    `,
+  ];
+
+  for (const dependency of transitiveRootAliases) {
+    const sources = structuredClone(cleanPhaseTwoSources);
+    sources.commandSources['src-tauri/src/commands/preview.rs'] = [
+      '#[tauri::command]\nfn read_entry() {}\n',
+      dependency,
+    ].join('');
+    delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+    assert.deepEqual(
+      verifyPhaseTwoArchitecture(sources),
+      [
+        'src-tauri/src/commands/preview.rs must not depend on sibling command submodules',
+      ],
+      dependency,
+    );
+  }
+});
+
+test('allows neutral transitive aliases and ignores command alias text', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  sources.commandSources['src-tauri/src/commands/preview.rs'] = `
+    use crate::commands as workflows;
+    use crate::archive_access as access;
+    use access as forwarding;
+    // use workflows as forwarding;
+    /* use forwarding as final_root; */
+    const NOTE: &str = "forwarding::open_archive";
+    fn call() { forwarding::resolve_view_entry(); }
+    #[tauri::command]
+    fn read_entry() {}
+  `;
+  delete sources.commandSources['src-tauri/src/commands/read_entry.rs'];
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), []);
+});
+
 test('allows command submodules to use neutral backend services', () => {
   const sources = structuredClone(cleanPhaseTwoSources);
   sources.commandSources['src-tauri/src/commands/preview.rs'] = `
@@ -367,6 +464,7 @@ test('rejects direct, qualified, aliased, and glob command dependencies from arc
     'use super::commands::open_archive;\n',
     'use super::commands as workflows;\nfn call() { workflows::open_archive(); }\n',
     'use crate::commands::*;\n',
+    'use crate::commands as workflows;\nuse workflows as forwarding;\nfn call() { forwarding::open_archive(); }\n',
   ];
 
   for (const dependency of reverseDependencies) {

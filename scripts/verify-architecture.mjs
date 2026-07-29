@@ -294,6 +294,67 @@ function commandModuleName(sourcePath) {
   return sourcePath.match(/^src-tauri\/src\/commands\/([^/]+)\.rs$/)?.[1];
 }
 
+function aliasesFromRustUseRoot(useTree, rootAlias) {
+  const items =
+    useTree.startsWith('{') && useTree.endsWith('}')
+      ? topLevelUseItems(useTree.slice(1, -1))
+      : [useTree];
+  return items.flatMap((item) => {
+    const qualifiedRoot = `(?:(?:self|super(?:::super)*)::)?${rootAlias}`;
+    const directAlias = item.match(
+      new RegExp(`^${qualifiedRoot}as([A-Za-z_][A-Za-z0-9_]*)$`),
+    );
+    if (directAlias) {
+      return [directAlias[1]];
+    }
+
+    const groupedRoot = item.match(
+      new RegExp(`^${qualifiedRoot}::\\{([\\s\\S]*)\\}$`),
+    );
+    if (groupedRoot) {
+      return topLevelUseItems(groupedRoot[1]).flatMap((member) => {
+        const selfAlias = member.match(
+          /^selfas([A-Za-z_][A-Za-z0-9_]*)$/,
+        );
+        return selfAlias ? [selfAlias[1]] : [];
+      });
+    }
+
+    const qualifiedGroup = item.match(
+      /^(?:self|super(?:::super)*)::\{([\s\S]*)\}$/,
+    );
+    return qualifiedGroup
+      ? aliasesFromRustUseRoot(qualifiedGroup[1], rootAlias)
+      : [];
+  });
+}
+
+function propagatedRustUseAliases(code, rootAliases) {
+  const aliases = new Set(rootAliases);
+  const useTrees = [...code.matchAll(/\buse([\s\S]*?);/g)].map(
+    (match) => match[1],
+  );
+
+  for (let iteration = 0; iteration < useTrees.length; iteration += 1) {
+    let changed = false;
+    for (const useTree of useTrees) {
+      for (const rootAlias of [...aliases]) {
+        for (const alias of aliasesFromRustUseRoot(useTree, rootAlias)) {
+          if (!aliases.has(alias)) {
+            aliases.add(alias);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (!changed) {
+      break;
+    }
+  }
+
+  return [...aliases];
+}
+
 function dependsOnSiblingCommandModule(sourcePath, source, commandOwners) {
   const owner = commandModuleName(sourcePath);
   if (!owner || owner === 'mod') {
@@ -309,7 +370,7 @@ function dependsOnSiblingCommandModule(sourcePath, source, commandOwners) {
     .map(([commandName]) => commandName);
   const commandParent = '(?:crate|super(?:::super)+)';
   const commandRoot = `${commandParent}::commands`;
-  const commandRootAliases = [
+  const directCommandRootAliases = [
     new RegExp(
       `\\buse(?:${commandRoot}|super)as([A-Za-z_][A-Za-z0-9_]*);`,
       'g',
@@ -324,6 +385,10 @@ function dependsOnSiblingCommandModule(sourcePath, source, commandOwners) {
     ),
     /\busesuper::\{[^;]*selfas([A-Za-z_][A-Za-z0-9_]*)[^;]*};/g,
   ].flatMap((pattern) => [...code.matchAll(pattern)].map((match) => match[1]));
+  const commandRootAliases = propagatedRustUseAliases(
+    code,
+    directCommandRootAliases,
+  );
 
   const dependsOnSibling = [...siblings, ...siblingCommands].some(
     (dependency) => {
