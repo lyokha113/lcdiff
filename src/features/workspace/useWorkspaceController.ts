@@ -24,6 +24,11 @@ import {
   focusViewEntryTab,
   upsertViewEntryTab,
 } from "@/features/sources/view-workspace";
+import {
+  emptyCompareWorkspace,
+  focusCompareWorkspaceTab,
+  type CompareWorkspaceState,
+} from "./compare-workspace";
 import { pairHasClass } from "./DiffView";
 import type {
   CodeEditor,
@@ -77,6 +82,16 @@ export interface WorkspaceControllerOptions {
   currentViewRequestGeneration(): number;
   onMessage(message: string): void;
   fontRemeasureKey: string;
+}
+
+type WorkspaceProjectionState = Pick<
+  CompareWorkspaceState,
+  "selected" | "preview" | "activeTab" | "editBuffer" | "viewMode"
+>;
+
+function emptyWorkspaceProjection(): WorkspaceProjectionState {
+  const { selected, preview, activeTab, editBuffer, viewMode } = emptyCompareWorkspace();
+  return { selected, preview, activeTab, editBuffer, viewMode };
 }
 
 function viewPairFromPreview(tab: ViewEntryTab): ComparePair {
@@ -189,13 +204,9 @@ export function useWorkspaceController({
   onMessage,
   fontRemeasureKey,
 }: WorkspaceControllerOptions) {
-  const [selected, setSelected] = useState<ComparePair>();
-  const [preview, setPreview] = useState<Partial<Record<Side, EntryPreview>>>({});
+  const [compareWorkspace, setCompareWorkspace] = useState(emptyCompareWorkspace);
+  const [viewProjection, setViewProjection] = useState(emptyWorkspaceProjection);
   const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("source");
-  const [editBuffer, setEditBuffer] = useState("");
-  const [activeTab, setActiveTab] = useState<"files" | string>("files");
-  const [openTabs, setOpenTabs] = useState<DiffTab[]>([]);
   const [diffNavigatorState, setDiffNavigatorState] = useState<DiffNavigatorState>({
     currentIndex: -1,
     total: 0,
@@ -218,6 +229,73 @@ export function useWorkspaceController({
     () => activeViewSource?.entryTabs.find((tab) => tab.entryPath === viewWorkspace.activeEntryPath),
     [activeViewSource?.entryTabs, viewWorkspace.activeEntryPath],
   );
+  const activeProjection = mode === "single" ? viewProjection : compareWorkspace;
+  const {
+    selected,
+    preview,
+    activeTab,
+    editBuffer,
+    viewMode,
+  } = activeProjection;
+  const openTabs = compareWorkspace.openTabs;
+
+  const updateActiveProjection = useCallback(
+    (update: (current: WorkspaceProjectionState) => WorkspaceProjectionState) => {
+      if (mode === "single") {
+        setViewProjection(update);
+        return;
+      }
+      setCompareWorkspace((current) => ({
+        ...current,
+        ...update(current),
+      }));
+    },
+    [mode],
+  );
+
+  const setSelected = useCallback((next: SetStateAction<ComparePair | undefined>) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      selected: typeof next === "function" ? next(current.selected) : next,
+    }));
+  }, [updateActiveProjection]);
+
+  const setPreview = useCallback((
+    next: SetStateAction<Partial<Record<Side, EntryPreview>>>,
+  ) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      preview: typeof next === "function" ? next(current.preview) : next,
+    }));
+  }, [updateActiveProjection]);
+
+  const setActiveTab = useCallback((next: SetStateAction<"files" | string>) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      activeTab: typeof next === "function" ? next(current.activeTab) : next,
+    }));
+  }, [updateActiveProjection]);
+
+  const setEditBuffer = useCallback((next: SetStateAction<string>) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      editBuffer: typeof next === "function" ? next(current.editBuffer) : next,
+    }));
+  }, [updateActiveProjection]);
+
+  const setViewMode = useCallback((next: SetStateAction<ViewMode>) => {
+    updateActiveProjection((current) => ({
+      ...current,
+      viewMode: typeof next === "function" ? next(current.viewMode) : next,
+    }));
+  }, [updateActiveProjection]);
+
+  const setOpenTabs = useCallback((next: SetStateAction<DiffTab[]>) => {
+    setCompareWorkspace((current) => ({
+      ...current,
+      openTabs: typeof next === "function" ? next(current.openTabs) : next,
+    }));
+  }, []);
 
   const updateDiffNavigatorState = useCallback(() => {
     const editor = diffEditorRef.current;
@@ -320,13 +398,13 @@ export function useWorkspaceController({
   ]);
 
   useEffect(() => {
-    if (activeTab === "files" || !selected) return;
+    if (mode !== "compare" || activeTab === "files" || !selected) return;
     setOpenTabs((current) =>
       current.map((tab) =>
         tab.path === activeTab ? { ...tab, pair: selected, preview, viewMode } : tab,
       ),
     );
-  }, [activeTab, selected, preview, viewMode]);
+  }, [activeTab, mode, preview, selected, setOpenTabs, viewMode]);
 
   const focusViewTab = useCallback((path: string) => {
     if (!activeViewSource) return;
@@ -347,21 +425,10 @@ export function useWorkspaceController({
       focusViewTab(path);
       return;
     }
-    const tab = openTabs.find((candidate) => candidate.path === path);
-    if (!tab) return;
     focusCounter.current += 1;
     const stamp = focusCounter.current;
-    setSelected(tab.pair);
-    setPreview(tab.preview);
-    setEditBuffer(tab.preview.left?.content ?? "");
-    setViewMode(tab.viewMode);
-    setActiveTab(path);
-    setOpenTabs((current) =>
-      current.map((candidate) =>
-        candidate.path === path ? { ...candidate, lastFocus: stamp } : candidate,
-      ),
-    );
-  }, [focusViewTab, mode, openTabs]);
+    setCompareWorkspace((current) => focusCompareWorkspaceTab(current, path, stamp));
+  }, [focusViewTab, mode]);
 
   const selectViewSource = useCallback((sourceId: string) => {
     const source = viewWorkspace.sources.find((candidate) => candidate.id === sourceId);
@@ -686,6 +753,8 @@ export function useWorkspaceController({
   const reset = useCallback((options?: {
     clearDiffModel?: boolean;
     invalidatePreviewRequest?: boolean;
+    preserveState?: boolean;
+    target?: "compare" | "view";
   }) => {
     if (options?.invalidatePreviewRequest !== false) {
       previewRequestId.current += 1;
@@ -694,13 +763,14 @@ export function useWorkspaceController({
       diffEditorRef.current?.setModel(null);
       diffEditorRef.current = undefined;
     }
-    setSelected(undefined);
-    setActiveTab("files");
-    setOpenTabs([]);
-    setPreview({});
-    setEditBuffer("");
-    setViewMode("source");
-  }, []);
+    if (options?.preserveState) return;
+    const target = options?.target ?? (mode === "single" ? "view" : "compare");
+    if (target === "view") {
+      setViewProjection(emptyWorkspaceProjection());
+      return;
+    }
+    setCompareWorkspace(emptyCompareWorkspace());
+  }, [mode]);
 
   const mergeEditor = useMemo<WorkspaceMergeEditorPort>(() => ({
     resetToLoadedPreview() {
@@ -753,7 +823,7 @@ export function useWorkspaceController({
             : change.originalEndLineNumber,
       };
     },
-  }), [preview.left?.content, preview.right?.content]);
+  }), [preview.left?.content, preview.right?.content, setEditBuffer]);
 
   const findFirstMatch = useCallback((query: string) => {
     const searchInEditor = (editor?: CodeEditor) => {

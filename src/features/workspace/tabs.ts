@@ -1,12 +1,6 @@
-import type { ComparePair, EntryPreview, Side, ViewMode } from "@/lib/types";
+import type { DiffTab } from "@/lib/types";
 
-export interface DiffTab {
-  path: string;
-  pair: ComparePair;
-  preview: Partial<Record<Side, EntryPreview>>;
-  viewMode: ViewMode;
-  lastFocus: number;
-}
+export type { DiffTab } from "@/lib/types";
 
 export function upsertTab(tabs: DiffTab[], next: DiffTab): DiffTab[] {
   const idx = tabs.findIndex((t) => t.path === next.path);

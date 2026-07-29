@@ -548,11 +548,7 @@ export function App() {
       if (!isCurrentViewRequest(generation)) return { status: "cancelled" };
       clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
-      setPaths((current) => ({ ...current, left: summary.path }));
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
-      resetWorkspace();
+      resetWorkspace({ target: "view" });
       activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
       await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
@@ -582,7 +578,7 @@ export function App() {
       setPaths((current) => ({ ...current, [side]: archive.path }));
       setPathErrors((current) => ({ ...current, [side]: undefined }));
       setArchives((current) => ({ ...current, [side]: archive }));
-      resetWorkspace();
+      resetWorkspace({ target: "compare" });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -616,7 +612,7 @@ export function App() {
       setArchives({ left: result.left, right: result.right });
       setPairs(result.diff.pairs);
       setNestedPairs({});
-      resetWorkspace();
+      resetWorkspace({ target: "compare" });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -641,12 +637,7 @@ export function App() {
     setMode("text");
     setTourStep(hasSeenOnboarding("text") ? null : 0);
     setView("workspace");
-    setPaths(emptyPaths);
-    setPathErrors({});
-    setArchives({});
-    setPairs([]);
-    setNestedPairs({});
-    resetWorkspace();
+    resetWorkspace({ preserveState: true });
     setQuery("");
     setSearchPaths(undefined);
     setSearchResults([]);
@@ -949,35 +940,16 @@ export function App() {
     viewDropGenerationRef.current += 1;
     if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
-      resetWorkspace({
-        clearDiffModel: true,
-        invalidatePreviewRequest: false,
-      });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     if (mode === "single" && next === "compare") {
-      resetWorkspace({
-        clearDiffModel: true,
-        invalidatePreviewRequest: false,
-      });
-      setPaths(emptyPaths);
-      setPathErrors({});
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     if (mode === "text") {
-      setPaths(emptyPaths);
-      setPathErrors({});
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
-      resetWorkspace({ invalidatePreviewRequest: false });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);

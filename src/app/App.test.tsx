@@ -825,6 +825,87 @@ describe("App file-merge wiring", () => {
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("first right");
   });
 
+  it("preserves independent Compare, View, and Free text workspaces through a full mode cycle", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/left.jar")
+      .mockResolvedValueOnce("/tmp/right.jar")
+      .mockResolvedValueOnce("/tmp/alpha.jar");
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_archive") {
+        return Promise.resolve({
+          ...fileSummary(args?.side as "left" | "right"),
+          path: args?.path as string,
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    const compareCells = await screen.findAllByText("config.json");
+    await user.click(compareCells.find((cell) => cell.closest("button.tree-file"))!);
+    expect(await screen.findByRole("tab", { name: /config\.json/ })).toBeInTheDocument();
+
+    await switchMode("View");
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+
+    await switchMode("Text");
+    await user.type(screen.getByLabelText("Left free text input"), "left draft");
+    await user.type(screen.getByLabelText("Right free text input"), "right draft");
+
+    await switchMode("Compare");
+    expect(screen.getAllByText(/left\.jar/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
+
+    await switchMode("View");
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /alpha\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("editor")).toHaveValue("view:/tmp/alpha.jar:alpha.json");
+
+    await switchMode("Text");
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("left draft");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("right draft");
+  });
+
+  it("ignores a pending Compare preview after switching to Free text", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview",
+      });
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview")).not.toBeInTheDocument();
+  });
+
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -1346,6 +1427,29 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the Compare workspace when an OS-open activates View", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/alpha.jar"] } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
   });
 
   it("ignores OS-launched files while Free text is active", async () => {
