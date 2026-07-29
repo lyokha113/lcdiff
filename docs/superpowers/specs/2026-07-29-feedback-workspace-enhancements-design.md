@@ -187,6 +187,11 @@ presentational editor surface.
 `read_text_file` belongs in the preview command boundary and returns decoded
 text after canonical path validation and binary rejection.
 
+`open_compare_sources` opens and validates both dropped Compare paths before
+installing either side, then returns both summaries and their initial diff as
+one typed result. Existing one-side picker and path-input flows continue to use
+`open_archive`.
+
 One-sided Compare editing reuses `stage_write`; no new merge command or DTO is
 required.
 

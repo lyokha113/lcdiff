@@ -194,6 +194,7 @@ Typed command ownership includes:
 
 - `create_temp_target`
 - `preview_merge_all_conflicts`
+- `stage_temp_merge_all`
 - `apply_temp_merge`
 - `save_temp_target_as`
 - `discard_temp_target`
@@ -237,8 +238,10 @@ Dedicated UI components are:
 1. Backend compares source entry paths with target entry paths.
 2. Backend returns new paths and conflict paths without mutating the plan.
 3. Frontend collects overwrite/skip decisions.
-4. Backend stages original source bytes for new and overwritten paths.
-5. Skipped paths are omitted.
+4. Frontend sends the complete decision set to `stage_temp_merge_all`.
+5. Backend validates that every reported conflict has exactly one decision,
+   then stages original source bytes for new and overwritten paths.
+6. Skipped paths are omitted.
 
 ### Apply
 
