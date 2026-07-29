@@ -48,7 +48,7 @@ src-tauri/src/
   system_fonts.rs         blocking native font enumeration
 ```
 
-`lib.rs` preserves the ordered 30-command handler list and constructs the
+`lib.rs` preserves the ordered 32-command handler list and constructs the
 existing single `Arc<Mutex<AppState>>`. `state.rs` stores archives, per-source
 nested caches, View sources, merge plans, sidecar workers, cancellation
 generations, engine selection, and pending open paths. Command modules own
@@ -63,7 +63,7 @@ src/
   app/App.tsx             composition and cross-feature lifecycle wiring
   ipc/
     types.ts              exact Rust wire DTOs and event payloads
-    commands.ts           typed wrappers for the 30 stable commands
+    commands.ts           typed wrappers for the 32 stable commands
     events.ts             typed subscriptions and unlisten ownership
     platform.ts           dialog/window/drop/asset adapters
     updater.ts            app/updater/process/opener adapters
