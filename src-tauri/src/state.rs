@@ -54,9 +54,9 @@ struct OwnedTempPath {
 }
 
 impl OwnedTempPath {
-    fn from_temp_dir(temp_dir: TempDir) -> Self {
+    fn from_disarmed_temp_dir(temp_dir: &TempDir) -> Self {
         Self {
-            path: Some(temp_dir.keep()),
+            path: Some(temp_dir.path().to_owned()),
         }
     }
 
@@ -68,6 +68,12 @@ impl OwnedTempPath {
 
     fn disarm(&mut self) {
         self.path = None;
+    }
+
+    fn take(&mut self) -> Self {
+        Self {
+            path: self.path.take(),
+        }
     }
 }
 
@@ -99,10 +105,9 @@ struct DetachedTempTarget {
     session: TempMergeSession,
 }
 
-struct TempTargetRecovery {
-    temp_dir: TempDir,
-    working_path: PathBuf,
-    archive: Archive,
+struct TempTargetRecoverySnapshot {
+    working_name: PathBuf,
+    archive_bytes: Vec<u8>,
 }
 
 impl TempMergeSession {
@@ -756,35 +761,105 @@ impl DetachedTempTarget {
         Ok(())
     }
 
-    fn prepare_recovery(&self) -> Result<TempTargetRecovery, String> {
-        let temp_dir = tempfile::Builder::new()
-            .prefix("lcdiff-temp-merge-recovery-")
-            .tempdir()
-            .map_err(|error| error.to_string())?;
+    fn capture_recovery_snapshot(&self) -> Result<TempTargetRecoverySnapshot, String> {
         let working_name = self
             .session
             .working_path
             .file_name()
-            .ok_or_else(|| "temporary merge target has no working file name".to_owned())?;
-        let working_path = temp_dir.path().join(working_name);
-        export_archive_atomic(&self.session.working_path, &working_path)
-            .map_err(|error| error.to_string())?;
-        let archive =
-            Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
-        Ok(TempTargetRecovery {
-            temp_dir,
-            working_path: archive.path().to_owned(),
-            archive,
+            .ok_or_else(|| "temporary merge target has no working file name".to_owned())?
+            .into();
+        let archive_bytes =
+            std::fs::read(&self.session.working_path).map_err(|error| error.to_string())?;
+        Ok(TempTargetRecoverySnapshot {
+            working_name,
+            archive_bytes,
         })
     }
 
-    fn activate_recovery(&mut self, recovery: TempTargetRecovery) -> Vec<OwnedTempPath> {
-        let original_temp_dir = std::mem::replace(&mut self.session.temp_dir, recovery.temp_dir);
-        self.archive = recovery.archive;
-        self.session.working_path = recovery.working_path;
-        let mut cleanup_paths = std::mem::take(&mut self.session.pending_cleanup_paths);
-        cleanup_paths.push(OwnedTempPath::from_temp_dir(original_temp_dir));
-        cleanup_paths
+    fn retry_pending_cleanup(
+        &mut self,
+        cleanup: &mut impl FnMut(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut pending_cleanup_paths = std::mem::take(&mut self.session.pending_cleanup_paths);
+        for (index, owned_path) in pending_cleanup_paths.iter_mut().enumerate() {
+            match cleanup(owned_path.path()) {
+                Ok(()) => owned_path.disarm(),
+                Err(error) => {
+                    self.session.pending_cleanup_paths = pending_cleanup_paths.split_off(index);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn rearm_current_if_unchanged(
+        &mut self,
+        recovery: &TempTargetRecoverySnapshot,
+        current_path: &mut OwnedTempPath,
+    ) -> bool {
+        let Ok(current_bytes) = std::fs::read(&self.session.working_path) else {
+            return false;
+        };
+        if current_bytes != recovery.archive_bytes {
+            return false;
+        }
+        let Ok(archive) = Archive::open(self.session.working_path.to_string_lossy()) else {
+            return false;
+        };
+        self.archive = archive;
+        self.session.temp_dir.disable_cleanup(false);
+        current_path.disarm();
+        true
+    }
+
+    fn activate_recovery(
+        &mut self,
+        recovery: &TempTargetRecoverySnapshot,
+        failed_path: &mut OwnedTempPath,
+    ) -> Result<(), String> {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("lcdiff-temp-merge-recovery-")
+            .tempdir()
+            .map_err(|error| error.to_string())?;
+        let working_path = temp_dir.path().join(&recovery.working_name);
+        let archive = match std::fs::write(&working_path, &recovery.archive_bytes)
+            .map_err(|error| error.to_string())
+            .and_then(|()| {
+                Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())
+            }) {
+            Ok(archive) => archive,
+            Err(error) => {
+                return match temp_dir.close() {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!(
+                        "{error}; failed to clean incomplete recovery: {cleanup_error}"
+                    )),
+                };
+            }
+        };
+        let disabled_temp_dir = std::mem::replace(&mut self.session.temp_dir, temp_dir);
+        drop(disabled_temp_dir);
+        self.archive = archive;
+        self.session.working_path = working_path;
+        self.session.pending_cleanup_paths.push(failed_path.take());
+        Ok(())
+    }
+
+    fn restore_current_from_snapshot(
+        &mut self,
+        recovery: &TempTargetRecoverySnapshot,
+    ) -> Result<(), String> {
+        std::fs::create_dir_all(self.session.temp_dir.path()).map_err(|error| error.to_string())?;
+        let working_path = self.session.temp_dir.path().join(&recovery.working_name);
+        std::fs::write(&working_path, &recovery.archive_bytes)
+            .map_err(|error| error.to_string())?;
+        let archive =
+            Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
+        self.archive = archive;
+        self.session.working_path = working_path;
+        self.session.temp_dir.disable_cleanup(false);
+        Ok(())
     }
 }
 
@@ -815,25 +890,40 @@ fn discard_temp_target_with(
     if let Err(error) = detached.clear_nested_handles() {
         return restore_discard_failure(shared_state, detached, error);
     }
-    let recovery = match detached.prepare_recovery() {
+    if let Err(error) = detached.retry_pending_cleanup(&mut cleanup) {
+        return restore_discard_failure(shared_state, detached, error);
+    }
+    let recovery = match detached.capture_recovery_snapshot() {
         Ok(recovery) => recovery,
         Err(error) => return restore_discard_failure(shared_state, detached, error),
     };
-    let mut cleanup_paths = detached.activate_recovery(recovery);
-    let mut cleanup_failure = None;
-    for (index, owned_path) in cleanup_paths.iter_mut().enumerate() {
-        match cleanup(owned_path.path()) {
-            Ok(()) => owned_path.disarm(),
-            Err(error) => {
-                cleanup_failure = Some((index, error));
-                break;
-            }
+    detached.session.temp_dir.disable_cleanup(true);
+    let mut current_path = OwnedTempPath::from_disarmed_temp_dir(&detached.session.temp_dir);
+    if let Err(cleanup_error) = cleanup(current_path.path()) {
+        if detached.rearm_current_if_unchanged(&recovery, &mut current_path) {
+            return restore_discard_failure(shared_state, detached, cleanup_error);
         }
+        if let Err(recovery_error) = detached.activate_recovery(&recovery, &mut current_path) {
+            let restore_error = detached.restore_current_from_snapshot(&recovery).err();
+            if restore_error.is_some() {
+                detached.session.temp_dir.disable_cleanup(false);
+            }
+            current_path.disarm();
+            return restore_discard_failure(
+                shared_state,
+                detached,
+                match restore_error {
+                    Some(restore_error) => format!(
+                        "{cleanup_error}; recovery failed: {recovery_error}; \
+                         original session restore failed: {restore_error}"
+                    ),
+                    None => format!("{cleanup_error}; recovery failed: {recovery_error}"),
+                },
+            );
+        }
+        return restore_discard_failure(shared_state, detached, cleanup_error);
     }
-    if let Some((failed_index, error)) = cleanup_failure {
-        detached.session.pending_cleanup_paths = cleanup_paths.split_off(failed_index);
-        return restore_discard_failure(shared_state, detached, error);
-    }
+    current_path.disarm();
     {
         let mut state = shared_state
             .lock()

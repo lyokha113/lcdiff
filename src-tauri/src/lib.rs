@@ -1943,6 +1943,125 @@ mod tests {
     }
 
     #[test]
+    fn temp_target_pending_cleanup_failure_does_not_create_more_recoveries() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            Err(std::io::Error::other("seed pending cleanup"))
+        })
+        .unwrap_err();
+        let recovery_target = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        for _ in 0..2 {
+            let mut attempts = Vec::new();
+            let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+                attempts.push(owned_dir.to_owned());
+                Err(std::io::Error::other("persistent pending cleanup failure"))
+            })
+            .unwrap_err();
+
+            assert!(error.contains("persistent pending cleanup failure"));
+            assert_eq!(
+                attempts.as_slice(),
+                std::slice::from_ref(&original_target_dir)
+            );
+            let state = shared_state.lock().unwrap();
+            assert_eq!(state.right.as_ref().unwrap().path(), recovery_target);
+            assert!(recovery_target.is_file());
+            assert!(state.temp_merge_session.is_some());
+        }
+    }
+
+    #[test]
+    fn temp_target_final_working_cleanup_failure_retains_same_usable_session() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            Err(std::io::Error::other("seed pending cleanup"))
+        })
+        .unwrap_err();
+        let recovery_target = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let recovery_bytes = std::fs::read(&recovery_target).unwrap();
+        let recovery_dir = recovery_target.parent().unwrap().to_owned();
+        let mut attempts = Vec::new();
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            attempts.push(owned_dir.to_owned());
+            if owned_dir == original_target_dir {
+                std::fs::remove_dir_all(owned_dir)
+            } else {
+                Err(std::io::Error::other("final working cleanup failure"))
+            }
+        })
+        .unwrap_err();
+
+        assert!(error.contains("final working cleanup failure"));
+        assert_eq!(attempts, [original_target_dir, recovery_dir.clone()]);
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.right.as_ref().unwrap().path(), recovery_target);
+        assert_eq!(std::fs::read(&recovery_target).unwrap(), recovery_bytes);
+        assert!(state.temp_merge_session.is_some());
+        drop(state);
+
+        let mut final_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            final_attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir)
+        })
+        .unwrap();
+        assert_eq!(final_attempts, [recovery_dir]);
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    #[test]
     fn right_source_temp_target_guards_left_target_and_right_source() {
         let dir = tempdir().unwrap();
         let source = dir.path().join("source.jar");
