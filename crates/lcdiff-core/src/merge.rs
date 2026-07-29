@@ -69,6 +69,29 @@ pub struct CommitResult {
     pub copied_entries: usize,
 }
 
+pub fn export_archive_atomic(
+    source: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+) -> Result<()> {
+    let destination = destination.as_ref();
+    let temp_path = temp_path_for(destination);
+    let result = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)
+        .and_then(|mut output| {
+            let mut input = File::open(source.as_ref())?;
+            io::copy(&mut input, &mut output)?;
+            output.sync_all()
+        })
+        .map_err(Error::from)
+        .and_then(|_| atomic_replace(&temp_path, destination));
+    if result.is_err() {
+        fs::remove_file(&temp_path).ok();
+    }
+    result
+}
+
 #[derive(Debug, Default)]
 pub struct MergePlan {
     ops: Vec<StagedOp>,

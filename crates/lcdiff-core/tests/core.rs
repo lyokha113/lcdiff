@@ -6,11 +6,34 @@ use std::{
 
 use lcdiff_core::{
     Archive, ArchiveSourceKind, CommitOptions, DecompileEngine, DecompileOptions, EntryKind,
-    MergePlan, PairStatus, SidecarAction, SidecarRequest, compare, read_frame,
-    search_constant_pool, validate_path, write_frame,
+    MergePlan, PairStatus, SidecarAction, SidecarRequest, compare, create_empty_archive,
+    export_archive_atomic, read_frame, search_constant_pool, validate_path, write_frame,
 };
 use tempfile::tempdir;
 use zip::{DateTime, ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+#[test]
+fn creates_reopenable_empty_archive_for_supported_extensions() {
+    let dir = tempdir().unwrap();
+    for extension in ["jar", "zip", "war", "ear"] {
+        let path = dir.path().join(format!("empty.{extension}"));
+        create_empty_archive(&path).unwrap();
+        let archive = Archive::open(path.to_string_lossy()).unwrap();
+        assert_eq!(archive.entries().count(), 0);
+    }
+}
+
+#[test]
+fn exports_archive_without_mutating_source() {
+    let dir = tempdir().unwrap();
+    let source = dir.path().join("source.jar");
+    create_zip(&source, &[("a.txt", b"A")]);
+    let destination = dir.path().join("output.jar");
+    let before = std::fs::read(&source).unwrap();
+    export_archive_atomic(&source, &destination).unwrap();
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+    assert_eq!(std::fs::read(&destination).unwrap(), before);
+}
 
 #[test]
 fn validates_quotes_and_opens_archive() {

@@ -8,6 +8,7 @@ mod merge;
 mod nested;
 mod path;
 mod sidecar_protocol;
+mod temp_archive;
 
 pub use archive::{Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind};
 pub use class_search::{ConstantPoolMatch, search_constant_pool};
@@ -15,8 +16,8 @@ pub use detect::EntryKind;
 pub use diff::{ArchiveDiff, ComparePair, PairStatus, compare};
 pub use error::{Error, Result};
 pub use merge::{
-    CommitOptions, CommitResult, MergePlan, StagedKind, StagedOp, read_zip_entry_from_bytes,
-    rewrite_zip_bytes,
+    CommitOptions, CommitResult, MergePlan, StagedKind, StagedOp, export_archive_atomic,
+    read_zip_entry_from_bytes, rewrite_zip_bytes,
 };
 pub use nested::{ARCHIVE_SEPARATOR, NestedArchiveCache, is_nested};
 pub use path::{normalize_archive_entry_path, validate_path};
@@ -24,3 +25,4 @@ pub use sidecar_protocol::{
     DEFAULT_DECOMPILE_ENGINE, DecompileEngine, DecompileOptions, SidecarAction, SidecarRequest,
     SidecarResponse, read_frame, write_frame,
 };
+pub use temp_archive::create_empty_archive;
