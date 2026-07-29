@@ -6,7 +6,7 @@ Build:
 mvn -f sidecar/pom.xml package
 ```
 
-The shaded artifact is `sidecar/target/lcdiff-sidecar-0.3.2.jar`. It uses the
+The shaded artifact is `sidecar/target/lcdiff-sidecar-<version>.jar`. It uses the
 same `[u32 big-endian length][JSON]` framing as
 `lcdiff-core::sidecar_protocol`.
 

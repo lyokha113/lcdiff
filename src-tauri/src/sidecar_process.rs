@@ -258,8 +258,10 @@ fn sidecar_jar(resource_dir: Option<&std::path::Path>) -> PathBuf {
     env::var_os("LCDIFF_SIDECAR_JAR").map_or_else(
         || {
             resource_candidate(resource_dir, "sidecar/lcdiff-sidecar.jar").unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../sidecar/target/lcdiff-sidecar-0.3.2.jar")
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+                    "../sidecar/target/lcdiff-sidecar-{}.jar",
+                    env!("CARGO_PKG_VERSION")
+                ))
             })
         },
         PathBuf::from,
