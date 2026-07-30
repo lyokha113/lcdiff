@@ -61,6 +61,15 @@ pub(crate) struct TempMergeDecision {
     pub(crate) action: TempMergeConflictAction,
 }
 
+#[allow(dead_code)]
+#[derive(Clone)]
+struct TempMergeReview {
+    source_side: Side,
+    source: Archive,
+    target: Archive,
+    preview: TempMergeConflictPreview,
+}
+
 pub(crate) struct TempMergeSession {
     id: String,
     target_side: Side,
@@ -71,6 +80,8 @@ pub(crate) struct TempMergeSession {
     applied_source_count: usize,
     exported_path: Option<PathBuf>,
     pending_cleanup_paths: Vec<OwnedTempPath>,
+    #[allow(dead_code)]
+    review: Option<TempMergeReview>,
 }
 
 struct OwnedTempPath {
@@ -501,6 +512,7 @@ impl AppState {
         }
         let summary = summarize(&archive);
         *archive_mut(self, side) = Some(archive);
+        self.invalidate_temp_merge_review();
         *nested_cache_mut(self, side) = fresh_nested_cache()?;
         Ok(summary)
     }
@@ -565,10 +577,11 @@ impl AppState {
             return Err("temporary merge target archive is not loaded".to_owned());
         }
 
-        let session = self
+        let mut session = self
             .temp_merge_session
             .take()
             .expect("temporary merge session checked above");
+        session.review = None;
         let archive = archive_mut(self, target_side)
             .take()
             .expect("temporary merge target archive checked above");
@@ -600,6 +613,12 @@ impl AppState {
     fn finish_temp_target_discard(&mut self, target_side: Side) {
         debug_assert_eq!(self.temp_merge_discarding, Some(target_side));
         self.temp_merge_discarding = None;
+    }
+
+    fn invalidate_temp_merge_review(&mut self) {
+        if let Some(session) = self.temp_merge_session.as_mut() {
+            session.review = None;
+        }
     }
 
     #[allow(dead_code)]
@@ -651,11 +670,31 @@ impl AppState {
 
     #[allow(dead_code)]
     pub(crate) fn preview_temp_merge_all(
-        &self,
+        &mut self,
         source_side: Side,
     ) -> Result<TempMergeConflictPreview, String> {
+        self.invalidate_temp_merge_review();
         let (_, source, target) = self.active_temp_merge_archives(source_side)?;
-        Ok(Self::temp_merge_conflict_preview(&source, &target))
+        if source
+            .changed_on_disk()
+            .map_err(|error| error.to_string())?
+            || target
+                .changed_on_disk()
+                .map_err(|error| error.to_string())?
+        {
+            return Err("temporary merge source or target changed on disk".to_owned());
+        }
+        let preview = Self::temp_merge_conflict_preview(&source, &target);
+        self.temp_merge_session
+            .as_mut()
+            .expect("active temporary merge session checked above")
+            .review = Some(TempMergeReview {
+            source_side,
+            source,
+            target,
+            preview: preview.clone(),
+        });
+        Ok(preview)
     }
 
     #[allow(dead_code)]
@@ -665,7 +704,48 @@ impl AppState {
         decisions: Vec<TempMergeDecision>,
     ) -> Result<(), String> {
         let (target_side, source, target) = self.active_temp_merge_archives(source_side)?;
-        let preview = Self::temp_merge_conflict_preview(&source, &target);
+        let review = self
+            .temp_merge_session
+            .as_ref()
+            .and_then(|session| session.review.clone())
+            .ok_or_else(|| "preview temporary merge conflicts before staging".to_owned())?;
+        let identities_match = review.source_side == source_side
+            && same_archive_snapshot(&review.source, &source)
+            && same_archive_snapshot(&review.target, &target);
+        if !identities_match {
+            self.invalidate_temp_merge_review();
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        let changed_on_disk = (|| {
+            Ok::<_, String>(
+                review
+                    .source
+                    .changed_on_disk()
+                    .map_err(|error| error.to_string())?
+                    || review
+                        .target
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?
+                    || source
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?
+                    || target
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?,
+            )
+        })();
+        match changed_on_disk {
+            Ok(false) => {}
+            Ok(true) => {
+                self.invalidate_temp_merge_review();
+                return Err("temporary merge conflict preview is stale".to_owned());
+            }
+            Err(error) => {
+                self.invalidate_temp_merge_review();
+                return Err(error);
+            }
+        }
+        let preview = review.preview;
         let conflicts = preview
             .conflicts
             .iter()
@@ -702,12 +782,13 @@ impl AppState {
         let mut validated_plan = MergePlan::new();
         for entry_path in &staged_paths {
             validated_plan
-                .stage_copy(&source, entry_path, entry_path)
+                .stage_copy(&review.source, entry_path, entry_path)
                 .map_err(|error| error.to_string())?;
         }
+        self.invalidate_temp_merge_review();
         for entry_path in staged_paths {
             self.plan_mut(target_side)
-                .stage_copy(&source, &entry_path, &entry_path)
+                .stage_copy(&review.source, &entry_path, &entry_path)
                 .expect("bulk staging paths were validated before mutating the merge plan");
         }
         Ok(())
@@ -774,6 +855,7 @@ impl AppState {
             .plan_mut(target_side)
             .commit(&target, CommitOptions { backup })
             .map_err(|error| error.to_string())?;
+        self.invalidate_temp_merge_review();
         *archive_mut(self, target_side) = Some(
             Archive::open(result.rewritten_path.to_string_lossy())
                 .map_err(|error| error.to_string())?,
@@ -862,6 +944,7 @@ fn build_prepared_temp_target(
         applied_source_count: 0,
         exported_path: None,
         pending_cleanup_paths: Vec::new(),
+        review: None,
     };
     Ok(PreparedTempTarget {
         source_snapshot,

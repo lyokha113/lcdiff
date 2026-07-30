@@ -1623,6 +1623,158 @@ mod tests {
     }
 
     #[test]
+    fn temp_merge_all_rejects_a_replacement_source_with_the_same_partition() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"source-a-new"), ("same.txt", b"source-a")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["new.txt"]);
+        assert_eq!(preview.conflicts, ["same.txt"]);
+
+        let source_b = dir.path().join("source-b.jar");
+        create_zip(
+            &source_b,
+            &[("new.txt", b"source-b-new"), ("same.txt", b"source-b")],
+        );
+        state
+            .install_archive(
+                Archive::open(source_b.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_same_path_source_or_target_disk_changes() {
+        for changed_side in [Side::Left, Side::Right] {
+            let (_dir, mut state) = temp_session_with_source_and_target(
+                &[("new.txt", b"new"), ("same.txt", b"source")],
+                &[("same.txt", b"target")],
+            );
+            state.preview_temp_merge_all(Side::Left).unwrap();
+            state
+                .right_plan
+                .stage_write("preserved.txt", b"preserved".to_vec())
+                .unwrap();
+
+            let changed_path = match changed_side {
+                Side::Left => state.left.as_ref().unwrap().path(),
+                Side::Right => state.right.as_ref().unwrap().path(),
+            }
+            .to_owned();
+            let changed_entries: &[(&str, &[u8])] = match changed_side {
+                Side::Left => &[
+                    ("new.txt", b"new bytes changed on disk"),
+                    ("same.txt", b"source bytes changed on disk"),
+                ],
+                Side::Right => &[("same.txt", b"target bytes changed on disk")],
+            };
+            create_zip(&changed_path, changed_entries);
+
+            assert!(
+                state
+                    .stage_temp_merge_all(
+                        Side::Left,
+                        vec![TempMergeDecision {
+                            entry_path: "same.txt".to_owned(),
+                            action: TempMergeConflictAction::Overwrite,
+                        }],
+                    )
+                    .is_err()
+            );
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_requires_preview_before_staging() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert!(state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn temp_merge_all_success_consumes_the_preview() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        state.preview_temp_merge_all(Side::Left).unwrap();
+        let decisions = || {
+            vec![TempMergeDecision {
+                entry_path: "same.txt".to_owned(),
+                action: TempMergeConflictAction::Overwrite,
+            }]
+        };
+
+        state.stage_temp_merge_all(Side::Left, decisions()).unwrap();
+        let staged_paths = state
+            .right_plan
+            .staged()
+            .iter()
+            .map(|op| op.target_entry_path().to_owned())
+            .collect::<Vec<_>>();
+        assert!(state.stage_temp_merge_all(Side::Left, decisions()).is_err());
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path().to_owned())
+                .collect::<Vec<_>>(),
+            staged_paths
+        );
+    }
+
+    #[test]
     fn temp_merge_all_dtos_use_camel_case_wire_values() {
         let preview = super::state::TempMergeConflictPreview {
             new_entries: vec!["new.txt".to_owned()],
@@ -1682,7 +1834,9 @@ mod tests {
 
     #[test]
     fn temp_merge_all_rejects_the_reserved_discard_state() {
-        let (_dir, state) = temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        let (_dir, mut state) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        state.preview_temp_merge_all(Side::Left).unwrap();
         let shared_state = Arc::new(Mutex::new(state));
 
         let error = discard_temp_target_with_cleanup(&shared_state, |_| {
@@ -1694,7 +1848,10 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("injected cleanup failure"));
-        assert!(shared_state.lock().unwrap().temp_merge_session.is_some());
+        let mut state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
+        assert!(state.right_plan.is_empty());
     }
 
     #[test]
