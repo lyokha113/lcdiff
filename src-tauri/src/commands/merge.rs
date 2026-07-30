@@ -96,8 +96,7 @@ pub(crate) fn clear_staged(state: State<'_, SharedState>) -> Result<(), String> 
     let mut state = state
         .lock()
         .map_err(|_| "state lock is poisoned".to_owned())?;
-    state.clear_staged();
-    Ok(())
+    state.clear_staged()
 }
 
 #[tauri::command]

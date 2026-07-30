@@ -229,14 +229,17 @@ mod tests {
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
     use super::state::{
-        TempMergeApplyFailurePoint, TempMergeConflictAction, TempMergeDecision, TempTargetCreation,
-        TempTargetDiscardOutcome, apply_temp_merge, apply_temp_merge_with_failure_point,
-        create_temp_target, discard_temp_target, discard_temp_target_with_cleanup,
-        discard_temp_target_with_cleanup_and_write,
+        TempMergeApplyFailurePoint, TempMergeConflictAction, TempMergeDecision,
+        TempMergePlanMutation, TempTargetCreation, TempTargetDiscardOutcome, apply_temp_merge,
+        apply_temp_merge_with_failure_point, apply_temp_merge_with_plan_mutation,
+        apply_temp_merge_with_stale_reservation, create_temp_target, discard_temp_target,
+        discard_temp_target_with_cleanup, discard_temp_target_with_cleanup_and_write,
         discard_temp_target_with_cleanup_and_write_outcome, discard_temp_target_with_outcome,
         install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
         prepare_temp_target, prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
-        save_temp_target_as, save_temp_target_as_with_hooks, set_prepared_temp_target_drop_probe,
+        save_temp_target_as, save_temp_target_as_with_after_reserve,
+        save_temp_target_as_with_hooks, save_temp_target_as_with_post_replace_failure,
+        save_temp_target_as_with_stale_reservation, set_prepared_temp_target_drop_probe,
         stage_temp_merge_all_shared, stage_temp_merge_all_with_after_reserve,
         stage_temp_merge_all_with_pre_final_check,
     };
@@ -1045,7 +1048,7 @@ mod tests {
         load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
         state.stage_copy(Side::Left, Side::Right, "a.txt").unwrap();
 
-        state.clear_staged();
+        state.clear_staged().unwrap();
 
         assert!(!state.any_pending());
         load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
@@ -3007,6 +3010,7 @@ mod tests {
             TempMergeApplyFailurePoint::Reopen,
             TempMergeApplyFailurePoint::Cache,
             TempMergeApplyFailurePoint::Publish,
+            TempMergeApplyFailurePoint::WorkingExportPostReplace,
         ] {
             let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
             let working_before = std::fs::read(&working_path).unwrap();
@@ -3038,6 +3042,41 @@ mod tests {
                 b"source"
             );
         }
+    }
+
+    #[test]
+    fn temp_merge_apply_rejects_reentrant_clear_and_unstage_without_losing_original_plan() {
+        for mutation in [TempMergePlanMutation::Clear, TempMergePlanMutation::Unstage] {
+            let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
+            let working_before = std::fs::read(&working_path).unwrap();
+
+            let error = apply_temp_merge_with_plan_mutation(&shared_state, mutation).unwrap_err();
+
+            assert!(error.contains("temporary merge target is busy"));
+            {
+                let state = shared_state.lock().unwrap();
+                assert_eq!(state.right_plan.staged().len(), 1);
+                assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+            }
+            apply_temp_merge(&shared_state).unwrap();
+        }
+    }
+
+    #[test]
+    fn temp_merge_stale_apply_cancellation_cannot_clear_a_newer_reservation() {
+        let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let working_before = std::fs::read(&working_path).unwrap();
+
+        let error = apply_temp_merge_with_stale_reservation(&shared_state).unwrap_err();
+
+        assert!(error.contains("temporary merge apply reservation changed"));
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+        assert!(!shared_state.lock().unwrap().right_plan.is_empty());
+        assert!(
+            apply_temp_merge(&shared_state)
+                .unwrap_err()
+                .contains("temporary merge target is busy")
+        );
     }
 
     #[test]
@@ -3153,6 +3192,62 @@ mod tests {
         assert!(state.temp_merge_session.is_some());
         assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
         assert!(successful_destination.is_file());
+    }
+
+    #[test]
+    fn temp_merge_save_as_post_replace_failure_restores_existing_destination_identity_and_bytes() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("existing-export.jar");
+        let destination_alias = dir.path().join("existing-export-alias.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+        std::fs::hard_link(&destination, &destination_alias).unwrap();
+
+        let error =
+            save_temp_target_as_with_post_replace_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("injected post-replace parent sync failure"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(same_file::is_same_file(&destination, &destination_alias).unwrap());
+        save_temp_target_as(&shared_state, dir.path().join("retry-existing.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_post_replace_failure_removes_new_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("new-export.jar");
+
+        let error =
+            save_temp_target_as_with_post_replace_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("injected post-replace parent sync failure"));
+        assert!(!destination.exists());
+        save_temp_target_as(&shared_state, dir.path().join("retry-new.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_stale_save_publication_preserves_destination_and_newer_reservation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("stale-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_stale_reservation(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert!(error.contains("temporary merge export reservation changed"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            save_temp_target_as(&shared_state, dir.path().join("retry.jar"))
+                .unwrap_err()
+                .contains("temporary merge target is busy")
+        );
     }
 
     #[test]
@@ -3310,6 +3405,28 @@ mod tests {
         assert!(expected_destination.is_file());
         assert!(!working_dir.join("saved.jar").exists());
         discard_temp_target_with_outcome(&shared_state).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_rejects_replaced_canonical_parent_before_writing() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("export-parent");
+        let moved_parent = dir.path().join("export-parent-moved");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+
+        let error =
+            save_temp_target_as_with_after_reserve(&shared_state, destination.clone(), || {
+                std::fs::rename(&parent, &moved_parent).unwrap();
+                std::fs::create_dir(&parent).unwrap();
+            })
+            .unwrap_err();
+
+        assert!(error.contains("temporary merge export parent changed"));
+        assert!(!destination.exists());
+        assert!(!moved_parent.join("saved.jar").exists());
+        save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
     }
 
     #[test]
