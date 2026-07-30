@@ -2079,6 +2079,7 @@ version = "0.3.11"
 dependencies = [
  "font-kit",
  "lcdiff-core",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

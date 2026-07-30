@@ -118,7 +118,7 @@ fn paths_refer_to_same_file(source: &Path, destination: &Path) -> Result<bool> {
     same_file::is_same_file(source, destination).map_err(Error::from)
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MergePlan {
     ops: Vec<StagedOp>,
 }
