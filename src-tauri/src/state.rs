@@ -7,8 +7,8 @@ use std::{
 
 use lcdiff_core::{
     Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions, CommitResult,
-    DEFAULT_DECOMPILE_ENGINE, DecompileEngine, MergePlan, NestedArchiveCache, create_empty_archive,
-    edit, export_archive_atomic,
+    DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan, NestedArchiveCache,
+    create_empty_archive, edit, export_archive_atomic,
 };
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
@@ -35,6 +35,30 @@ pub(crate) struct TempMergeSessionSummary {
     pub(crate) entry_count: usize,
     pub(crate) applied_source_count: usize,
     pub(crate) exported_path: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TempMergeConflictPreview {
+    pub(crate) new_entries: Vec<String>,
+    pub(crate) conflicts: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum TempMergeConflictAction {
+    Overwrite,
+    Skip,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TempMergeDecision {
+    pub(crate) entry_path: String,
+    pub(crate) action: TempMergeConflictAction,
 }
 
 pub(crate) struct TempMergeSession {
@@ -576,6 +600,117 @@ impl AppState {
     fn finish_temp_target_discard(&mut self, target_side: Side) {
         debug_assert_eq!(self.temp_merge_discarding, Some(target_side));
         self.temp_merge_discarding = None;
+    }
+
+    #[allow(dead_code)]
+    fn active_temp_merge_archives(
+        &self,
+        source_side: Side,
+    ) -> Result<(Side, Archive, Archive), String> {
+        if self.temp_merge_discarding.is_some() || self.pending_temp_target_discard.is_some() {
+            return Err("temporary merge target is being discarded".to_owned());
+        }
+        let target_side = self
+            .temp_merge_session
+            .as_ref()
+            .map(|session| session.target_side)
+            .ok_or_else(|| "temporary merge session is not active".to_owned())?;
+        if source_side == target_side {
+            return Err("source and target sides must differ".to_owned());
+        }
+        let source = archive(self, source_side)
+            .ok_or("source archive is not loaded")?
+            .clone();
+        let target = archive(self, target_side)
+            .ok_or("temporary merge target archive is not loaded")?
+            .clone();
+        Ok((target_side, source, target))
+    }
+
+    #[allow(dead_code)]
+    fn temp_merge_conflict_preview(source: &Archive, target: &Archive) -> TempMergeConflictPreview {
+        let mut new_entries = Vec::new();
+        let mut conflicts = Vec::new();
+        for entry in source
+            .entries()
+            .filter(|entry| entry.kind != EntryKind::Directory)
+        {
+            if target.entry(&entry.path).is_some() {
+                conflicts.push(entry.path.clone());
+            } else {
+                new_entries.push(entry.path.clone());
+            }
+        }
+        new_entries.sort();
+        conflicts.sort();
+        TempMergeConflictPreview {
+            new_entries,
+            conflicts,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn preview_temp_merge_all(
+        &self,
+        source_side: Side,
+    ) -> Result<TempMergeConflictPreview, String> {
+        let (_, source, target) = self.active_temp_merge_archives(source_side)?;
+        Ok(Self::temp_merge_conflict_preview(&source, &target))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn stage_temp_merge_all(
+        &mut self,
+        source_side: Side,
+        decisions: Vec<TempMergeDecision>,
+    ) -> Result<(), String> {
+        let (target_side, source, target) = self.active_temp_merge_archives(source_side)?;
+        let preview = Self::temp_merge_conflict_preview(&source, &target);
+        let conflicts = preview
+            .conflicts
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut actions = BTreeMap::new();
+        for decision in decisions {
+            if !conflicts.contains(decision.entry_path.as_str()) {
+                return Err(format!(
+                    "temporary merge decision is not for a conflict: {}",
+                    decision.entry_path
+                ));
+            }
+            if actions
+                .insert(decision.entry_path.clone(), decision.action)
+                .is_some()
+            {
+                return Err(format!(
+                    "duplicate temporary merge conflict decision: {}",
+                    decision.entry_path
+                ));
+            }
+        }
+        if actions.len() != conflicts.len() {
+            return Err("every temporary merge conflict requires exactly one decision".to_owned());
+        }
+
+        let mut staged_paths = preview.new_entries;
+        staged_paths.extend(preview.conflicts.into_iter().filter(|entry_path| {
+            actions.get(entry_path) == Some(&TempMergeConflictAction::Overwrite)
+        }));
+        staged_paths.sort();
+
+        let mut validated_plan = MergePlan::new();
+        for entry_path in &staged_paths {
+            validated_plan
+                .stage_copy(&source, entry_path, entry_path)
+                .map_err(|error| error.to_string())?;
+        }
+        for entry_path in staged_paths {
+            self.plan_mut(target_side)
+                .stage_copy(&source, &entry_path, &entry_path)
+                .expect("bulk staging paths were validated before mutating the merge plan");
+        }
+        Ok(())
     }
 
     pub(crate) fn stage_copy(

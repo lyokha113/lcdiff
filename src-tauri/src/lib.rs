@@ -205,7 +205,7 @@ mod tests {
         sync::{Arc, Mutex, mpsc},
     };
 
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     use super::archive_access::{
@@ -217,10 +217,11 @@ mod tests {
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
     use super::state::{
-        TempTargetCreation, create_temp_target, discard_temp_target,
-        discard_temp_target_with_cleanup, discard_temp_target_with_cleanup_and_write,
-        install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
-        prepare_temp_target, prepare_temp_target_with_lock_probe,
+        TempMergeConflictAction, TempMergeDecision, TempTargetCreation, create_temp_target,
+        discard_temp_target, discard_temp_target_with_cleanup,
+        discard_temp_target_with_cleanup_and_write, install_prepared_compare_archives,
+        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
+        prepare_temp_target_with_lock_probe,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -1407,6 +1408,328 @@ mod tests {
             zip.write_all(bytes).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    fn temp_session_with_source_and_target(
+        source_entries: &[(&str, &[u8])],
+        target_entries: &[(&str, &[u8])],
+    ) -> (TempDir, AppState) {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let target_seed = dir.path().join("target-seed.jar");
+        create_zip(&source, source_entries);
+        create_zip(&target_seed, target_entries);
+
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, target_seed.to_str().unwrap(), Side::Left)
+            .unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        state
+            .install_archive(Archive::open(source.to_string_lossy()).unwrap(), Side::Left)
+            .unwrap();
+
+        (dir, state)
+    }
+
+    #[test]
+    fn temp_merge_all_previews_and_stages_files_in_deterministic_order() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[
+                ("z-new.txt", b"z-source"),
+                ("c-conflict.txt", b"c-source"),
+                ("folder/", b""),
+                ("a-new.txt", b"a-source"),
+                ("b-conflict.txt", b"b-source"),
+            ],
+            &[
+                ("c-conflict.txt", b"c-target"),
+                ("b-conflict.txt", b"b-target"),
+            ],
+        );
+
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["a-new.txt", "z-new.txt"]);
+        assert_eq!(preview.conflicts, ["b-conflict.txt", "c-conflict.txt"]);
+
+        state
+            .stage_temp_merge_all(
+                Side::Left,
+                vec![
+                    TempMergeDecision {
+                        entry_path: "c-conflict.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "b-conflict.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let staged_paths = state
+            .right_plan
+            .staged()
+            .iter()
+            .map(|op| op.target_entry_path())
+            .collect::<Vec<_>>();
+        assert_eq!(staged_paths, ["a-new.txt", "b-conflict.txt", "z-new.txt"]);
+
+        state.commit_merge(Side::Right, false, true).unwrap();
+        let target = state.right.as_ref().unwrap();
+        assert_eq!(target.read_entry("a-new.txt").unwrap(), b"a-source");
+        assert_eq!(target.read_entry("z-new.txt").unwrap(), b"z-source");
+        assert_eq!(target.read_entry("b-conflict.txt").unwrap(), b"b-source");
+        assert_eq!(target.read_entry("c-conflict.txt").unwrap(), b"c-target");
+        assert!(target.entry("folder/").is_none());
+    }
+
+    #[test]
+    fn temp_merge_all_requires_exactly_one_known_decision_per_conflict() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let invalid_decisions = [
+            vec![],
+            vec![
+                TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                },
+                TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Skip,
+                },
+            ],
+            vec![
+                TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Skip,
+                },
+                TempMergeDecision {
+                    entry_path: "unknown.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                },
+            ],
+            vec![
+                TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Skip,
+                },
+                TempMergeDecision {
+                    entry_path: "new.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                },
+            ],
+        ];
+
+        for decisions in invalid_decisions {
+            assert!(state.stage_temp_merge_all(Side::Left, decisions).is_err());
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_stale_conflict_decisions_without_mutating_the_plan() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.conflicts, ["same.txt"]);
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let changed_source = dir.path().join("changed-source.jar");
+        create_zip(&changed_source, &[("new.txt", b"changed")]);
+        state.left = Some(Archive::open(changed_source.to_string_lossy()).unwrap());
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_recomputes_conflicts_after_the_target_changes() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.conflicts, ["same.txt"]);
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let changed_target = dir.path().join("changed-target.jar");
+        create_zip(&changed_target, &[("target-only.txt", b"target")]);
+        state.right = Some(Archive::open(changed_target.to_string_lossy()).unwrap());
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_dtos_use_camel_case_wire_values() {
+        let preview = super::state::TempMergeConflictPreview {
+            new_entries: vec!["new.txt".to_owned()],
+            conflicts: vec!["same.txt".to_owned()],
+        };
+        assert_eq!(
+            serde_json::to_value(preview).unwrap(),
+            serde_json::json!({
+                "newEntries": ["new.txt"],
+                "conflicts": ["same.txt"],
+            })
+        );
+
+        let decision: TempMergeDecision = serde_json::from_value(serde_json::json!({
+            "entryPath": "same.txt",
+            "action": "overwrite",
+        }))
+        .unwrap();
+        assert_eq!(decision.entry_path, "same.txt");
+        assert_eq!(decision.action, TempMergeConflictAction::Overwrite);
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_using_the_target_as_the_source() {
+        let (_dir, mut state) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+
+        assert!(state.preview_temp_merge_all(Side::Right).is_err());
+        assert!(state.stage_temp_merge_all(Side::Right, Vec::new()).is_err());
+        assert!(state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn temp_merge_all_requires_an_active_session_with_both_archives() {
+        let mut inactive = AppState::default();
+        assert!(inactive.preview_temp_merge_all(Side::Left).is_err());
+        assert!(
+            inactive
+                .stage_temp_merge_all(Side::Left, Vec::new())
+                .is_err()
+        );
+
+        let (_source_dir, mut missing_source) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        missing_source.left = None;
+        assert!(missing_source.preview_temp_merge_all(Side::Left).is_err());
+
+        let (_target_dir, mut missing_target) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        missing_target.right = None;
+        assert!(
+            missing_target
+                .stage_temp_merge_all(Side::Left, Vec::new())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_the_reserved_discard_state() {
+        let (_dir, state) = temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |_| {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.preview_temp_merge_all(Side::Left).is_err());
+            assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_the_retry_only_pending_discard_state() {
+        let (_dir, state) = temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        let shared_state = Arc::new(Mutex::new(state));
+        let target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+
+        discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive cleanup failure"))
+                } else {
+                    Err(std::io::Error::other("recovery cleanup failure"))
+                }
+            },
+            |_, _| Err(std::io::Error::other("snapshot write failure")),
+        )
+        .unwrap_err();
+
+        let mut state = shared_state.lock().unwrap();
+        assert!(state.pending_temp_target_recovery_bytes().is_some());
+        assert!(state.preview_temp_merge_all(Side::Left).is_err());
+        assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
     }
 
     #[test]
