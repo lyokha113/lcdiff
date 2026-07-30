@@ -668,6 +668,43 @@ impl AppState {
         }
     }
 
+    fn ensure_temp_merge_review_fresh(
+        &mut self,
+        review: &TempMergeReview,
+        source: &Archive,
+        target: &Archive,
+    ) -> Result<(), String> {
+        let changed_on_disk = (|| {
+            Ok::<_, String>(
+                review
+                    .source
+                    .changed_on_disk()
+                    .map_err(|error| error.to_string())?
+                    || review
+                        .target
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?
+                    || source
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?
+                    || target
+                        .changed_on_disk()
+                        .map_err(|error| error.to_string())?,
+            )
+        })();
+        match changed_on_disk {
+            Ok(false) => Ok(()),
+            Ok(true) => {
+                self.invalidate_temp_merge_review();
+                Err("temporary merge conflict preview is stale".to_owned())
+            }
+            Err(error) => {
+                self.invalidate_temp_merge_review();
+                Err(error)
+            }
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn preview_temp_merge_all(
         &mut self,
@@ -703,6 +740,15 @@ impl AppState {
         source_side: Side,
         decisions: Vec<TempMergeDecision>,
     ) -> Result<(), String> {
+        self.stage_temp_merge_all_with_pre_final_check(source_side, decisions, || {})
+    }
+
+    fn stage_temp_merge_all_with_pre_final_check(
+        &mut self,
+        source_side: Side,
+        decisions: Vec<TempMergeDecision>,
+        before_final_check: impl FnOnce(),
+    ) -> Result<(), String> {
         let (target_side, source, target) = self.active_temp_merge_archives(source_side)?;
         let review = self
             .temp_merge_session
@@ -716,36 +762,8 @@ impl AppState {
             self.invalidate_temp_merge_review();
             return Err("temporary merge conflict preview is stale".to_owned());
         }
-        let changed_on_disk = (|| {
-            Ok::<_, String>(
-                review
-                    .source
-                    .changed_on_disk()
-                    .map_err(|error| error.to_string())?
-                    || review
-                        .target
-                        .changed_on_disk()
-                        .map_err(|error| error.to_string())?
-                    || source
-                        .changed_on_disk()
-                        .map_err(|error| error.to_string())?
-                    || target
-                        .changed_on_disk()
-                        .map_err(|error| error.to_string())?,
-            )
-        })();
-        match changed_on_disk {
-            Ok(false) => {}
-            Ok(true) => {
-                self.invalidate_temp_merge_review();
-                return Err("temporary merge conflict preview is stale".to_owned());
-            }
-            Err(error) => {
-                self.invalidate_temp_merge_review();
-                return Err(error);
-            }
-        }
-        let preview = review.preview;
+        self.ensure_temp_merge_review_fresh(&review, &source, &target)?;
+        let preview = review.preview.clone();
         let conflicts = preview
             .conflicts
             .iter()
@@ -785,6 +803,8 @@ impl AppState {
                 .stage_copy(&review.source, entry_path, entry_path)
                 .map_err(|error| error.to_string())?;
         }
+        before_final_check();
+        self.ensure_temp_merge_review_fresh(&review, &source, &target)?;
         self.invalidate_temp_merge_review();
         for entry_path in staged_paths {
             self.plan_mut(target_side)
@@ -889,6 +909,16 @@ impl AppState {
         }
         Err("staged entry is not found".to_owned())
     }
+}
+
+#[cfg(test)]
+pub(crate) fn stage_temp_merge_all_with_pre_final_check(
+    state: &mut AppState,
+    source_side: Side,
+    decisions: Vec<TempMergeDecision>,
+    before_final_check: impl FnOnce(),
+) -> Result<(), String> {
+    state.stage_temp_merge_all_with_pre_final_check(source_side, decisions, before_final_check)
 }
 
 fn same_archive_snapshot(left: &Archive, right: &Archive) -> bool {

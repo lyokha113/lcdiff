@@ -221,7 +221,7 @@ mod tests {
         discard_temp_target, discard_temp_target_with_cleanup,
         discard_temp_target_with_cleanup_and_write, install_prepared_compare_archives,
         install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
-        prepare_temp_target_with_lock_probe,
+        prepare_temp_target_with_lock_probe, stage_temp_merge_all_with_pre_final_check,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -1491,47 +1491,65 @@ mod tests {
             &[("new.txt", b"new"), ("same.txt", b"source")],
             &[("same.txt", b"target")],
         );
+        state.preview_temp_merge_all(Side::Left).unwrap();
         state
             .right_plan
             .stage_write("preserved.txt", b"preserved".to_vec())
             .unwrap();
 
         let invalid_decisions = [
-            vec![],
-            vec![
-                TempMergeDecision {
-                    entry_path: "same.txt".to_owned(),
-                    action: TempMergeConflictAction::Overwrite,
-                },
-                TempMergeDecision {
-                    entry_path: "same.txt".to_owned(),
-                    action: TempMergeConflictAction::Skip,
-                },
-            ],
-            vec![
-                TempMergeDecision {
-                    entry_path: "same.txt".to_owned(),
-                    action: TempMergeConflictAction::Skip,
-                },
-                TempMergeDecision {
-                    entry_path: "unknown.txt".to_owned(),
-                    action: TempMergeConflictAction::Overwrite,
-                },
-            ],
-            vec![
-                TempMergeDecision {
-                    entry_path: "same.txt".to_owned(),
-                    action: TempMergeConflictAction::Skip,
-                },
-                TempMergeDecision {
-                    entry_path: "new.txt".to_owned(),
-                    action: TempMergeConflictAction::Overwrite,
-                },
-            ],
+            (
+                vec![],
+                "every temporary merge conflict requires exactly one decision",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                ],
+                "duplicate temporary merge conflict decision: same.txt",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "unknown.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+                "temporary merge decision is not for a conflict: unknown.txt",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "new.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+                "temporary merge decision is not for a conflict: new.txt",
+            ),
         ];
 
-        for decisions in invalid_decisions {
-            assert!(state.stage_temp_merge_all(Side::Left, decisions).is_err());
+        for (decisions, expected_error) in invalid_decisions {
+            assert_eq!(
+                state
+                    .stage_temp_merge_all(Side::Left, decisions)
+                    .unwrap_err(),
+                expected_error
+            );
             assert_eq!(
                 state
                     .right_plan
@@ -1716,6 +1734,68 @@ mod tests {
                     .map(|op| op.target_entry_path())
                     .collect::<Vec<_>>(),
                 ["preserved.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_rechecks_disk_freshness_after_preflight() {
+        for changed_side in [Side::Left, Side::Right] {
+            let (_dir, mut state) = temp_session_with_source_and_target(
+                &[("new.txt", b"new"), ("same.txt", b"source")],
+                &[("same.txt", b"target")],
+            );
+            state.preview_temp_merge_all(Side::Left).unwrap();
+            state
+                .right_plan
+                .stage_write("preserved.txt", b"preserved".to_vec())
+                .unwrap();
+
+            let changed_path = match changed_side {
+                Side::Left => state.left.as_ref().unwrap().path(),
+                Side::Right => state.right.as_ref().unwrap().path(),
+            }
+            .to_owned();
+            let changed_entries: &[(&str, &[u8])] = match changed_side {
+                Side::Left => &[
+                    ("new.txt", b"new bytes changed after preflight"),
+                    ("same.txt", b"source bytes changed after preflight"),
+                ],
+                Side::Right => &[("same.txt", b"target bytes changed after preflight")],
+            };
+
+            let error = stage_temp_merge_all_with_pre_final_check(
+                &mut state,
+                Side::Left,
+                vec![TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                }],
+                || create_zip(&changed_path, changed_entries),
+            )
+            .unwrap_err();
+
+            assert_eq!(error, "temporary merge conflict preview is stale");
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+            assert_eq!(
+                state
+                    .stage_temp_merge_all(
+                        Side::Left,
+                        vec![TempMergeDecision {
+                            entry_path: "same.txt".to_owned(),
+                            action: TempMergeConflictAction::Overwrite,
+                        }],
+                    )
+                    .unwrap_err(),
+                "preview temporary merge conflicts before staging"
             );
         }
     }
