@@ -221,7 +221,25 @@ const expectedCommandNames = [
   'cancel_deep_search',
   'prefetch_siblings',
   'pending_open_paths',
+  'create_temp_target',
+  'preview_merge_all_conflicts',
+  'stage_temp_merge_all',
+  'apply_temp_merge',
+  'save_temp_target_as',
+  'discard_temp_target',
 ];
+
+const expectedFrontendCommandNames = expectedCommandNames.filter(
+  (name) =>
+    ![
+      'create_temp_target',
+      'preview_merge_all_conflicts',
+      'stage_temp_merge_all',
+      'apply_temp_merge',
+      'save_temp_target_as',
+      'discard_temp_target',
+    ].includes(name),
+);
 
 const expectedEventNames = [
   'search-progress',
@@ -303,6 +321,37 @@ test('rejects command submodule dependencies on sibling command submodules', () 
       dependency,
     );
   }
+});
+
+test('rejects temporary merge command dependencies on sibling command modules', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  for (const commandName of [
+    'create_temp_target',
+    'preview_merge_all_conflicts',
+    'stage_temp_merge_all',
+    'apply_temp_merge',
+    'save_temp_target_as',
+    'discard_temp_target',
+  ]) {
+    delete sources.commandSources[`src-tauri/src/commands/${commandName}.rs`];
+  }
+  sources.commandSources['src-tauri/src/commands/temp_merge.rs'] = `
+    use super::merge::commit_merge;
+    ${[
+      'create_temp_target',
+      'preview_merge_all_conflicts',
+      'stage_temp_merge_all',
+      'apply_temp_merge',
+      'save_temp_target_as',
+      'discard_temp_target',
+    ]
+      .map((name) => `#[tauri::command]\nfn ${name}() {}`)
+      .join('\n')}
+  `;
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    'src-tauri/src/commands/temp_merge.rs must not depend on sibling command submodules',
+  ]);
 });
 
 test('rejects command submodule dependencies through commands root reexports', () => {
@@ -629,7 +678,9 @@ const cleanPhaseThreeSources = {
   frontendSources: {
     'src/ipc/commands.ts': [
       'import { invoke } from "@tauri-apps/api/core";',
-      ...expectedCommandNames.map((name) => `const ${name.toUpperCase()} = "${name}";`),
+      ...expectedFrontendCommandNames.map(
+        (name) => `const ${name.toUpperCase()} = "${name}";`,
+      ),
     ].join('\n'),
     'src/ipc/events.ts': [
       'import { listen } from "@tauri-apps/api/event";',
@@ -786,7 +837,7 @@ test('rejects a missing or renamed frontend IPC command literal', () => {
     );
 
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
-    `frontend IPC command literals must be exactly: ${expectedCommandNames.join(', ')}`,
+    `frontend IPC command literals must be exactly: ${expectedFrontendCommandNames.join(', ')}`,
   ]);
 });
 

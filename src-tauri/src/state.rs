@@ -17,8 +17,6 @@ use crate::{Side, sidecar_process::SidecarClient};
 
 pub(crate) type SharedState = Arc<Mutex<AppState>>;
 
-// Command registration follows in a later task; these lifecycle contracts are
-// exercised directly by stored-state tests until then.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum TempTargetCreation {
@@ -37,7 +35,13 @@ pub(crate) struct TempMergeSessionSummary {
     pub(crate) exported_path: Option<String>,
 }
 
-#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum TempTargetDiscardOutcome {
+    Discarded,
+    RetryDiscardOnly { message: String },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TempMergeConflictPreview {
@@ -45,7 +49,6 @@ pub(crate) struct TempMergeConflictPreview {
     pub(crate) conflicts: Vec<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum TempMergeConflictAction {
@@ -53,7 +56,6 @@ pub(crate) enum TempMergeConflictAction {
     Skip,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TempMergeDecision {
@@ -61,7 +63,6 @@ pub(crate) struct TempMergeDecision {
     pub(crate) action: TempMergeConflictAction,
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct TempMergeReview {
     source_side: Side,
@@ -75,12 +76,9 @@ pub(crate) struct TempMergeSession {
     target_side: Side,
     temp_dir: TempDir,
     working_path: PathBuf,
-    #[allow(dead_code)]
-    creation: TempTargetCreation,
     applied_source_count: usize,
     exported_path: Option<PathBuf>,
     pending_cleanup_paths: Vec<OwnedTempPath>,
-    #[allow(dead_code)]
     review: Option<TempMergeReview>,
 }
 
@@ -151,6 +149,35 @@ struct TempTargetRecoverySnapshot {
     archive_bytes: Vec<u8>,
 }
 
+struct PreparedTempMergeApply {
+    session_id: String,
+    target_side: Side,
+    target: Archive,
+    plan: MergePlan,
+}
+
+struct TempTargetExportSnapshot {
+    session_id: String,
+    target_side: Side,
+    working_path: PathBuf,
+}
+
+struct TempMergeArchiveSnapshot {
+    session_id: String,
+    source_side: Side,
+    target_side: Side,
+    source: Archive,
+    target: Archive,
+}
+
+struct TempMergeStageSnapshot {
+    session_id: String,
+    target_side: Side,
+    source: Archive,
+    target: Archive,
+    review: TempMergeReview,
+}
+
 struct PendingTempTargetDiscard {
     target_side: Side,
     _nested: Arc<Mutex<NestedArchiveCache>>,
@@ -206,6 +233,8 @@ pub(crate) struct AppState {
     pub(crate) right_plan: MergePlan,
     pub(crate) temp_merge_session: Option<TempMergeSession>,
     temp_merge_discarding: Option<Side>,
+    temp_merge_applying: Option<Side>,
+    temp_merge_exporting: Option<Side>,
     pending_temp_target_discard: Option<PendingTempTargetDiscard>,
     pub(crate) engine: DecompileEngine,
     pub(crate) sidecar: Arc<Mutex<SidecarClient>>,
@@ -241,6 +270,8 @@ impl AppState {
             right_plan: MergePlan::new(),
             temp_merge_session: None,
             temp_merge_discarding: None,
+            temp_merge_applying: None,
+            temp_merge_exporting: None,
             pending_temp_target_discard: None,
             engine: DEFAULT_DECOMPILE_ENGINE,
             sidecar: Arc::new(Mutex::new(sidecar)),
@@ -467,6 +498,9 @@ impl AppState {
         if self.temp_merge_discarding.is_some() {
             return Err("temporary merge target is being discarded".to_owned());
         }
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err("temporary merge target is busy".to_owned());
+        }
         if self
             .temp_merge_session
             .as_ref()
@@ -488,6 +522,12 @@ impl AppState {
         if self.temp_merge_discarding.is_some() {
             return Err(
                 "temporary merge target or source cannot be replaced while session is being discarded"
+                    .to_owned(),
+            );
+        }
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err(
+                "temporary merge target or source cannot be replaced while session is busy"
                     .to_owned(),
             );
         }
@@ -521,7 +561,11 @@ impl AppState {
         &self,
         source_side: Side,
     ) -> Result<TempTargetSourceSnapshot, String> {
-        if self.temp_merge_session.is_some() || self.temp_merge_discarding.is_some() {
+        if self.temp_merge_session.is_some()
+            || self.temp_merge_discarding.is_some()
+            || self.temp_merge_applying.is_some()
+            || self.temp_merge_exporting.is_some()
+        {
             return Err("a temporary merge session is already active".to_owned());
         }
         let source = archive(self, source_side)
@@ -564,10 +608,124 @@ impl AppState {
         Ok(summary)
     }
 
+    fn begin_temp_merge_apply(&mut self) -> Result<PreparedTempMergeApply, String> {
+        if self.temp_merge_discarding.is_some() || self.pending_temp_target_discard.is_some() {
+            return Err("temporary merge target is being discarded".to_owned());
+        }
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err("temporary merge target is busy".to_owned());
+        }
+        let session = self
+            .temp_merge_session
+            .as_mut()
+            .ok_or_else(|| "temporary merge session is not active".to_owned())?;
+        let session_id = session.id.clone();
+        let target_side = session.target_side;
+        session.review = None;
+        let target = archive(self, target_side)
+            .ok_or("temporary merge target archive is not loaded")?
+            .clone();
+        let plan = std::mem::replace(self.plan_mut(target_side), MergePlan::new());
+        self.temp_merge_applying = Some(target_side);
+        Ok(PreparedTempMergeApply {
+            session_id,
+            target_side,
+            target,
+            plan,
+        })
+    }
+
+    fn restore_temp_merge_apply(&mut self, prepared: PreparedTempMergeApply) {
+        debug_assert_eq!(self.temp_merge_applying, Some(prepared.target_side));
+        debug_assert!(self.plan(prepared.target_side).is_empty());
+        *self.plan_mut(prepared.target_side) = prepared.plan;
+        self.temp_merge_applying = None;
+    }
+
+    fn finish_temp_merge_apply(
+        &mut self,
+        prepared: PreparedTempMergeApply,
+        refreshed_target: Archive,
+        refreshed_nested: Arc<Mutex<NestedArchiveCache>>,
+    ) -> Result<TempMergeSessionSummary, String> {
+        debug_assert_eq!(self.temp_merge_applying, Some(prepared.target_side));
+        let session = self
+            .temp_merge_session
+            .as_mut()
+            .filter(|session| session.id == prepared.session_id)
+            .ok_or_else(|| "temporary merge session changed while apply was running".to_owned())?;
+        session.applied_source_count += 1;
+        *archive_mut(self, prepared.target_side) = Some(refreshed_target);
+        *nested_cache_mut(self, prepared.target_side) = refreshed_nested;
+        self.temp_merge_applying = None;
+        Ok(self
+            .temp_merge_session
+            .as_ref()
+            .expect("temporary merge session checked above")
+            .summary(
+                archive(self, prepared.target_side)
+                    .expect("refreshed temporary target was installed"),
+            ))
+    }
+
+    fn begin_temp_target_export(&mut self) -> Result<TempTargetExportSnapshot, String> {
+        if self.temp_merge_discarding.is_some() || self.pending_temp_target_discard.is_some() {
+            return Err("temporary merge target is being discarded".to_owned());
+        }
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err("temporary merge target is busy".to_owned());
+        }
+        let session = self
+            .temp_merge_session
+            .as_ref()
+            .ok_or_else(|| "temporary merge session is not active".to_owned())?;
+        let snapshot = TempTargetExportSnapshot {
+            session_id: session.id.clone(),
+            target_side: session.target_side,
+            working_path: session.working_path.clone(),
+        };
+        if archive(self, snapshot.target_side).is_none() {
+            return Err("temporary merge target archive is not loaded".to_owned());
+        }
+        self.temp_merge_exporting = Some(snapshot.target_side);
+        Ok(snapshot)
+    }
+
+    fn cancel_temp_target_export(&mut self, snapshot: &TempTargetExportSnapshot) {
+        debug_assert_eq!(self.temp_merge_exporting, Some(snapshot.target_side));
+        self.temp_merge_exporting = None;
+    }
+
+    fn finish_temp_target_export(
+        &mut self,
+        snapshot: &TempTargetExportSnapshot,
+        destination: PathBuf,
+    ) -> Result<TempMergeSessionSummary, String> {
+        debug_assert_eq!(self.temp_merge_exporting, Some(snapshot.target_side));
+        let session = self
+            .temp_merge_session
+            .as_mut()
+            .filter(|session| session.id == snapshot.session_id)
+            .ok_or_else(|| "temporary merge session changed while export was running".to_owned())?;
+        session.exported_path = Some(destination);
+        self.temp_merge_exporting = None;
+        Ok(self
+            .temp_merge_session
+            .as_ref()
+            .expect("temporary merge session checked above")
+            .summary(
+                archive(self, snapshot.target_side)
+                    .expect("temporary merge target archive was checked before export"),
+            ))
+    }
+
     fn detach_temp_target(
         &mut self,
         replacement_nested: Arc<Mutex<NestedArchiveCache>>,
     ) -> Result<DetachedTempTarget, String> {
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err("temporary merge target is busy".to_owned());
+        }
         let target_side = self
             .temp_merge_session
             .as_ref()
@@ -621,13 +779,15 @@ impl AppState {
         }
     }
 
-    #[allow(dead_code)]
     fn active_temp_merge_archives(
         &self,
         source_side: Side,
     ) -> Result<(Side, Archive, Archive), String> {
         if self.temp_merge_discarding.is_some() || self.pending_temp_target_discard.is_some() {
             return Err("temporary merge target is being discarded".to_owned());
+        }
+        if self.temp_merge_applying.is_some() || self.temp_merge_exporting.is_some() {
+            return Err("temporary merge target is busy".to_owned());
         }
         let target_side = self
             .temp_merge_session
@@ -646,7 +806,120 @@ impl AppState {
         Ok((target_side, source, target))
     }
 
-    #[allow(dead_code)]
+    fn begin_temp_merge_preview(
+        &mut self,
+        source_side: Side,
+    ) -> Result<TempMergeArchiveSnapshot, String> {
+        self.invalidate_temp_merge_review();
+        let (target_side, source, target) = self.active_temp_merge_archives(source_side)?;
+        let session_id = self
+            .temp_merge_session
+            .as_ref()
+            .expect("active temporary merge session checked above")
+            .id
+            .clone();
+        Ok(TempMergeArchiveSnapshot {
+            session_id,
+            source_side,
+            target_side,
+            source,
+            target,
+        })
+    }
+
+    fn finish_temp_merge_preview(
+        &mut self,
+        snapshot: TempMergeArchiveSnapshot,
+        preview: TempMergeConflictPreview,
+    ) -> Result<TempMergeConflictPreview, String> {
+        let session_id_matches = self
+            .temp_merge_session
+            .as_ref()
+            .is_some_and(|session| session.id == snapshot.session_id);
+        let (target_side, source, target) =
+            self.active_temp_merge_archives(snapshot.source_side)?;
+        if !session_id_matches
+            || target_side != snapshot.target_side
+            || !same_archive_snapshot(&source, &snapshot.source)
+            || !same_archive_snapshot(&target, &snapshot.target)
+        {
+            self.invalidate_temp_merge_review();
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        self.temp_merge_session
+            .as_mut()
+            .expect("active temporary merge session checked above")
+            .review = Some(TempMergeReview {
+            source_side: snapshot.source_side,
+            source: snapshot.source,
+            target: snapshot.target,
+            preview: preview.clone(),
+        });
+        Ok(preview)
+    }
+
+    fn begin_temp_merge_stage(
+        &mut self,
+        source_side: Side,
+    ) -> Result<TempMergeStageSnapshot, String> {
+        let (target_side, source, target) = self.active_temp_merge_archives(source_side)?;
+        let (session_id, review) = {
+            let session = self
+                .temp_merge_session
+                .as_ref()
+                .expect("active temporary merge session checked above");
+            (
+                session.id.clone(),
+                session
+                    .review
+                    .clone()
+                    .ok_or_else(|| "preview temporary merge conflicts before staging".to_owned())?,
+            )
+        };
+        if review.source_side != source_side
+            || !same_archive_snapshot(&review.source, &source)
+            || !same_archive_snapshot(&review.target, &target)
+        {
+            self.invalidate_temp_merge_review();
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        Ok(TempMergeStageSnapshot {
+            session_id,
+            target_side,
+            source,
+            target,
+            review,
+        })
+    }
+
+    fn finish_temp_merge_stage(
+        &mut self,
+        snapshot: TempMergeStageSnapshot,
+        staged_paths: Vec<String>,
+    ) -> Result<(), String> {
+        let session_id_matches = self
+            .temp_merge_session
+            .as_ref()
+            .is_some_and(|session| session.id == snapshot.session_id);
+        let (target_side, source, target) =
+            self.active_temp_merge_archives(snapshot.review.source_side)?;
+        if !session_id_matches
+            || target_side != snapshot.target_side
+            || !same_archive_snapshot(&source, &snapshot.source)
+            || !same_archive_snapshot(&target, &snapshot.target)
+        {
+            self.invalidate_temp_merge_review();
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        for entry_path in staged_paths {
+            self.plan_mut(target_side)
+                .stage_copy(&snapshot.review.source, &entry_path, &entry_path)
+                .expect("bulk staging paths were validated before mutating the merge plan");
+        }
+        self.invalidate_temp_merge_review();
+        Ok(())
+    }
+
     fn temp_merge_conflict_preview(source: &Archive, target: &Archive) -> TempMergeConflictPreview {
         let mut new_entries = Vec::new();
         let mut conflicts = Vec::new();
@@ -668,6 +941,7 @@ impl AppState {
         }
     }
 
+    #[cfg(test)]
     fn ensure_temp_merge_review_fresh(
         &mut self,
         review: &TempMergeReview,
@@ -705,7 +979,7 @@ impl AppState {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn preview_temp_merge_all(
         &mut self,
         source_side: Side,
@@ -734,7 +1008,7 @@ impl AppState {
         Ok(preview)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn stage_temp_merge_all(
         &mut self,
         source_side: Side,
@@ -743,6 +1017,7 @@ impl AppState {
         self.stage_temp_merge_all_with_pre_final_check(source_side, decisions, || {})
     }
 
+    #[cfg(test)]
     fn stage_temp_merge_all_with_pre_final_check(
         &mut self,
         source_side: Side,
@@ -970,7 +1245,6 @@ fn build_prepared_temp_target(
         target_side,
         temp_dir,
         working_path: working_archive.path().to_owned(),
-        creation,
         applied_source_count: 0,
         exported_path: None,
         pending_cleanup_paths: Vec::new(),
@@ -1000,7 +1274,6 @@ fn prepare_temp_target_with_probe(
     build_prepared_temp_target(source_snapshot, creation)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn prepare_temp_target(
     shared_state: &SharedState,
     source_side: Side,
@@ -1019,7 +1292,6 @@ pub(crate) fn prepare_temp_target_with_lock_probe(
     prepare_temp_target_with_probe(shared_state, source_side, creation, probe)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn install_prepared_temp_target(
     shared_state: &SharedState,
     prepared: PreparedTempTarget,
@@ -1030,7 +1302,6 @@ pub(crate) fn install_prepared_temp_target(
     state.install_prepared_temp_target(prepared)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn create_temp_target(
     shared_state: &SharedState,
     source_side: Side,
@@ -1038,6 +1309,236 @@ pub(crate) fn create_temp_target(
 ) -> Result<TempMergeSessionSummary, String> {
     let prepared = prepare_temp_target(shared_state, source_side, creation)?;
     install_prepared_temp_target(shared_state, prepared)
+}
+
+pub(crate) fn apply_temp_merge(
+    shared_state: &SharedState,
+) -> Result<TempMergeSessionSummary, String> {
+    let mut prepared = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.begin_temp_merge_apply()?
+    };
+    let refreshed_nested = match fresh_nested_cache() {
+        Ok(nested) => nested,
+        Err(error) => {
+            let mut state = match shared_state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.restore_temp_merge_apply(prepared);
+            return Err(error);
+        }
+    };
+    let refreshed_target = match prepared
+        .plan
+        .commit(&prepared.target, CommitOptions { backup: false })
+        .map_err(|error| error.to_string())
+        .and_then(|result| {
+            Archive::open(result.rewritten_path.to_string_lossy())
+                .map_err(|error| error.to_string())
+        }) {
+        Ok(target) => target,
+        Err(error) => {
+            let mut state = match shared_state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.restore_temp_merge_apply(prepared);
+            return Err(error);
+        }
+    };
+    shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .finish_temp_merge_apply(prepared, refreshed_target, refreshed_nested)
+}
+
+pub(crate) fn save_temp_target_as(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    let snapshot = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.begin_temp_target_export()?
+    };
+    let export_result = export_archive_atomic(&snapshot.working_path, &destination)
+        .map_err(|error| error.to_string())
+        .and_then(|()| std::fs::canonicalize(&destination).map_err(|error| error.to_string()));
+    let canonical_destination = match export_result {
+        Ok(destination) => destination,
+        Err(error) => {
+            let mut state = match shared_state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.cancel_temp_target_export(&snapshot);
+            return Err(error);
+        }
+    };
+    shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .finish_temp_target_export(&snapshot, canonical_destination)
+}
+
+fn temp_merge_review_changed_on_disk(snapshot: &TempMergeStageSnapshot) -> Result<bool, String> {
+    Ok(snapshot
+        .review
+        .source
+        .changed_on_disk()
+        .map_err(|error| error.to_string())?
+        || snapshot
+            .review
+            .target
+            .changed_on_disk()
+            .map_err(|error| error.to_string())?
+        || snapshot
+            .source
+            .changed_on_disk()
+            .map_err(|error| error.to_string())?
+        || snapshot
+            .target
+            .changed_on_disk()
+            .map_err(|error| error.to_string())?)
+}
+
+fn invalidate_temp_merge_review_for_session(shared_state: &SharedState, session_id: &str) {
+    let mut state = match shared_state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if state
+        .temp_merge_session
+        .as_ref()
+        .is_some_and(|session| session.id == session_id)
+    {
+        state.invalidate_temp_merge_review();
+    }
+}
+
+fn temp_merge_staged_paths(
+    review: &TempMergeReview,
+    decisions: Vec<TempMergeDecision>,
+) -> Result<Vec<String>, String> {
+    let conflicts = review
+        .preview
+        .conflicts
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut actions = BTreeMap::new();
+    for decision in decisions {
+        if !conflicts.contains(decision.entry_path.as_str()) {
+            return Err(format!(
+                "temporary merge decision is not for a conflict: {}",
+                decision.entry_path
+            ));
+        }
+        if actions
+            .insert(decision.entry_path.clone(), decision.action)
+            .is_some()
+        {
+            return Err(format!(
+                "duplicate temporary merge conflict decision: {}",
+                decision.entry_path
+            ));
+        }
+    }
+    if actions.len() != conflicts.len() {
+        return Err("every temporary merge conflict requires exactly one decision".to_owned());
+    }
+
+    let mut staged_paths = review.preview.new_entries.clone();
+    staged_paths.extend(
+        review
+            .preview
+            .conflicts
+            .iter()
+            .filter(|entry_path| {
+                actions.get(entry_path.as_str()) == Some(&TempMergeConflictAction::Overwrite)
+            })
+            .cloned(),
+    );
+    staged_paths.sort();
+    let mut validated_plan = MergePlan::new();
+    for entry_path in &staged_paths {
+        validated_plan
+            .stage_copy(&review.source, entry_path, entry_path)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(staged_paths)
+}
+
+pub(crate) fn preview_merge_all_conflicts(
+    shared_state: &SharedState,
+    source_side: Side,
+) -> Result<TempMergeConflictPreview, String> {
+    let snapshot = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.begin_temp_merge_preview(source_side)?
+    };
+    if snapshot
+        .source
+        .changed_on_disk()
+        .map_err(|error| error.to_string())?
+        || snapshot
+            .target
+            .changed_on_disk()
+            .map_err(|error| error.to_string())?
+    {
+        return Err("temporary merge source or target changed on disk".to_owned());
+    }
+    let preview = AppState::temp_merge_conflict_preview(&snapshot.source, &snapshot.target);
+    shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .finish_temp_merge_preview(snapshot, preview)
+}
+
+pub(crate) fn stage_temp_merge_all_shared(
+    shared_state: &SharedState,
+    source_side: Side,
+    decisions: Vec<TempMergeDecision>,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.begin_temp_merge_stage(source_side)?
+    };
+    match temp_merge_review_changed_on_disk(&snapshot) {
+        Ok(false) => {}
+        Ok(true) => {
+            invalidate_temp_merge_review_for_session(shared_state, &snapshot.session_id);
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        Err(error) => {
+            invalidate_temp_merge_review_for_session(shared_state, &snapshot.session_id);
+            return Err(error);
+        }
+    }
+    let staged_paths = temp_merge_staged_paths(&snapshot.review, decisions)?;
+    match temp_merge_review_changed_on_disk(&snapshot) {
+        Ok(false) => {}
+        Ok(true) => {
+            invalidate_temp_merge_review_for_session(shared_state, &snapshot.session_id);
+            return Err("temporary merge conflict preview is stale".to_owned());
+        }
+        Err(error) => {
+            invalidate_temp_merge_review_for_session(shared_state, &snapshot.session_id);
+            return Err(error);
+        }
+    }
+    shared_state
+        .lock()
+        .map_err(|_| "state lock is poisoned".to_owned())?
+        .finish_temp_merge_stage(snapshot, staged_paths)
 }
 
 impl DetachedTempTarget {
@@ -1282,7 +1783,6 @@ fn discard_temp_target_with_operations(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn discard_temp_target(shared_state: &SharedState) -> Result<(), String> {
     discard_temp_target_with_operations(
         shared_state,
@@ -1293,6 +1793,33 @@ pub(crate) fn discard_temp_target(shared_state: &SharedState) -> Result<(), Stri
         },
         |path, bytes| std::fs::write(path, bytes),
     )
+}
+
+pub(crate) fn discard_temp_target_with_outcome(
+    shared_state: &SharedState,
+) -> Result<TempTargetDiscardOutcome, String> {
+    classify_temp_target_discard_result(shared_state, discard_temp_target(shared_state))
+}
+
+pub(crate) fn classify_temp_target_discard_result(
+    shared_state: &SharedState,
+    result: Result<(), String>,
+) -> Result<TempTargetDiscardOutcome, String> {
+    match result {
+        Ok(()) => Ok(TempTargetDiscardOutcome::Discarded),
+        Err(message) => {
+            let retry_discard_only = shared_state
+                .lock()
+                .map_err(|_| "state lock is poisoned".to_owned())?
+                .pending_temp_target_discard
+                .is_some();
+            if retry_discard_only {
+                Ok(TempTargetDiscardOutcome::RetryDiscardOnly { message })
+            } else {
+                Err(message)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

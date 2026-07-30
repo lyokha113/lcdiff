@@ -19,12 +19,14 @@ use archive_access::{
     resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
 };
 use commands::{
-    cancel_deep_search, clear_staged, close_view_source, commit_merge, commit_view, compute_diff,
-    compute_nested_diff, compute_view_nested_entries, deep_search, deep_search_view_source,
-    disassemble, disassemble_view_entry, list_system_fonts, list_view_sources, open_archive,
-    open_compare_sources, open_view_source, pending_open_paths, platform_hints, prefetch_siblings,
-    read_entry, read_text_file, read_view_entry, search, search_view_source, set_engine,
-    stage_copy, stage_view_write, stage_write, unstage, unstage_view_write, validate_path,
+    apply_temp_merge, cancel_deep_search, clear_staged, close_view_source, commit_merge,
+    commit_view, compute_diff, compute_nested_diff, compute_view_nested_entries,
+    create_temp_target, deep_search, deep_search_view_source, disassemble, disassemble_view_entry,
+    discard_temp_target, list_system_fonts, list_view_sources, open_archive, open_compare_sources,
+    open_view_source, pending_open_paths, platform_hints, prefetch_siblings,
+    preview_merge_all_conflicts, read_entry, read_text_file, read_view_entry, save_temp_target_as,
+    search, search_view_source, set_engine, stage_copy, stage_temp_merge_all, stage_view_write,
+    stage_write, unstage, unstage_view_write, validate_path,
 };
 #[cfg(test)]
 use commands::{
@@ -188,7 +190,13 @@ pub fn run() {
             deep_search_view_source,
             cancel_deep_search,
             prefetch_siblings,
-            pending_open_paths
+            pending_open_paths,
+            create_temp_target,
+            preview_merge_all_conflicts,
+            stage_temp_merge_all,
+            apply_temp_merge,
+            save_temp_target_as,
+            discard_temp_target
         ])
         .build(tauri::generate_context!())
         .expect("error while building LCDiff")
@@ -217,11 +225,14 @@ mod tests {
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
     use super::state::{
-        TempMergeConflictAction, TempMergeDecision, TempTargetCreation, create_temp_target,
+        TempMergeConflictAction, TempMergeDecision, TempTargetCreation, TempTargetDiscardOutcome,
+        apply_temp_merge, classify_temp_target_discard_result, create_temp_target,
         discard_temp_target, discard_temp_target_with_cleanup,
-        discard_temp_target_with_cleanup_and_write, install_prepared_compare_archives,
-        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
-        prepare_temp_target_with_lock_probe, stage_temp_merge_all_with_pre_final_check,
+        discard_temp_target_with_cleanup_and_write, discard_temp_target_with_outcome,
+        install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
+        prepare_temp_target, prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
+        save_temp_target_as, stage_temp_merge_all_shared,
+        stage_temp_merge_all_with_pre_final_check,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -2783,6 +2794,252 @@ mod tests {
 
         assert_eq!(retry_attempts, [incomplete_recovery_dir, target_dir]);
         assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_merge_apply_commits_only_the_temporary_target_and_refreshes_its_summary() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap();
+        }
+        let nested_before = Arc::clone(&shared_state.lock().unwrap().right_nested);
+
+        let summary = apply_temp_merge(&shared_state).unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(summary.applied_source_count, 1);
+        assert_eq!(summary.exported_path, None);
+        let state = shared_state.lock().unwrap();
+        assert_eq!(
+            state
+                .right
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+        assert!(state.right_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+        assert!(!Arc::ptr_eq(&nested_before, &state.right_nested));
+        assert_eq!(
+            state
+                .left
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+    }
+
+    #[test]
+    fn temp_merge_command_state_apis_require_and_consume_a_fresh_preview() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let preview = preview_merge_all_conflicts(&shared_state, Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["source.txt"]);
+        assert!(preview.conflicts.is_empty());
+        stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap();
+
+        assert!(!shared_state.lock().unwrap().right_plan.is_empty());
+        let error = stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap_err();
+        assert!(error.contains("preview temporary merge conflicts before staging"));
+    }
+
+    #[test]
+    fn temp_merge_apply_failure_keeps_session_plan_and_last_good_working_archive() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap();
+        }
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let working_before = std::fs::read(&working_path).unwrap();
+        std::fs::remove_file(&source).unwrap();
+
+        assert!(apply_temp_merge(&shared_state).is_err());
+
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(!state.right_plan.is_empty());
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+    }
+
+    #[test]
+    fn temp_merge_apply_save_as_is_atomic_and_keeps_the_session_active() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let destination = dir.path().join("exports").join("merged.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        let summary = save_temp_target_as(&shared_state, destination.clone()).unwrap();
+
+        assert_eq!(
+            summary.exported_path,
+            Some(
+                std::fs::canonicalize(&destination)
+                    .unwrap()
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            std::fs::read(&working_path).unwrap()
+        );
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(state.right.is_some());
+    }
+
+    #[test]
+    fn temp_merge_apply_failed_save_as_keeps_session_and_last_good_working_archive() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let successful_destination = dir.path().join("saved.jar");
+        let invalid_destination = dir.path().join("missing").join("saved.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        save_temp_target_as(&shared_state, successful_destination.clone()).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let working_before = std::fs::read(&working_path).unwrap();
+
+        assert!(save_temp_target_as(&shared_state, invalid_destination).is_err());
+
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+        assert!(successful_destination.is_file());
+    }
+
+    #[test]
+    fn temp_merge_discard_reports_retry_only_state_then_safely_finishes_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let failure = discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive cleanup failure"))
+                } else {
+                    std::fs::remove_dir_all(owned_dir)
+                }
+            },
+            |_, _| Err(std::io::Error::other("snapshot restore failure")),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            classify_temp_target_discard_result(&shared_state, Err(failure)).unwrap(),
+            TempTargetDiscardOutcome::RetryDiscardOnly {
+                message: "failed to discard temporary merge target: destructive cleanup failure; \
+                          recovery failed: snapshot restore failure; original session restore failed: \
+                          snapshot restore failure"
+                    .to_owned(),
+            }
+        );
+        {
+            let state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+            assert!(state.pending_temp_target_recovery_bytes().is_some());
+        }
+        assert_eq!(
+            discard_temp_target_with_outcome(&shared_state).unwrap(),
+            TempTargetDiscardOutcome::Discarded
+        );
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .pending_temp_target_recovery_bytes(),
+            None
+        );
     }
 
     #[test]

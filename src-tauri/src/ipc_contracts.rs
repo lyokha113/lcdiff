@@ -4,7 +4,7 @@ use lcdiff_core::{
     ArchiveDiff, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitResult, EntryKind,
     PairStatus,
 };
-use serde_json::{json, to_value};
+use serde_json::{from_value, json, to_value};
 
 use super::{
     EntryPreview, PlatformHints, SearchHit, SearchHitKind, Side,
@@ -12,11 +12,15 @@ use super::{
         APP_ACTION, AppActionPayload, DeepSearchMatch, OS_OPEN_PATHS, OsOpenPathsPayload,
         SEARCH_PROGRESS, SEARCH_RESULT, SearchProgress,
     },
-    state::{ArchiveSummary, CompareSourcesResult, TextFileContent, ViewSourceSummary},
+    state::{
+        ArchiveSummary, CompareSourcesResult, TempMergeConflictAction, TempMergeConflictPreview,
+        TempMergeDecision, TempMergeSessionSummary, TempTargetCreation, TempTargetDiscardOutcome,
+        TextFileContent, ViewSourceSummary,
+    },
     system_fonts::SystemFont,
 };
 
-const COMMAND_NAMES: [&str; 32] = [
+const COMMAND_NAMES: [&str; 38] = [
     "validate_path",
     "platform_hints",
     "list_system_fonts",
@@ -49,6 +53,12 @@ const COMMAND_NAMES: [&str; 32] = [
     "cancel_deep_search",
     "prefetch_siblings",
     "pending_open_paths",
+    "create_temp_target",
+    "preview_merge_all_conflicts",
+    "stage_temp_merge_all",
+    "apply_temp_merge",
+    "save_temp_target_as",
+    "discard_temp_target",
 ];
 
 const EVENT_NAMES: [&str; 4] = [
@@ -64,17 +74,19 @@ const ARCHIVE_COMMANDS_SOURCE: &str = include_str!("commands/archive.rs");
 const PREVIEW_COMMANDS_SOURCE: &str = include_str!("commands/preview.rs");
 const MERGE_COMMANDS_SOURCE: &str = include_str!("commands/merge.rs");
 const SEARCH_COMMANDS_SOURCE: &str = include_str!("commands/search.rs");
-const COMMAND_SOURCES: [&str; 5] = [
+const TEMP_MERGE_COMMANDS_SOURCE: &str = include_str!("commands/temp_merge.rs");
+const COMMAND_SOURCES: [&str; 6] = [
     APP_COMMANDS_SOURCE,
     ARCHIVE_COMMANDS_SOURCE,
     PREVIEW_COMMANDS_SOURCE,
     MERGE_COMMANDS_SOURCE,
     SEARCH_COMMANDS_SOURCE,
+    TEMP_MERGE_COMMANDS_SOURCE,
 ];
 const EVENTS_SOURCE: &str = include_str!("events.rs");
 const MENU_SOURCE: &str = include_str!("menu.rs");
 
-const COMMAND_SIGNATURE_NAMES: [&str; 32] = [
+const COMMAND_SIGNATURE_NAMES: [&str; 38] = [
     "validate_path",
     "platform_hints",
     "pending_open_paths",
@@ -107,9 +119,15 @@ const COMMAND_SIGNATURE_NAMES: [&str; 32] = [
     "cancel_deep_search",
     "prefetch_siblings",
     "list_system_fonts",
+    "create_temp_target",
+    "preview_merge_all_conflicts",
+    "stage_temp_merge_all",
+    "apply_temp_merge",
+    "save_temp_target_as",
+    "discard_temp_target",
 ];
 
-const COMMAND_SIGNATURES: [&str; 32] = [
+const COMMAND_SIGNATURES: [&str; 38] = [
     "fnvalidate_path(raw:String)->Result<String,String>",
     "fnplatform_hints()->PlatformHints",
     "fnpending_open_paths(state:State<'_,SharedState>)->Result<Vec<String>,String>",
@@ -142,6 +160,12 @@ const COMMAND_SIGNATURES: [&str; 32] = [
     "fncancel_deep_search(state:State<'_,SharedState>)->Result<(),String>",
     "fnprefetch_siblings(side:Side,entry_path:String,state:State<'_,SharedState>,)->Result<(),String>",
     "pubasyncfnlist_system_fonts()->Result<Vec<SystemFont>,String>",
+    "asyncfncreate_temp_target(source_side:Side,creation:TempTargetCreation,state:State<'_,SharedState>,)->Result<TempMergeSessionSummary,String>",
+    "asyncfnpreview_merge_all_conflicts(source_side:Side,state:State<'_,SharedState>,)->Result<TempMergeConflictPreview,String>",
+    "asyncfnstage_temp_merge_all(source_side:Side,decisions:Vec<TempMergeDecision>,state:State<'_,SharedState>,)->Result<(),String>",
+    "asyncfnapply_temp_merge(state:State<'_,SharedState>,)->Result<TempMergeSessionSummary,String>",
+    "asyncfnsave_temp_target_as(path:String,state:State<'_,SharedState>,)->Result<TempMergeSessionSummary,String>",
+    "asyncfndiscard_temp_target(state:State<'_,SharedState>,)->Result<TempTargetDiscardOutcome,String>",
 ];
 
 fn compact(value: &str) -> String {
@@ -497,6 +521,71 @@ fn serializes_platform_commit_and_font_dtos_with_exact_null_behavior() {
             "monospaceLikely": true,
             "localNames": ["JetBrainsMono-Regular"],
             "fontFile": null,
+        }),
+    );
+}
+
+#[test]
+fn locks_temporary_merge_dto_keys_variants_and_required_nulls() {
+    assert_eq!(
+        to_value(TempMergeSessionSummary {
+            id: "temp-merge-1".to_owned(),
+            target_side: Side::Right,
+            working_name: "working.jar".to_owned(),
+            entry_count: 4,
+            applied_source_count: 2,
+            exported_path: None,
+        })
+        .unwrap(),
+        json!({
+            "id": "temp-merge-1",
+            "targetSide": "right",
+            "workingName": "working.jar",
+            "entryCount": 4,
+            "appliedSourceCount": 2,
+            "exportedPath": null,
+        }),
+    );
+    assert_eq!(
+        to_value(TempMergeConflictPreview {
+            new_entries: vec!["new.txt".to_owned()],
+            conflicts: vec!["same.txt".to_owned()],
+        })
+        .unwrap(),
+        json!({
+            "newEntries": ["new.txt"],
+            "conflicts": ["same.txt"],
+        }),
+    );
+    assert!(matches!(
+        from_value::<TempTargetCreation>(json!({
+            "kind": "empty",
+            "extension": "jar",
+        }))
+        .unwrap(),
+        TempTargetCreation::Empty { extension } if extension == "jar"
+    ));
+    assert!(matches!(
+        from_value::<TempTargetCreation>(json!({ "kind": "copyCurrent" })).unwrap(),
+        TempTargetCreation::CopyCurrent
+    ));
+    let decision =
+        from_value::<TempMergeDecision>(json!({ "entryPath": "same.txt", "action": "skip" }))
+            .unwrap();
+    assert_eq!(decision.entry_path, "same.txt");
+    assert_eq!(decision.action, TempMergeConflictAction::Skip);
+    assert_eq!(
+        to_value(TempTargetDiscardOutcome::Discarded).unwrap(),
+        json!({ "kind": "discarded" }),
+    );
+    assert_eq!(
+        to_value(TempTargetDiscardOutcome::RetryDiscardOnly {
+            message: "cleanup failed".to_owned(),
+        })
+        .unwrap(),
+        json!({
+            "kind": "retryDiscardOnly",
+            "message": "cleanup failed",
         }),
     );
 }

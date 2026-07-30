@@ -3,6 +3,7 @@ mod archive;
 mod merge;
 mod preview;
 mod search;
+mod temp_merge;
 
 #[cfg(test)]
 pub(crate) use app::platform_hints_from;
@@ -30,3 +31,7 @@ pub(crate) use search::{
 };
 #[cfg(test)]
 pub(crate) use search::{deep_search_hit, is_prefetch_sibling, search_archive};
+pub(crate) use temp_merge::{
+    apply_temp_merge, create_temp_target, discard_temp_target, preview_merge_all_conflicts,
+    save_temp_target_as, stage_temp_merge_all,
+};
