@@ -238,10 +238,11 @@ mod tests {
         install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
         prepare_temp_target, prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
         save_temp_target_as, save_temp_target_as_with_after_reserve,
-        save_temp_target_as_with_hooks, save_temp_target_as_with_post_replace_failure,
-        save_temp_target_as_with_stale_reservation, set_prepared_temp_target_drop_probe,
-        stage_temp_merge_all_shared, stage_temp_merge_all_with_after_reserve,
-        stage_temp_merge_all_with_pre_final_check,
+        save_temp_target_as_with_cleanup_failure, save_temp_target_as_with_hooks,
+        save_temp_target_as_with_parent_swap, save_temp_target_as_with_post_replace_failure,
+        save_temp_target_as_with_rollback_failure, save_temp_target_as_with_stale_reservation,
+        set_prepared_temp_target_drop_probe, stage_temp_merge_all_shared,
+        stage_temp_merge_all_with_after_reserve, stage_temp_merge_all_with_pre_final_check,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -3045,6 +3046,66 @@ mod tests {
     }
 
     #[test]
+    fn temp_merge_apply_compound_rollback_failure_enters_retry_only_recovery() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let retry_export = dir.path().join("blocked-export.jar");
+
+        let error = apply_temp_merge_with_failure_point(
+            &shared_state,
+            TempMergeApplyFailurePoint::WorkingExportRollbackFailure,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("failed to restore prior temporary target"));
+        {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.temp_merge_apply_recovery_is_pending());
+            assert!(state.temp_merge_session.is_none());
+            assert!(state.right.is_none());
+            assert!(state.right_plan.is_empty());
+            assert!(state.clear_staged().unwrap_err().contains("busy"));
+            assert!(
+                state
+                    .unstage("source.txt", Some(Side::Right))
+                    .unwrap_err()
+                    .contains("busy")
+            );
+        }
+        assert!(
+            discard_temp_target(&shared_state)
+                .unwrap_err()
+                .contains("busy")
+        );
+        assert!(
+            save_temp_target_as(&shared_state, retry_export)
+                .unwrap_err()
+                .contains("recovery")
+        );
+
+        let summary = apply_temp_merge(&shared_state).unwrap();
+
+        assert_eq!(summary.applied_source_count, 1);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .right
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_merge_apply_recovery_is_pending()
+        );
+        assert!(working_path.is_file());
+    }
+
+    #[test]
     fn temp_merge_apply_rejects_reentrant_clear_and_unstage_without_losing_original_plan() {
         for mutation in [TempMergePlanMutation::Clear, TempMergePlanMutation::Unstage] {
             let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
@@ -3230,6 +3291,89 @@ mod tests {
     }
 
     #[test]
+    fn temp_merge_save_as_failed_rollback_is_owned_until_retry_restores_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("existing-export.jar");
+        let retry_destination = dir.path().join("retry-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_rollback_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert!(error.contains("export recovery is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert_ne!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            discard_temp_target(&shared_state)
+                .unwrap_err()
+                .contains("busy")
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(retry_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[test]
+    fn temp_merge_save_as_cleanup_failure_is_owned_and_retried_before_next_export() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let first_destination = dir.path().join("first-export.jar");
+        let second_destination = dir.path().join("second-export.jar");
+        std::fs::write(&first_destination, b"caller-owned-before-export").unwrap();
+
+        let error =
+            save_temp_target_as_with_cleanup_failure(&shared_state, first_destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("export cleanup is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert_eq!(
+            std::fs::read(&first_destination).unwrap(),
+            std::fs::read(&working_path).unwrap()
+        );
+
+        save_temp_target_as(&shared_state, second_destination.clone()).unwrap();
+
+        assert!(second_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+    }
+
+    #[test]
     fn temp_merge_stale_save_publication_preserves_destination_and_newer_reservation() {
         let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
         let destination = dir.path().join("stale-export.jar");
@@ -3409,24 +3553,60 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn temp_merge_save_as_rejects_replaced_canonical_parent_before_writing() {
+    fn temp_merge_save_as_keeps_using_reserved_parent_after_path_is_replaced() {
         let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
         let parent = dir.path().join("export-parent");
         let moved_parent = dir.path().join("export-parent-moved");
         let destination = parent.join("saved.jar");
         std::fs::create_dir(&parent).unwrap();
+        let expected_destination = std::fs::canonicalize(&parent).unwrap().join("saved.jar");
 
-        let error =
+        let summary =
             save_temp_target_as_with_after_reserve(&shared_state, destination.clone(), || {
                 std::fs::rename(&parent, &moved_parent).unwrap();
                 std::fs::create_dir(&parent).unwrap();
             })
-            .unwrap_err();
+            .unwrap();
 
-        assert!(error.contains("temporary merge export parent changed"));
+        assert_eq!(
+            summary.exported_path,
+            Some(expected_destination.display().to_string())
+        );
         assert!(!destination.exists());
-        assert!(!moved_parent.join("saved.jar").exists());
+        assert!(moved_parent.join("saved.jar").exists());
         save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_stays_in_pinned_parent_during_rename_and_symlink_swap() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("export-parent");
+        let moved_parent = dir.path().join("export-parent-moved");
+        let escape_parent = dir.path().join("escape-parent");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::create_dir(&escape_parent).unwrap();
+        let expected_destination = std::fs::canonicalize(&parent).unwrap().join("saved.jar");
+
+        let summary =
+            save_temp_target_as_with_parent_swap(&shared_state, destination.clone(), || {
+                std::fs::rename(&parent, &moved_parent).unwrap();
+                symlink(&escape_parent, &parent).unwrap();
+            })
+            .unwrap();
+
+        assert_eq!(
+            summary.exported_path,
+            Some(expected_destination.display().to_string())
+        );
+        assert_eq!(
+            std::fs::read(moved_parent.join("saved.jar")).unwrap(),
+            std::fs::read(working_path).unwrap()
+        );
+        assert!(!escape_parent.join("saved.jar").exists());
     }
 
     #[test]

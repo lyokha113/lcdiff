@@ -1,18 +1,22 @@
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, atomic::AtomicU64},
 };
 
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, OpenOptions},
+};
 use lcdiff_core::{
     Archive, ArchiveEntry, ArchiveMetadata, ArchiveSourceKind, CommitOptions, CommitResult,
     DEFAULT_DECOMPILE_ENGINE, DecompileEngine, EntryKind, MergePlan, NestedArchiveCache,
     create_empty_archive, edit, export_archive_atomic,
 };
 use serde::{Deserialize, Serialize};
-use tempfile::{TempDir, TempPath};
+use tempfile::TempDir;
 
 use crate::{Side, sidecar_process::SidecarClient};
 
@@ -189,6 +193,20 @@ struct PreparedTempMergeApply {
     working_path: PathBuf,
 }
 
+struct PendingTempMergeApplyRecovery {
+    reservation: TempMergeReservation,
+    session: TempMergeSession,
+    nested: Arc<Mutex<NestedArchiveCache>>,
+    plan: MergePlan,
+    operation_dir: TempDir,
+    backup_path: PathBuf,
+}
+
+struct TempMergeApplyRecoveryResources {
+    operation_dir: Option<TempDir>,
+    replacement_nested: Option<Arc<Mutex<NestedArchiveCache>>>,
+}
+
 type TempMergeApplyPublication = (
     TempMergeSessionSummary,
     Option<Archive>,
@@ -212,23 +230,28 @@ struct PreparedTempTargetExport {
 
 struct ExportDestinationBinding {
     path: PathBuf,
-    parent_path: PathBuf,
-    // `std` has no cross-platform openat/renameat API. Holding and comparing
-    // this handle binds validation to one directory identity and narrows the
-    // remaining path race to the filesystem calls between the pre/post checks.
-    parent_handle: same_file::Handle,
+    file_name: PathBuf,
+    parent: Dir,
 }
 
 enum ExportDestinationSnapshot {
-    Missing {
-        destination: PathBuf,
-    },
+    Missing,
     Existing {
-        destination: PathBuf,
-        backup: TempPath,
-        original_handle: same_file::Handle,
+        backup_name: PathBuf,
         preserves_identity: bool,
     },
+}
+
+enum PendingTempTargetExportRecoveryKind {
+    Rollback,
+    RollbackCleanup,
+    ExportCleanup,
+}
+
+struct PendingTempTargetExportRecovery {
+    prepared: PreparedTempTargetExport,
+    snapshot: ExportDestinationSnapshot,
+    kind: PendingTempTargetExportRecoveryKind,
 }
 
 struct TempMergeArchiveSnapshot {
@@ -254,6 +277,7 @@ pub(crate) enum TempMergeApplyFailurePoint {
     Cache,
     Publish,
     WorkingExportPostReplace,
+    WorkingExportRollbackFailure,
 }
 
 #[cfg(test)]
@@ -323,6 +347,8 @@ pub(crate) struct AppState {
     temp_merge_staging: Option<TempMergeReservation>,
     next_temp_merge_reservation: u64,
     pending_temp_target_discard: Option<PendingTempTargetDiscard>,
+    pending_temp_merge_apply_recovery: Option<PendingTempMergeApplyRecovery>,
+    pending_temp_target_export_recovery: Option<PendingTempTargetExportRecovery>,
     pub(crate) engine: DecompileEngine,
     pub(crate) sidecar: Arc<Mutex<SidecarClient>>,
     pub(crate) prefetch_sidecar: Arc<Mutex<SidecarClient>>,
@@ -362,6 +388,8 @@ impl AppState {
             temp_merge_staging: None,
             next_temp_merge_reservation: 1,
             pending_temp_target_discard: None,
+            pending_temp_merge_apply_recovery: None,
+            pending_temp_target_export_recovery: None,
             engine: DEFAULT_DECOMPILE_ENGINE,
             sidecar: Arc::new(Mutex::new(sidecar)),
             prefetch_sidecar: Arc::new(Mutex::new(prefetch_sidecar)),
@@ -724,12 +752,24 @@ impl AppState {
         self.temp_merge_applying.is_some()
             || self.temp_merge_exporting.is_some()
             || self.temp_merge_staging.is_some()
+            || self.pending_temp_merge_apply_recovery.is_some()
+            || self.pending_temp_target_export_recovery.is_some()
     }
 
     fn temp_merge_operation_target_side(&self) -> Option<Side> {
         self.temp_merge_applying
             .or(self.temp_merge_exporting)
             .or(self.temp_merge_staging)
+            .or_else(|| {
+                self.pending_temp_merge_apply_recovery
+                    .as_ref()
+                    .map(|pending| pending.reservation)
+            })
+            .or_else(|| {
+                self.pending_temp_target_export_recovery
+                    .as_ref()
+                    .map(|pending| pending.prepared.reservation)
+            })
             .map(|reservation| reservation.target_side)
     }
 
@@ -797,6 +837,49 @@ impl AppState {
             .and_then(|target| archive_mut(self, prepared.reservation.target_side).replace(target));
         self.temp_merge_applying = None;
         Ok(displaced)
+    }
+
+    fn install_temp_merge_apply_recovery(
+        &mut self,
+        prepared: &PreparedTempMergeApply,
+        backup_path: PathBuf,
+        resources: &mut TempMergeApplyRecoveryResources,
+    ) -> Result<Option<Archive>, String> {
+        if !self.temp_merge_apply_reservation_matches(prepared) {
+            return Err("temporary merge apply reservation changed".to_owned());
+        }
+        if resources.operation_dir.is_none() {
+            return Err("temporary merge Apply recovery directory is unavailable".to_owned());
+        }
+        let Some(replacement_nested) = resources.replacement_nested.take() else {
+            return Err("temporary merge Apply recovery cache is unavailable".to_owned());
+        };
+        let operation_dir = resources
+            .operation_dir
+            .take()
+            .expect("temporary merge Apply recovery directory checked above");
+        let target_side = prepared.reservation.target_side;
+        let session = self
+            .temp_merge_session
+            .take()
+            .expect("temporary merge session checked by reservation");
+        let stale_target = archive_mut(self, target_side).take();
+        let nested = std::mem::replace(nested_cache_mut(self, target_side), replacement_nested);
+        let plan = std::mem::replace(self.plan_mut(target_side), MergePlan::new());
+        self.pending_temp_merge_apply_recovery = Some(PendingTempMergeApplyRecovery {
+            reservation: prepared.reservation,
+            session,
+            nested,
+            plan,
+            operation_dir,
+            backup_path,
+        });
+        Ok(stale_target)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn temp_merge_apply_recovery_is_pending(&self) -> bool {
+        self.pending_temp_merge_apply_recovery.is_some()
     }
 
     fn finish_temp_merge_apply(
@@ -911,6 +994,22 @@ impl AppState {
             return;
         }
         self.temp_merge_exporting = None;
+    }
+
+    fn install_temp_target_export_recovery(
+        &mut self,
+        recovery: PendingTempTargetExportRecovery,
+    ) -> Result<(), Box<PendingTempTargetExportRecovery>> {
+        if self.pending_temp_target_export_recovery.is_some() {
+            return Err(Box::new(recovery));
+        }
+        self.pending_temp_target_export_recovery = Some(recovery);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn temp_target_export_recovery_is_pending(&self) -> bool {
+        self.pending_temp_target_export_recovery.is_some()
     }
 
     fn temp_target_export_reservation_matches(&self, prepared: &PreparedTempTargetExport) -> bool {
@@ -1666,6 +1765,69 @@ fn export_archive_for_transaction(source: &Path, destination: &Path) -> Result<(
     export_archive_atomic(source, destination).map_err(|error| error.to_string())
 }
 
+fn recover_pending_temp_merge_apply(shared_state: &SharedState) -> Result<(), String> {
+    let Some(pending) = ({
+        let mut state = recover_state_lock(shared_state);
+        let pending = state.pending_temp_merge_apply_recovery.take();
+        if state.temp_merge_applying.is_none() {
+            state.temp_merge_applying = pending.as_ref().map(|pending| pending.reservation);
+        }
+        pending
+    }) else {
+        return Ok(());
+    };
+    let restore_result =
+        export_archive_for_transaction(&pending.backup_path, &pending.session.working_path);
+    let restored_target =
+        match files_have_same_bytes(&pending.backup_path, &pending.session.working_path) {
+            Ok(true) => Archive::open(pending.session.working_path.to_string_lossy())
+                .map_err(|error| error.to_string()),
+            Ok(false) => Err(restore_result
+                .err()
+                .unwrap_or_else(|| "restored bytes do not match durable backup".to_owned())),
+            Err(error) => Err(format!(
+                "failed to verify restored temporary target: {error}"
+            )),
+        };
+    let restored_target = match restored_target {
+        Ok(target) => target,
+        Err(error) => {
+            let mut state = recover_state_lock(shared_state);
+            if state.pending_temp_merge_apply_recovery.is_none() {
+                state.pending_temp_merge_apply_recovery = Some(pending);
+            }
+            return Err(format!(
+                "temporary merge Apply recovery is still pending: {error}; retry Apply"
+            ));
+        }
+    };
+
+    let target_side = pending.reservation.target_side;
+    let mut state = recover_state_lock(shared_state);
+    if state.temp_merge_applying.is_none() {
+        state.temp_merge_applying = Some(pending.reservation);
+    }
+    if state.temp_merge_applying != Some(pending.reservation)
+        || state.temp_merge_session.is_some()
+        || archive(&state, target_side).is_some()
+    {
+        if state.pending_temp_merge_apply_recovery.is_none() {
+            state.pending_temp_merge_apply_recovery = Some(pending);
+        }
+        return Err("temporary merge Apply recovery reservation changed".to_owned());
+    }
+    *archive_mut(&mut state, target_side) = Some(restored_target);
+    let displaced_nested =
+        std::mem::replace(nested_cache_mut(&mut state, target_side), pending.nested);
+    *state.plan_mut(target_side) = pending.plan;
+    state.temp_merge_session = Some(pending.session);
+    state.temp_merge_applying = None;
+    drop(state);
+    drop(displaced_nested);
+    drop(pending.operation_dir);
+    Ok(())
+}
+
 fn fail_temp_merge_apply(
     shared_state: &SharedState,
     prepared: &PreparedTempMergeApply,
@@ -1673,6 +1835,7 @@ fn fail_temp_merge_apply(
     restore_working: bool,
     mut error: String,
     export: &mut impl FnMut(&Path, &Path) -> Result<(), String>,
+    recovery_resources: &mut TempMergeApplyRecoveryResources,
 ) -> Result<TempMergeSessionSummary, String> {
     let mut restored_target = None;
     if restore_working {
@@ -1706,6 +1869,25 @@ fn fail_temp_merge_apply(
             }
         }
     }
+    if restore_working && restored_target.is_none() {
+        let install_result = {
+            let mut state = recover_state_lock(shared_state);
+            state.install_temp_merge_apply_recovery(
+                prepared,
+                backup_path.to_owned(),
+                recovery_resources,
+            )
+        };
+        return match install_result {
+            Ok(stale_target) => {
+                drop(stale_target);
+                Err(format!(
+                    "{error}; temporary merge Apply recovery is pending; retry Apply"
+                ))
+            }
+            Err(recovery_error) => Err(format!("{error}; {recovery_error}")),
+        };
+    }
     let cancel_result = {
         let mut state = recover_state_lock(shared_state);
         state.cancel_temp_merge_apply(prepared, &mut restored_target)
@@ -1730,6 +1912,7 @@ fn apply_temp_merge_with_operations(
     create_cache: impl FnOnce() -> Result<Arc<Mutex<NestedArchiveCache>>, String>,
     before_publish: impl FnOnce() -> Result<(), String>,
 ) -> Result<TempMergeSessionSummary, String> {
+    recover_pending_temp_merge_apply(shared_state)?;
     let mut prepared = {
         let mut state = shared_state
             .lock()
@@ -1741,8 +1924,12 @@ fn apply_temp_merge_with_operations(
         .tempdir()
         .map_err(|error| error.to_string())
     {
-        Ok(operation_dir) => operation_dir,
+        Ok(operation_dir) => Some(operation_dir),
         Err(error) => {
+            let mut no_recovery_resources = TempMergeApplyRecoveryResources {
+                operation_dir: None,
+                replacement_nested: None,
+            };
             return fail_temp_merge_apply(
                 shared_state,
                 &prepared,
@@ -1750,11 +1937,24 @@ fn apply_temp_merge_with_operations(
                 false,
                 error,
                 &mut export,
+                &mut no_recovery_resources,
             );
         }
     };
-    let backup_path = operation_dir.path().join("working-before-apply.jar");
-    let candidate_path = operation_dir.path().join("working-candidate.jar");
+    let backup_path = operation_dir
+        .as_ref()
+        .expect("operation directory created above")
+        .path()
+        .join("working-before-apply.jar");
+    let candidate_path = operation_dir
+        .as_ref()
+        .expect("operation directory created above")
+        .path()
+        .join("working-candidate.jar");
+    let mut recovery_resources = TempMergeApplyRecoveryResources {
+        operation_dir,
+        replacement_nested: None,
+    };
     if let Err(error) = after_reserve(shared_state) {
         return fail_temp_merge_apply(
             shared_state,
@@ -1763,6 +1963,7 @@ fn apply_temp_merge_with_operations(
             false,
             error,
             &mut export,
+            &mut recovery_resources,
         );
     }
     for destination in [&backup_path, &candidate_path] {
@@ -1774,6 +1975,7 @@ fn apply_temp_merge_with_operations(
                 false,
                 error,
                 &mut export,
+                &mut recovery_resources,
             );
         }
     }
@@ -1787,6 +1989,7 @@ fn apply_temp_merge_with_operations(
                 false,
                 error.to_string(),
                 &mut export,
+                &mut recovery_resources,
             );
         }
     };
@@ -1802,6 +2005,7 @@ fn apply_temp_merge_with_operations(
             false,
             error,
             &mut export,
+            &mut recovery_resources,
         );
     }
     if let Err(error) = reopen_after_commit(&candidate_path) {
@@ -1812,6 +2016,7 @@ fn apply_temp_merge_with_operations(
             false,
             error,
             &mut export,
+            &mut recovery_resources,
         );
     }
     let refreshed_nested = match create_cache() {
@@ -1824,9 +2029,11 @@ fn apply_temp_merge_with_operations(
                 false,
                 error,
                 &mut export,
+                &mut recovery_resources,
             );
         }
     };
+    recovery_resources.replacement_nested = Some(refreshed_nested);
     {
         let state = recover_state_lock(shared_state);
         if !state.temp_merge_apply_reservation_matches(&prepared) {
@@ -1838,6 +2045,7 @@ fn apply_temp_merge_with_operations(
                 false,
                 "temporary merge apply reservation changed".to_owned(),
                 &mut export,
+                &mut recovery_resources,
             );
         }
     }
@@ -1849,6 +2057,7 @@ fn apply_temp_merge_with_operations(
             true,
             error,
             &mut export,
+            &mut recovery_resources,
         );
     }
     let refreshed_target = match Archive::open(prepared.working_path.to_string_lossy()) {
@@ -1861,6 +2070,7 @@ fn apply_temp_merge_with_operations(
                 true,
                 error.to_string(),
                 &mut export,
+                &mut recovery_resources,
             );
         }
     };
@@ -1872,19 +2082,22 @@ fn apply_temp_merge_with_operations(
             true,
             error,
             &mut export,
+            &mut recovery_resources,
         );
     }
     let mut refreshed_target = Some(refreshed_target);
-    let mut refreshed_nested = Some(refreshed_nested);
     let publish_result = {
         let mut state = recover_state_lock(shared_state);
-        state.finish_temp_merge_apply(&prepared, &mut refreshed_target, &mut refreshed_nested)
+        state.finish_temp_merge_apply(
+            &prepared,
+            &mut refreshed_target,
+            &mut recovery_resources.replacement_nested,
+        )
     };
     let (summary, displaced_target, displaced_nested) = match publish_result {
         Ok(published) => published,
         Err(error) => {
             drop(refreshed_target);
-            drop(refreshed_nested);
             return fail_temp_merge_apply(
                 shared_state,
                 &prepared,
@@ -1892,6 +2105,7 @@ fn apply_temp_merge_with_operations(
                 true,
                 error,
                 &mut export,
+                &mut recovery_resources,
             );
         }
     };
@@ -1967,6 +2181,33 @@ pub(crate) fn apply_temp_merge_with_failure_point(
                 || Ok(()),
             )
         }
+        TempMergeApplyFailurePoint::WorkingExportRollbackFailure => {
+            let working_path = recover_state_lock(shared_state)
+                .temp_merge_session
+                .as_ref()
+                .expect("temporary merge session for failure injection")
+                .working_path
+                .clone();
+            let mut working_export_failed = false;
+            apply_temp_merge_with_operations(
+                shared_state,
+                move |source, destination| {
+                    if destination != working_path {
+                        return export_archive_for_transaction(source, destination);
+                    }
+                    if working_export_failed {
+                        return Err("injected working export rollback failure".to_owned());
+                    }
+                    working_export_failed = true;
+                    export_archive_for_transaction(source, destination)?;
+                    Err("injected post-commit working export failure".to_owned())
+                },
+                |_| Ok(()),
+                |path| Archive::open(path.to_string_lossy()).map_err(|error| error.to_string()),
+                fresh_nested_cache,
+                || Ok(()),
+            )
+        }
     }
 }
 
@@ -2014,141 +2255,193 @@ pub(crate) fn apply_temp_merge_with_stale_reservation(
     )
 }
 
+static NEXT_EXPORT_ARTIFACT: AtomicU64 = AtomicU64::new(1);
+
+fn next_export_artifact_name(prefix: &str) -> PathBuf {
+    let token = NEXT_EXPORT_ARTIFACT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    PathBuf::from(format!("{prefix}{}-{token}", std::process::id()))
+}
+
+#[cfg(unix)]
+fn sync_capability_directory(directory: &Dir) -> io::Result<()> {
+    directory.try_clone()?.into_std_file().sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_capability_directory(_directory: &Dir) -> io::Result<()> {
+    Ok(())
+}
+
+fn remove_capability_file_if_present(directory: &Dir, path: &Path) -> io::Result<()> {
+    match directory.remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn capability_files_have_same_bytes(
+    directory: &Dir,
+    left: &Path,
+    right: &Path,
+) -> io::Result<bool> {
+    let mut left = directory.open(left)?;
+    let mut right = directory.open(right)?;
+    if left.metadata()?.len() != right.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_read = left.read(&mut left_buffer)?;
+        let right_read = right.read(&mut right_buffer)?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+fn copy_into_capability_file(
+    source: &mut impl Read,
+    directory: &Dir,
+    destination: &Path,
+) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut destination_file = directory
+        .open_with(destination, &options)
+        .map_err(|error| error.to_string())?;
+    io::copy(source, &mut destination_file).map_err(|error| error.to_string())?;
+    destination_file
+        .flush()
+        .and_then(|()| destination_file.sync_all())
+        .map_err(|error| error.to_string())
+}
+
 impl ExportDestinationBinding {
-    fn verify_parent(&self) -> Result<(), String> {
-        let current =
-            same_file::Handle::from_path(&self.parent_path).map_err(|error| error.to_string())?;
-        if current != self.parent_handle {
-            return Err("temporary merge export parent changed".to_owned());
+    fn export_from_ambient(&self, source: &Path) -> Result<(), String> {
+        let mut source = File::open(source).map_err(|error| error.to_string())?;
+        self.export_from_reader(&mut source)
+    }
+
+    fn export_from_reader(&self, source: &mut impl Read) -> Result<(), String> {
+        let temporary_name = next_export_artifact_name(".lcdiff-save-as-write-");
+        if let Err(error) = copy_into_capability_file(source, &self.parent, &temporary_name) {
+            let cleanup_error = remove_capability_file_if_present(&self.parent, &temporary_name)
+                .and_then(|()| sync_capability_directory(&self.parent))
+                .err()
+                .map(|cleanup| format!("; cleanup failed: {cleanup}"))
+                .unwrap_or_default();
+            return Err(format!("{error}{cleanup_error}"));
+        }
+        let replace_result = self
+            .parent
+            .rename(&temporary_name, &self.parent, &self.file_name)
+            .and_then(|()| sync_capability_directory(&self.parent));
+        if let Err(error) = replace_result {
+            let cleanup_error = remove_capability_file_if_present(&self.parent, &temporary_name)
+                .and_then(|()| sync_capability_directory(&self.parent))
+                .err()
+                .map(|cleanup| format!("; cleanup failed: {cleanup}"))
+                .unwrap_or_default();
+            return Err(format!("{error}{cleanup_error}"));
         }
         Ok(())
+    }
+
+    fn destination_exists(&self) -> Result<bool, String> {
+        match self.parent.symlink_metadata(&self.file_name) {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.to_string()),
+        }
     }
 }
 
 impl ExportDestinationSnapshot {
     fn capture(destination: &ExportDestinationBinding) -> Result<Self, String> {
-        destination.verify_parent()?;
-        if !destination.path.exists() {
-            return Ok(Self::Missing {
-                destination: destination.path.clone(),
-            });
+        if !destination.destination_exists()? {
+            return Ok(Self::Missing);
         }
-        let original_handle =
-            same_file::Handle::from_path(&destination.path).map_err(|error| error.to_string())?;
-        let backup = tempfile::Builder::new()
-            .prefix(".lcdiff-save-as-rollback-")
-            .tempfile_in(&destination.parent_path)
-            .map_err(|error| error.to_string())?
-            .into_temp_path();
-        std::fs::remove_file(&backup).map_err(|error| error.to_string())?;
-        let preserves_identity = match std::fs::hard_link(&destination.path, &backup) {
+        let backup_name = next_export_artifact_name(".lcdiff-save-as-rollback-");
+        let preserves_identity = match destination.parent.hard_link(
+            &destination.file_name,
+            &destination.parent,
+            &backup_name,
+        ) {
             Ok(()) => true,
             Err(_) => {
-                std::fs::copy(&destination.path, &backup).map_err(|error| error.to_string())?;
-                File::open(&backup)
-                    .and_then(|backup| backup.sync_all())
+                let mut original = destination
+                    .parent
+                    .open(&destination.file_name)
                     .map_err(|error| error.to_string())?;
+                copy_into_capability_file(&mut original, &destination.parent, &backup_name)?;
                 false
             }
         };
-        if let Err(error) = sync_directory(&destination.parent_path) {
-            return Err(format!(
-                "failed to sync temporary merge export snapshot: {error}"
-            ));
-        }
+        sync_capability_directory(&destination.parent).map_err(|error| error.to_string())?;
         Ok(Self::Existing {
-            destination: destination.path.clone(),
-            backup,
-            original_handle,
+            backup_name,
             preserves_identity,
         })
     }
 
-    fn restore(self) -> Result<(), String> {
+    fn restore(&self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        remove_capability_file_if_present(&destination.parent, &destination.file_name)
+            .map_err(|error| error.to_string())?;
         match self {
-            Self::Missing { destination } => {
-                match std::fs::remove_file(&destination) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.to_string()),
-                }
-                if let Some(parent) = destination.parent() {
-                    sync_directory(parent).map_err(|error| error.to_string())?;
-                }
-                if destination.exists() {
+            Self::Missing => {
+                sync_capability_directory(&destination.parent)
+                    .map_err(|error| error.to_string())?;
+                if destination.destination_exists()? {
                     return Err("new export destination still exists after rollback".to_owned());
                 }
-                Ok(())
             }
             Self::Existing {
-                destination,
-                backup,
-                original_handle,
+                backup_name,
                 preserves_identity,
             } => {
-                match std::fs::remove_file(&destination) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        let backup_path = backup.to_path_buf();
-                        let _ = backup.keep();
-                        return Err(format!(
-                            "{error}; original destination retained at {}",
-                            backup_path.display()
-                        ));
-                    }
-                }
-                let restore_result = if preserves_identity {
-                    std::fs::hard_link(&backup, &destination).map_err(|error| error.to_string())
+                if *preserves_identity {
+                    destination
+                        .parent
+                        .hard_link(backup_name, &destination.parent, &destination.file_name)
+                        .map_err(|error| error.to_string())?;
+                    sync_capability_directory(&destination.parent)
+                        .map_err(|error| error.to_string())?;
                 } else {
-                    export_archive_for_transaction(&backup, &destination)
-                };
-                let bytes_result = files_have_same_bytes(&backup, &destination);
-                let bytes_match = matches!(&bytes_result, Ok(true));
-                if restore_result.is_err() && !bytes_match {
-                    let backup_path = backup.to_path_buf();
-                    let _ = backup.keep();
-                    return Err(format!(
-                        "{}; original destination retained at {}",
-                        restore_result.expect_err("failed restore result checked above"),
-                        backup_path.display()
-                    ));
+                    let mut backup = destination
+                        .parent
+                        .open(backup_name)
+                        .map_err(|error| error.to_string())?;
+                    destination.export_from_reader(&mut backup)?;
                 }
-                if !bytes_match {
-                    let backup_path = backup.to_path_buf();
-                    let _ = backup.keep();
-                    let verify_error = bytes_result
-                        .err()
-                        .map(|error| format!(": {error}"))
-                        .unwrap_or_default();
-                    return Err(format!(
-                        "restored export destination bytes changed{verify_error}; original \
-                         destination retained at {}",
-                        backup_path.display()
-                    ));
+                if !capability_files_have_same_bytes(
+                    &destination.parent,
+                    backup_name,
+                    &destination.file_name,
+                )
+                .map_err(|error| error.to_string())?
+                {
+                    return Err("restored export destination bytes changed".to_owned());
                 }
-                if let Some(parent) = destination.parent() {
-                    sync_directory(parent).map_err(|error| error.to_string())?;
-                }
-                let restored_handle = same_file::Handle::from_path(&destination)
-                    .map_err(|error| error.to_string())?;
-                if preserves_identity && restored_handle != original_handle {
-                    return Err("restored export destination identity changed".to_owned());
-                }
-                Ok(())
             }
         }
+        Ok(())
     }
-}
 
-#[cfg(unix)]
-fn sync_directory(path: &Path) -> io::Result<()> {
-    File::open(path)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> io::Result<()> {
-    Ok(())
+    fn cleanup(&self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        let Self::Existing { backup_name, .. } = self else {
+            return Ok(());
+        };
+        destination
+            .parent
+            .remove_file(backup_name)
+            .and_then(|()| sync_capability_directory(&destination.parent))
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn resolve_temp_target_export_destination(
@@ -2174,12 +2467,16 @@ fn resolve_temp_target_export_destination(
         .parent()
         .ok_or_else(|| "temporary merge export destination has no parent".to_owned())?
         .to_owned();
-    let parent_handle =
-        same_file::Handle::from_path(&parent_path).map_err(|error| error.to_string())?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "temporary merge export destination has no file name".to_owned())?
+        .to_owned();
+    let parent = Dir::open_ambient_dir(&parent_path, ambient_authority())
+        .map_err(|error| error.to_string())?;
     Ok(ExportDestinationBinding {
         path: destination,
-        parent_path,
-        parent_handle,
+        file_name: PathBuf::from(file_name),
+        parent,
     })
 }
 
@@ -2211,14 +2508,217 @@ fn validate_temp_target_export_destination(
     Ok(())
 }
 
-fn save_temp_target_as_with_operations(
+fn restore_or_retain_temp_target_export(
+    shared_state: &SharedState,
+    prepared: PreparedTempTargetExport,
+    snapshot: ExportDestinationSnapshot,
+    mut error: String,
+    restore: &mut impl FnMut(
+        &ExportDestinationSnapshot,
+        &ExportDestinationBinding,
+    ) -> Result<(), String>,
+    cleanup: &mut impl FnMut(
+        &ExportDestinationSnapshot,
+        &ExportDestinationBinding,
+    ) -> Result<(), String>,
+) -> Result<TempMergeSessionSummary, String> {
+    if let Err(restore_error) = restore(&snapshot, &prepared.destination) {
+        error = format!(
+            "{error}; failed to restore export destination: {restore_error}; \
+             temporary merge export recovery is pending; retry Save As"
+        );
+        let recovery = PendingTempTargetExportRecovery {
+            prepared,
+            snapshot,
+            kind: PendingTempTargetExportRecoveryKind::Rollback,
+        };
+        let install_result =
+            recover_state_lock(shared_state).install_temp_target_export_recovery(recovery);
+        if install_result.is_err() {
+            error.push_str("; failed to retain export recovery ownership");
+        }
+        return Err(error);
+    }
+    if let Err(cleanup_error) = cleanup(&snapshot, &prepared.destination) {
+        error = format!(
+            "{error}; destination restored but rollback cleanup failed: {cleanup_error}; \
+             temporary merge export recovery is pending; retry Save As"
+        );
+        let recovery = PendingTempTargetExportRecovery {
+            prepared,
+            snapshot,
+            kind: PendingTempTargetExportRecoveryKind::RollbackCleanup,
+        };
+        let install_result =
+            recover_state_lock(shared_state).install_temp_target_export_recovery(recovery);
+        if install_result.is_err() {
+            error.push_str("; failed to retain export cleanup ownership");
+        }
+        return Err(error);
+    }
+    recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
+    Err(error)
+}
+
+fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), String> {
+    let Some(mut recovery) = ({
+        let mut state = recover_state_lock(shared_state);
+        let recovery = state.pending_temp_target_export_recovery.take();
+        if state.temp_merge_exporting.is_none() {
+            state.temp_merge_exporting = recovery
+                .as_ref()
+                .map(|recovery| recovery.prepared.reservation);
+        }
+        recovery
+    }) else {
+        return Ok(());
+    };
+    let recover_result = match recovery.kind {
+        PendingTempTargetExportRecoveryKind::Rollback => {
+            match recovery.snapshot.restore(&recovery.prepared.destination) {
+                Ok(()) => {
+                    recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
+                    recovery.snapshot.cleanup(&recovery.prepared.destination)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        PendingTempTargetExportRecoveryKind::RollbackCleanup => {
+            recovery.snapshot.cleanup(&recovery.prepared.destination)
+        }
+        PendingTempTargetExportRecoveryKind::ExportCleanup => {
+            let reservation_matches = recover_state_lock(shared_state)
+                .temp_target_export_reservation_matches(&recovery.prepared);
+            if reservation_matches {
+                recovery.snapshot.cleanup(&recovery.prepared.destination)
+            } else {
+                match recovery.snapshot.restore(&recovery.prepared.destination) {
+                    Ok(()) => {
+                        recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
+                        recovery.snapshot.cleanup(&recovery.prepared.destination)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        }
+    };
+    if let Err(error) = recover_result {
+        recover_state_lock(shared_state).pending_temp_target_export_recovery = Some(recovery);
+        return Err(format!(
+            "temporary merge export recovery is still pending: {error}; retry Save As"
+        ));
+    }
+    match recovery.kind {
+        PendingTempTargetExportRecoveryKind::ExportCleanup => {
+            recover_state_lock(shared_state).finish_temp_target_export(&recovery.prepared)?;
+        }
+        PendingTempTargetExportRecoveryKind::Rollback
+        | PendingTempTargetExportRecoveryKind::RollbackCleanup => {
+            recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
+        }
+    }
+    Ok(())
+}
+
+struct TempTargetExportOperations<
+    AfterResolve,
+    AfterReserve,
+    BeforeExport,
+    Export,
+    Restore,
+    Cleanup,
+    AfterExport,
+> {
+    after_resolve: AfterResolve,
+    after_reserve: AfterReserve,
+    before_export: BeforeExport,
+    export: Export,
+    restore: Restore,
+    cleanup: Cleanup,
+    after_export: AfterExport,
+}
+
+fn no_temp_target_export_path_hook(_: &Path) {}
+
+fn no_temp_target_export_hook() {}
+
+fn no_temp_target_export_state_hook(_: &SharedState) {}
+
+fn export_temp_target_to_destination(
+    source: &Path,
+    destination: &ExportDestinationBinding,
+) -> Result<(), String> {
+    destination.export_from_ambient(source)
+}
+
+fn restore_temp_target_export_destination(
+    snapshot: &ExportDestinationSnapshot,
+    destination: &ExportDestinationBinding,
+) -> Result<(), String> {
+    snapshot.restore(destination)
+}
+
+fn cleanup_temp_target_export_snapshot(
+    snapshot: &ExportDestinationSnapshot,
+    destination: &ExportDestinationBinding,
+) -> Result<(), String> {
+    snapshot.cleanup(destination)
+}
+
+fn save_temp_target_as_with_operations<
+    AfterResolve,
+    AfterReserve,
+    BeforeExport,
+    Export,
+    Restore,
+    Cleanup,
+    AfterExport,
+>(
     shared_state: &SharedState,
     destination: PathBuf,
-    after_resolve: impl FnOnce(&Path),
-    after_reserve: impl FnOnce(),
-    mut export: impl FnMut(&Path, &Path) -> Result<(), String>,
-    after_export: impl FnOnce(&SharedState),
-) -> Result<TempMergeSessionSummary, String> {
+    operations: TempTargetExportOperations<
+        AfterResolve,
+        AfterReserve,
+        BeforeExport,
+        Export,
+        Restore,
+        Cleanup,
+        AfterExport,
+    >,
+) -> Result<TempMergeSessionSummary, String>
+where
+    AfterResolve: for<'a> FnOnce(&'a Path),
+    AfterReserve: FnOnce(),
+    BeforeExport: FnOnce(),
+    Export: for<'a, 'b> FnMut(&'a Path, &'b ExportDestinationBinding) -> Result<(), String>,
+    Restore: for<'a, 'b> FnMut(
+        &'a ExportDestinationSnapshot,
+        &'b ExportDestinationBinding,
+    ) -> Result<(), String>,
+    Cleanup: for<'a, 'b> FnMut(
+        &'a ExportDestinationSnapshot,
+        &'b ExportDestinationBinding,
+    ) -> Result<(), String>,
+    AfterExport: for<'a> FnOnce(&'a SharedState),
+{
+    let TempTargetExportOperations {
+        after_resolve,
+        after_reserve,
+        before_export,
+        mut export,
+        mut restore,
+        mut cleanup,
+        after_export,
+    } = operations;
+    {
+        let state = recover_state_lock(shared_state);
+        if state.pending_temp_merge_apply_recovery.is_some() {
+            return Err(
+                "temporary merge Apply recovery is pending; retry Apply before Save As".to_owned(),
+            );
+        }
+    }
+    recover_pending_temp_target_export(shared_state)?;
     let snapshot = {
         let state = shared_state
             .lock()
@@ -2239,10 +2739,6 @@ fn save_temp_target_as_with_operations(
         recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
         return Err("temporary merge export reservation changed".to_owned());
     }
-    if let Err(error) = prepared.destination.verify_parent() {
-        recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
-        return Err(error);
-    }
     let destination_snapshot = match ExportDestinationSnapshot::capture(&prepared.destination) {
         Ok(snapshot) => snapshot,
         Err(error) => {
@@ -2250,50 +2746,58 @@ fn save_temp_target_as_with_operations(
             return Err(error);
         }
     };
-    let pre_export_check = prepared.destination.verify_parent().and_then(|()| {
+    let pre_export_check =
         if recover_state_lock(shared_state).temp_target_export_reservation_matches(&prepared) {
             Ok(())
         } else {
             Err("temporary merge export reservation changed".to_owned())
-        }
-    });
-    if let Err(mut error) = pre_export_check {
-        if let Err(restore_error) = destination_snapshot.restore() {
-            error = format!("{error}; failed to restore export destination: {restore_error}");
-        }
-        recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
-        return Err(error);
+        };
+    if let Err(error) = pre_export_check {
+        return restore_or_retain_temp_target_export(
+            shared_state,
+            prepared,
+            destination_snapshot,
+            error,
+            &mut restore,
+            &mut cleanup,
+        );
     }
-    let export_result = export(&prepared.snapshot.working_path, &prepared.destination.path);
-    let export_result = match export_result {
-        Ok(()) => prepared.destination.verify_parent(),
-        Err(error) => Err(error),
-    };
-    if let Err(mut error) = export_result {
-        if let Err(restore_error) = destination_snapshot.restore() {
-            error = format!("{error}; failed to restore export destination: {restore_error}");
-        }
-        recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
-        return Err(error);
+    before_export();
+    if let Err(error) = export(&prepared.snapshot.working_path, &prepared.destination) {
+        return restore_or_retain_temp_target_export(
+            shared_state,
+            prepared,
+            destination_snapshot,
+            error,
+            &mut restore,
+            &mut cleanup,
+        );
     }
     after_export(shared_state);
-    let publish_result = {
-        let mut state = recover_state_lock(shared_state);
-        state.finish_temp_target_export(&prepared)
-    };
-    match publish_result {
-        Ok(summary) => {
-            drop(destination_snapshot);
-            Ok(summary)
-        }
-        Err(mut error) => {
-            if let Err(restore_error) = destination_snapshot.restore() {
-                error = format!("{error}; failed to restore export destination: {restore_error}");
-            }
-            recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
-            Err(error)
-        }
+    if !recover_state_lock(shared_state).temp_target_export_reservation_matches(&prepared) {
+        return restore_or_retain_temp_target_export(
+            shared_state,
+            prepared,
+            destination_snapshot,
+            "temporary merge export reservation changed".to_owned(),
+            &mut restore,
+            &mut cleanup,
+        );
     }
+    if let Err(error) = cleanup(&destination_snapshot, &prepared.destination) {
+        let recovery = PendingTempTargetExportRecovery {
+            prepared,
+            snapshot: destination_snapshot,
+            kind: PendingTempTargetExportRecoveryKind::ExportCleanup,
+        };
+        recover_state_lock(shared_state)
+            .install_temp_target_export_recovery(recovery)
+            .map_err(|_| "failed to retain export cleanup ownership".to_owned())?;
+        return Err(format!(
+            "temporary merge export cleanup is pending: {error}; retry Save As"
+        ));
+    }
+    recover_state_lock(shared_state).finish_temp_target_export(&prepared)
 }
 
 pub(crate) fn save_temp_target_as(
@@ -2303,10 +2807,15 @@ pub(crate) fn save_temp_target_as(
     save_temp_target_as_with_operations(
         shared_state,
         destination,
-        |_| {},
-        || {},
-        export_archive_for_transaction,
-        |_| {},
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
     )
 }
 
@@ -2320,10 +2829,15 @@ pub(crate) fn save_temp_target_as_with_hooks(
     save_temp_target_as_with_operations(
         shared_state,
         destination,
-        after_resolve,
-        || {},
-        export_archive_for_transaction,
-        after_export,
+        TempTargetExportOperations {
+            after_resolve,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export,
+        },
     )
 }
 
@@ -2332,20 +2846,21 @@ pub(crate) fn save_temp_target_as_with_post_replace_failure(
     shared_state: &SharedState,
     destination: PathBuf,
 ) -> Result<TempMergeSessionSummary, String> {
-    let failure_destination = resolve_temp_target_export_destination(&destination)?.path;
     save_temp_target_as_with_operations(
         shared_state,
         destination,
-        |_| {},
-        || {},
-        move |source, destination| {
-            export_archive_for_transaction(source, destination)?;
-            if destination == failure_destination {
-                return Err("injected post-replace parent sync failure".to_owned());
-            }
-            Ok(())
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: |source: &Path, destination: &ExportDestinationBinding| {
+                destination.export_from_ambient(source)?;
+                Err("injected post-replace parent sync failure".to_owned())
+            },
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
         },
-        |_| {},
     )
 }
 
@@ -2358,10 +2873,15 @@ pub(crate) fn save_temp_target_as_with_after_reserve(
     save_temp_target_as_with_operations(
         shared_state,
         destination,
-        |_| {},
-        after_reserve,
-        export_archive_for_transaction,
-        |_| {},
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
     )
 }
 
@@ -2373,17 +2893,90 @@ pub(crate) fn save_temp_target_as_with_stale_reservation(
     save_temp_target_as_with_operations(
         shared_state,
         destination,
-        |_| {},
-        || {},
-        export_archive_for_transaction,
-        |state| {
-            let mut state = recover_state_lock(state);
-            let target_side = state
-                .temp_merge_exporting
-                .expect("Save As reservation for failure injection")
-                .target_side;
-            let newer = state.reserve_temp_merge_operation(target_side);
-            state.temp_merge_exporting = Some(newer);
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: |state: &SharedState| {
+                let mut state = recover_state_lock(state);
+                let target_side = state
+                    .temp_merge_exporting
+                    .expect("Save As reservation for failure injection")
+                    .target_side;
+                let newer = state.reserve_temp_merge_operation(target_side);
+                state.temp_merge_exporting = Some(newer);
+            },
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_parent_swap(
+    shared_state: &SharedState,
+    destination: PathBuf,
+    before_export: impl FnOnce(),
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_rollback_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: |source: &Path, destination: &ExportDestinationBinding| {
+                destination.export_from_ambient(source)?;
+                Err("injected post-replace export failure".to_owned())
+            },
+            restore: |_: &ExportDestinationSnapshot, _: &ExportDestinationBinding| {
+                Err("injected export rollback failure".to_owned())
+            },
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_cleanup_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: |_: &ExportDestinationSnapshot, _: &ExportDestinationBinding| {
+                Err("injected export backup cleanup failure".to_owned())
+            },
+            after_export: no_temp_target_export_state_hook,
         },
     )
 }
