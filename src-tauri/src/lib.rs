@@ -218,9 +218,9 @@ mod tests {
     use super::sidecar_process::sidecar_clients_share_cache;
     use super::state::{
         TempTargetCreation, create_temp_target, discard_temp_target,
-        discard_temp_target_with_cleanup, install_prepared_compare_archives,
-        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
-        prepare_temp_target_with_lock_probe,
+        discard_temp_target_with_cleanup, discard_temp_target_with_cleanup_and_write,
+        install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
+        prepare_temp_target, prepare_temp_target_with_lock_probe,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -2058,6 +2058,170 @@ mod tests {
         })
         .unwrap();
         assert_eq!(final_attempts, [recovery_dir]);
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_compound_recovery_failure_retains_owned_snapshot_for_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        create_zip(&source, &[("source.txt", b"last-good")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_dir = target_path.parent().unwrap().to_owned();
+        let last_good_bytes = std::fs::read(&target_path).unwrap();
+        let mut cleanup_attempts = Vec::new();
+        let mut incomplete_recovery_dir = None;
+        let mut write_attempts = 0;
+
+        let error = discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                cleanup_attempts.push(owned_dir.to_owned());
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive working cleanup failure"))
+                } else {
+                    incomplete_recovery_dir = Some(owned_dir.to_owned());
+                    Err(std::io::Error::other("incomplete recovery cleanup failure"))
+                }
+            },
+            |_, _| {
+                write_attempts += 1;
+                let message = match write_attempts {
+                    1 => "fresh recovery materialization failure",
+                    2 => "original snapshot restore failure",
+                    _ => panic!("compound recovery performs exactly two snapshot writes"),
+                };
+                Err(std::io::Error::other(message))
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("destructive working cleanup failure"));
+        assert!(error.contains("fresh recovery materialization failure"));
+        assert!(error.contains("incomplete recovery cleanup failure"));
+        assert!(error.contains("original snapshot restore failure"));
+        assert_eq!(cleanup_attempts.len(), 2);
+        let incomplete_recovery_dir =
+            incomplete_recovery_dir.expect("failed recovery path remains known");
+        assert!(incomplete_recovery_dir.is_dir());
+        {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+            assert_eq!(
+                state.pending_temp_target_recovery_bytes(),
+                Some(last_good_bytes.as_slice())
+            );
+            let replacement_error = state
+                .install_archive(
+                    Archive::open(replacement_source.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap_err();
+            assert!(replacement_error.contains("discarded"));
+        }
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            match std::fs::remove_dir_all(owned_dir) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .unwrap();
+
+        retry_attempts.sort();
+        let mut expected_attempts = vec![target_dir, incomplete_recovery_dir];
+        expected_attempts.sort();
+        assert_eq!(retry_attempts, expected_attempts);
+        let state = shared_state.lock().unwrap();
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+        assert_eq!(state.pending_temp_target_recovery_bytes(), None);
+    }
+
+    #[test]
+    fn temp_target_incomplete_recovery_cleanup_failure_retains_path_for_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_dir = target_path.parent().unwrap().to_owned();
+        let target_bytes = std::fs::read(&target_path).unwrap();
+        let mut incomplete_recovery_dir = None;
+        let mut write_attempts = 0;
+
+        let error = discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive working cleanup failure"))
+                } else {
+                    incomplete_recovery_dir = Some(owned_dir.to_owned());
+                    Err(std::io::Error::other("incomplete recovery cleanup failure"))
+                }
+            },
+            |working_path, bytes| {
+                write_attempts += 1;
+                if write_attempts == 1 {
+                    Err(std::io::Error::other(
+                        "fresh recovery materialization failure",
+                    ))
+                } else {
+                    std::fs::write(working_path, bytes)
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("fresh recovery materialization failure"));
+        assert!(error.contains("incomplete recovery cleanup failure"));
+        let incomplete_recovery_dir =
+            incomplete_recovery_dir.expect("failed recovery path remains known");
+        assert!(incomplete_recovery_dir.is_dir());
+        {
+            let state = shared_state.lock().unwrap();
+            assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+            assert_eq!(std::fs::read(&target_path).unwrap(), target_bytes);
+            assert!(state.temp_merge_session.is_some());
+        }
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir)
+        })
+        .unwrap();
+
+        assert_eq!(retry_attempts, [incomplete_recovery_dir, target_dir]);
         assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
     }
 

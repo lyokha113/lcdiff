@@ -54,6 +54,12 @@ struct OwnedTempPath {
 }
 
 impl OwnedTempPath {
+    fn from_temp_dir(temp_dir: TempDir) -> Self {
+        Self {
+            path: Some(temp_dir.keep()),
+        }
+    }
+
     fn from_disarmed_temp_dir(temp_dir: &TempDir) -> Self {
         Self {
             path: Some(temp_dir.path().to_owned()),
@@ -110,6 +116,14 @@ struct TempTargetRecoverySnapshot {
     archive_bytes: Vec<u8>,
 }
 
+struct PendingTempTargetDiscard {
+    target_side: Side,
+    _nested: Arc<Mutex<NestedArchiveCache>>,
+    _plan: MergePlan,
+    session: TempMergeSession,
+    _recovery: TempTargetRecoverySnapshot,
+}
+
 impl TempMergeSession {
     fn summary(&self, archive: &Archive) -> TempMergeSessionSummary {
         TempMergeSessionSummary {
@@ -128,6 +142,23 @@ impl TempMergeSession {
                 .map(|path| path.display().to_string()),
         }
     }
+
+    fn retry_pending_cleanup(
+        &mut self,
+        cleanup: &mut impl FnMut(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut pending_cleanup_paths = std::mem::take(&mut self.pending_cleanup_paths);
+        for (index, owned_path) in pending_cleanup_paths.iter_mut().enumerate() {
+            match cleanup(owned_path.path()) {
+                Ok(()) => owned_path.disarm(),
+                Err(error) => {
+                    self.pending_cleanup_paths = pending_cleanup_paths.split_off(index);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(crate) struct AppState {
@@ -140,6 +171,7 @@ pub(crate) struct AppState {
     pub(crate) right_plan: MergePlan,
     pub(crate) temp_merge_session: Option<TempMergeSession>,
     temp_merge_discarding: Option<Side>,
+    pending_temp_target_discard: Option<PendingTempTargetDiscard>,
     pub(crate) engine: DecompileEngine,
     pub(crate) sidecar: Arc<Mutex<SidecarClient>>,
     pub(crate) prefetch_sidecar: Arc<Mutex<SidecarClient>>,
@@ -174,6 +206,7 @@ impl AppState {
             right_plan: MergePlan::new(),
             temp_merge_session: None,
             temp_merge_discarding: None,
+            pending_temp_target_discard: None,
             engine: DEFAULT_DECOMPILE_ENGINE,
             sidecar: Arc::new(Mutex::new(sidecar)),
             prefetch_sidecar: Arc::new(Mutex::new(prefetch_sidecar)),
@@ -308,6 +341,13 @@ impl AppState {
                 .view_sources
                 .values()
                 .any(|source| !source.plan.is_empty())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_temp_target_recovery_bytes(&self) -> Option<&[u8]> {
+        self.pending_temp_target_discard
+            .as_ref()
+            .map(|pending| pending._recovery.archive_bytes.as_slice())
     }
 
     pub(crate) fn stage_view_write(
@@ -776,23 +816,6 @@ impl DetachedTempTarget {
         })
     }
 
-    fn retry_pending_cleanup(
-        &mut self,
-        cleanup: &mut impl FnMut(&Path) -> io::Result<()>,
-    ) -> io::Result<()> {
-        let mut pending_cleanup_paths = std::mem::take(&mut self.session.pending_cleanup_paths);
-        for (index, owned_path) in pending_cleanup_paths.iter_mut().enumerate() {
-            match cleanup(owned_path.path()) {
-                Ok(()) => owned_path.disarm(),
-                Err(error) => {
-                    self.session.pending_cleanup_paths = pending_cleanup_paths.split_off(index);
-                    return Err(error);
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn rearm_current_if_unchanged(
         &mut self,
         recovery: &TempTargetRecoverySnapshot,
@@ -817,24 +840,35 @@ impl DetachedTempTarget {
         &mut self,
         recovery: &TempTargetRecoverySnapshot,
         failed_path: &mut OwnedTempPath,
+        cleanup: &mut impl FnMut(&Path) -> io::Result<()>,
+        write_snapshot: &mut impl FnMut(&Path, &[u8]) -> io::Result<()>,
     ) -> Result<(), String> {
         let temp_dir = tempfile::Builder::new()
             .prefix("lcdiff-temp-merge-recovery-")
             .tempdir()
             .map_err(|error| error.to_string())?;
         let working_path = temp_dir.path().join(&recovery.working_name);
-        let archive = match std::fs::write(&working_path, &recovery.archive_bytes)
+        let archive = match write_snapshot(&working_path, &recovery.archive_bytes)
             .map_err(|error| error.to_string())
             .and_then(|()| {
                 Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())
             }) {
             Ok(archive) => archive,
             Err(error) => {
-                return match temp_dir.close() {
-                    Ok(()) => Err(error),
-                    Err(cleanup_error) => Err(format!(
-                        "{error}; failed to clean incomplete recovery: {cleanup_error}"
-                    )),
+                let mut incomplete_path = OwnedTempPath::from_temp_dir(temp_dir);
+                return match cleanup(incomplete_path.path()) {
+                    Ok(()) => {
+                        incomplete_path.disarm();
+                        Err(error)
+                    }
+                    Err(cleanup_error) => {
+                        self.session
+                            .pending_cleanup_paths
+                            .push(incomplete_path.take());
+                        Err(format!(
+                            "{error}; failed to clean incomplete recovery: {cleanup_error}"
+                        ))
+                    }
                 };
             }
         };
@@ -849,10 +883,11 @@ impl DetachedTempTarget {
     fn restore_current_from_snapshot(
         &mut self,
         recovery: &TempTargetRecoverySnapshot,
+        write_snapshot: &mut impl FnMut(&Path, &[u8]) -> io::Result<()>,
     ) -> Result<(), String> {
         std::fs::create_dir_all(self.session.temp_dir.path()).map_err(|error| error.to_string())?;
         let working_path = self.session.temp_dir.path().join(&recovery.working_name);
-        std::fs::write(&working_path, &recovery.archive_bytes)
+        write_snapshot(&working_path, &recovery.archive_bytes)
             .map_err(|error| error.to_string())?;
         let archive =
             Archive::open(working_path.to_string_lossy()).map_err(|error| error.to_string())?;
@@ -860,6 +895,21 @@ impl DetachedTempTarget {
         self.session.working_path = working_path;
         self.session.temp_dir.disable_cleanup(false);
         Ok(())
+    }
+
+    fn into_pending_discard(
+        mut self,
+        recovery: TempTargetRecoverySnapshot,
+        current_path: &mut OwnedTempPath,
+    ) -> PendingTempTargetDiscard {
+        self.session.pending_cleanup_paths.push(current_path.take());
+        PendingTempTargetDiscard {
+            target_side: self.target_side,
+            _nested: self.nested,
+            _plan: self.plan,
+            session: self.session,
+            _recovery: recovery,
+        }
     }
 }
 
@@ -876,10 +926,50 @@ fn restore_discard_failure(
     Err(format!("failed to discard temporary merge target: {error}"))
 }
 
-fn discard_temp_target_with(
+fn retain_pending_discard_failure(
+    shared_state: &SharedState,
+    pending: PendingTempTargetDiscard,
+    error: impl std::fmt::Display,
+) -> Result<(), String> {
+    let mut state = match shared_state.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    debug_assert_eq!(state.temp_merge_discarding, Some(pending.target_side));
+    debug_assert!(archive(&state, pending.target_side).is_none());
+    debug_assert!(state.plan(pending.target_side).is_empty());
+    debug_assert!(state.temp_merge_session.is_none());
+    debug_assert!(state.pending_temp_target_discard.is_none());
+    state.pending_temp_target_discard = Some(pending);
+    Err(format!("failed to discard temporary merge target: {error}"))
+}
+
+fn discard_temp_target_with_operations(
     shared_state: &SharedState,
     mut cleanup: impl FnMut(&Path) -> io::Result<()>,
+    mut write_snapshot: impl FnMut(&Path, &[u8]) -> io::Result<()>,
 ) -> Result<(), String> {
+    let pending = {
+        let mut state = shared_state
+            .lock()
+            .map_err(|_| "state lock is poisoned".to_owned())?;
+        state.pending_temp_target_discard.take()
+    };
+    if let Some(mut pending) = pending {
+        if let Err(error) = pending.session.retry_pending_cleanup(&mut cleanup) {
+            return retain_pending_discard_failure(shared_state, pending, error);
+        }
+        {
+            let mut state = match shared_state.lock() {
+                Ok(state) => state,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            state.finish_temp_target_discard(pending.target_side);
+        }
+        drop(pending);
+        return Ok(());
+    }
+
     let replacement_nested = fresh_nested_cache()?;
     let mut detached = {
         let mut state = shared_state
@@ -890,7 +980,7 @@ fn discard_temp_target_with(
     if let Err(error) = detached.clear_nested_handles() {
         return restore_discard_failure(shared_state, detached, error);
     }
-    if let Err(error) = detached.retry_pending_cleanup(&mut cleanup) {
+    if let Err(error) = detached.session.retry_pending_cleanup(&mut cleanup) {
         return restore_discard_failure(shared_state, detached, error);
     }
     let recovery = match detached.capture_recovery_snapshot() {
@@ -903,23 +993,33 @@ fn discard_temp_target_with(
         if detached.rearm_current_if_unchanged(&recovery, &mut current_path) {
             return restore_discard_failure(shared_state, detached, cleanup_error);
         }
-        if let Err(recovery_error) = detached.activate_recovery(&recovery, &mut current_path) {
-            let restore_error = detached.restore_current_from_snapshot(&recovery).err();
-            if restore_error.is_some() {
-                detached.session.temp_dir.disable_cleanup(false);
+        if let Err(recovery_error) = detached.activate_recovery(
+            &recovery,
+            &mut current_path,
+            &mut cleanup,
+            &mut write_snapshot,
+        ) {
+            match detached.restore_current_from_snapshot(&recovery, &mut write_snapshot) {
+                Ok(()) => {
+                    current_path.disarm();
+                    return restore_discard_failure(
+                        shared_state,
+                        detached,
+                        format!("{cleanup_error}; recovery failed: {recovery_error}"),
+                    );
+                }
+                Err(restore_error) => {
+                    let pending = detached.into_pending_discard(recovery, &mut current_path);
+                    return retain_pending_discard_failure(
+                        shared_state,
+                        pending,
+                        format!(
+                            "{cleanup_error}; recovery failed: {recovery_error}; \
+                             original session restore failed: {restore_error}"
+                        ),
+                    );
+                }
             }
-            current_path.disarm();
-            return restore_discard_failure(
-                shared_state,
-                detached,
-                match restore_error {
-                    Some(restore_error) => format!(
-                        "{cleanup_error}; recovery failed: {recovery_error}; \
-                         original session restore failed: {restore_error}"
-                    ),
-                    None => format!("{cleanup_error}; recovery failed: {recovery_error}"),
-                },
-            );
         }
         return restore_discard_failure(shared_state, detached, cleanup_error);
     }
@@ -936,11 +1036,15 @@ fn discard_temp_target_with(
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn discard_temp_target(shared_state: &SharedState) -> Result<(), String> {
-    discard_temp_target_with(shared_state, |path| match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    })
+    discard_temp_target_with_operations(
+        shared_state,
+        |path| match std::fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+        |path, bytes| std::fs::write(path, bytes),
+    )
 }
 
 #[cfg(test)]
@@ -948,7 +1052,18 @@ pub(crate) fn discard_temp_target_with_cleanup(
     shared_state: &SharedState,
     cleanup: impl FnMut(&Path) -> io::Result<()>,
 ) -> Result<(), String> {
-    discard_temp_target_with(shared_state, cleanup)
+    discard_temp_target_with_operations(shared_state, cleanup, |path, bytes| {
+        std::fs::write(path, bytes)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn discard_temp_target_with_cleanup_and_write(
+    shared_state: &SharedState,
+    cleanup: impl FnMut(&Path) -> io::Result<()>,
+    write_snapshot: impl FnMut(&Path, &[u8]) -> io::Result<()>,
+) -> Result<(), String> {
+    discard_temp_target_with_operations(shared_state, cleanup, write_snapshot)
 }
 
 #[derive(Clone, Debug, Serialize)]
