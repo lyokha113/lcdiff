@@ -25,6 +25,55 @@ pub(crate) type SharedState = Arc<Mutex<AppState>>;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(all(test, unix))]
+struct UnixExportRemoveRaceHooks {
+    before_remove: Option<Box<dyn FnOnce()>>,
+    before_mismatch_restore: Option<Box<dyn FnOnce()>>,
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static UNIX_EXPORT_REMOVE_RACE_HOOKS: std::cell::RefCell<UnixExportRemoveRaceHooks> =
+        const { std::cell::RefCell::new(UnixExportRemoveRaceHooks {
+            before_remove: None,
+            before_mismatch_restore: None,
+        }) };
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn set_unix_export_remove_race_hooks(
+    before_remove: impl FnOnce() + 'static,
+    before_mismatch_restore: impl FnOnce() + 'static,
+) {
+    UNIX_EXPORT_REMOVE_RACE_HOOKS.with(|hooks| {
+        *hooks.borrow_mut() = UnixExportRemoveRaceHooks {
+            before_remove: Some(Box::new(before_remove)),
+            before_mismatch_restore: Some(Box::new(before_mismatch_restore)),
+        };
+    });
+}
+
+#[cfg(all(test, unix))]
+fn run_before_unix_export_remove_hook() {
+    UNIX_EXPORT_REMOVE_RACE_HOOKS.with(|hooks| {
+        if let Some(hook) = hooks.borrow_mut().before_remove.take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(test, unix))]
+fn run_before_unix_export_mismatch_restore_hook() {
+    UNIX_EXPORT_REMOVE_RACE_HOOKS.with(|hooks| {
+        if let Some(hook) = hooks.borrow_mut().before_mismatch_restore.take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(not(test), unix))]
+fn run_before_unix_export_mismatch_restore_hook() {}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum TempTargetCreation {
@@ -240,6 +289,8 @@ struct OwnedExportArtifact {
     name: PathBuf,
     state: OwnedExportArtifactState,
     durability_handle: Option<cap_std::fs::File>,
+    #[cfg(unix)]
+    removal_quarantine: Option<UnixRemovalQuarantine>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -253,6 +304,26 @@ enum OwnedExportArtifactState {
 struct PublishedExportDestination {
     handle: Option<cap_std::fs::File>,
     state: PublishedExportDestinationState,
+    #[cfg(unix)]
+    removal_quarantine: Option<UnixRemovalQuarantine>,
+}
+
+#[cfg(unix)]
+struct UnixRemovalQuarantine {
+    name: PathBuf,
+    directory: Dir,
+    file_removed: bool,
+}
+
+#[cfg(unix)]
+enum UnixQuarantineRemoval {
+    Removed,
+    NoLongerNamed,
+    PreservedMismatch {
+        preserved_path: PathBuf,
+        restored_original_name: bool,
+        durability_error: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -2502,6 +2573,215 @@ fn remove_capability_file_matching_handle(
     Ok(())
 }
 
+#[cfg(unix)]
+fn create_unix_removal_quarantine(directory: &Dir) -> io::Result<UnixRemovalQuarantine> {
+    use cap_std::fs::{DirBuilder, DirBuilderExt};
+
+    let mut directory_options = DirBuilder::new();
+    directory_options.mode(0o700);
+    let mut name_builder = tempfile::Builder::new();
+    name_builder
+        .prefix(".lcdiff-save-as-preserved-")
+        .rand_bytes(24)
+        .disable_cleanup(true);
+    let named = name_builder.make_in(Path::new("."), |candidate| {
+        let name = candidate
+            .file_name()
+            .ok_or_else(|| io::Error::other("quarantine name has no file name"))?
+            .to_owned();
+        directory.create_dir_with(&name, &directory_options)?;
+        match directory.open_dir(&name) {
+            Ok(quarantine) => Ok((name, quarantine)),
+            Err(error) => {
+                let _ = directory.remove_dir(&name);
+                Err(error)
+            }
+        }
+    })?;
+    let ((name, quarantine), disabled_cleanup_path) = named.into_parts();
+    drop(disabled_cleanup_path);
+    Ok(UnixRemovalQuarantine {
+        name: name.into(),
+        directory: quarantine,
+        file_removed: false,
+    })
+}
+
+#[cfg(unix)]
+fn finish_unix_owned_quarantine_removal(
+    parent: &Dir,
+    quarantine: &mut Option<UnixRemovalQuarantine>,
+) -> io::Result<()> {
+    let owned = quarantine
+        .as_mut()
+        .ok_or_else(|| io::Error::other("owned removal quarantine is unavailable"))?;
+    if !owned.file_removed {
+        owned.directory.remove_file("file")?;
+        owned.file_removed = true;
+    }
+    parent.remove_dir(&owned.name)?;
+    *quarantine = None;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_preserved_unix_quarantine(
+    parent: &Dir,
+    quarantine: &UnixRemovalQuarantine,
+    preserved: Option<&cap_std::fs::File>,
+) -> io::Result<()> {
+    if let Some(preserved) = preserved {
+        preserved.sync_all()?;
+    }
+    quarantine
+        .directory
+        .try_clone()?
+        .into_std_file()
+        .sync_all()?;
+    parent.try_clone()?.into_std_file().sync_all()
+}
+
+#[cfg(unix)]
+fn preserve_unix_quarantine_mismatch(
+    parent: &Dir,
+    original_name: &Path,
+    quarantine: UnixRemovalQuarantine,
+    preserved: Option<&cap_std::fs::File>,
+    verification_error: Option<String>,
+) -> UnixQuarantineRemoval {
+    run_before_unix_export_mismatch_restore_hook();
+    let (restored_original_name, restore_error) =
+        match quarantine
+            .directory
+            .hard_link("file", parent, original_name)
+        {
+            Ok(()) => (true, None),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (false, None),
+            Err(error) => (false, Some(format!("no-clobber restore failed: {error}"))),
+        };
+    let durability_error = sync_preserved_unix_quarantine(parent, &quarantine, preserved)
+        .err()
+        .map(|error| format!("preserving metadata could not be synced: {error}"));
+    let preservation_error = [verification_error, restore_error, durability_error]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    UnixQuarantineRemoval::PreservedMismatch {
+        preserved_path: quarantine.name.join("file"),
+        restored_original_name,
+        durability_error: (!preservation_error.is_empty()).then(|| preservation_error.join("; ")),
+    }
+}
+
+#[cfg(unix)]
+fn quarantine_capability_file_matching_handle(
+    directory: &Dir,
+    path: &Path,
+    expected: &cap_std::fs::File,
+    owned_quarantine: &mut Option<UnixRemovalQuarantine>,
+) -> io::Result<UnixQuarantineRemoval> {
+    // POSIX has no portable compare-and-unlink operation. Move the name first
+    // into a random 0700 directory bound to the already-open parent, verify
+    // identity there, and unlink only from that transaction-private namespace.
+    // A mismatch is never unlinked: hard-link restoration is no-clobber and a
+    // second occupant leaves the raced bytes at the reported preserved path.
+    if owned_quarantine.is_some() {
+        finish_unix_owned_quarantine_removal(directory, owned_quarantine)?;
+        return Ok(UnixQuarantineRemoval::Removed);
+    }
+    let current = match directory.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(UnixQuarantineRemoval::NoLongerNamed);
+        }
+        Err(error) => return Err(error),
+    };
+    let expected_identity = same_file::Handle::from_file(expected.try_clone()?.into_std())?;
+    let current_identity = same_file::Handle::from_file(current.into_std())?;
+    if expected_identity != current_identity {
+        return Ok(UnixQuarantineRemoval::NoLongerNamed);
+    }
+
+    #[cfg(all(test, unix))]
+    run_before_unix_export_remove_hook();
+
+    let quarantine = create_unix_removal_quarantine(directory)?;
+    if let Err(error) = directory.rename(path, &quarantine.directory, "file") {
+        let _ = directory.remove_dir(&quarantine.name);
+        return Err(error);
+    }
+    let moved = match quarantine.directory.open("file") {
+        Ok(moved) => moved,
+        Err(error) => {
+            return Ok(preserve_unix_quarantine_mismatch(
+                directory,
+                path,
+                quarantine,
+                None,
+                Some(format!("moved file identity could not be opened: {error}")),
+            ));
+        }
+    };
+    let moved_identity = match moved
+        .try_clone()
+        .and_then(|file| same_file::Handle::from_file(file.into_std()).map_err(io::Error::other))
+    {
+        Ok(identity) => identity,
+        Err(error) => {
+            return Ok(preserve_unix_quarantine_mismatch(
+                directory,
+                path,
+                quarantine,
+                Some(&moved),
+                Some(format!(
+                    "moved file identity could not be verified: {error}"
+                )),
+            ));
+        }
+    };
+    if moved_identity != expected_identity {
+        return Ok(preserve_unix_quarantine_mismatch(
+            directory,
+            path,
+            quarantine,
+            Some(&moved),
+            None,
+        ));
+    }
+
+    *owned_quarantine = Some(quarantine);
+    finish_unix_owned_quarantine_removal(directory, owned_quarantine)?;
+    Ok(UnixQuarantineRemoval::Removed)
+}
+
+#[cfg(unix)]
+fn preserved_mismatch_message(
+    subject: &str,
+    preserved_path: &Path,
+    restored_original_name: bool,
+    durability_error: Option<&str>,
+) -> String {
+    let refused_action = if subject == "export destination" {
+        "automatic rollback refused"
+    } else {
+        "automatic cleanup refused"
+    };
+    let original_name = if restored_original_name {
+        "the original name was restored without replacement"
+    } else {
+        "the original name was already occupied"
+    };
+    let durability = durability_error
+        .map(|error| format!("; preservation note: {error}"))
+        .unwrap_or_default();
+    format!(
+        "{subject} changed outside LCDiff during removal; {refused_action}; \
+         third-party data is preserved at capability-relative {} inside the originally opened \
+         destination directory; {original_name}{durability}",
+        preserved_path.display()
+    )
+}
+
 fn sync_renamed_capability_file(
     directory: &Dir,
     renamed_file: &cap_std::fs::File,
@@ -2604,6 +2884,8 @@ impl OwnedExportArtifact {
             name: next_export_artifact_name(prefix),
             state: OwnedExportArtifactState::Reserved,
             durability_handle: None,
+            #[cfg(unix)]
+            removal_quarantine: None,
         }
     }
 
@@ -2651,6 +2933,39 @@ impl OwnedExportArtifact {
             .durability_handle
             .as_ref()
             .expect("ensured export artifact handle");
+        #[cfg(unix)]
+        {
+            match quarantine_capability_file_matching_handle(
+                &destination.parent,
+                &self.name,
+                handle,
+                &mut self.removal_quarantine,
+            )
+            .map_err(|error| error.to_string())?
+            {
+                UnixQuarantineRemoval::Removed => {}
+                UnixQuarantineRemoval::NoLongerNamed => {
+                    self.state = OwnedExportArtifactState::Reserved;
+                    self.durability_handle = None;
+                    return Ok(());
+                }
+                UnixQuarantineRemoval::PreservedMismatch {
+                    preserved_path,
+                    restored_original_name,
+                    durability_error,
+                } => {
+                    self.state = OwnedExportArtifactState::Reserved;
+                    self.durability_handle = None;
+                    return Err(preserved_mismatch_message(
+                        "export artifact",
+                        &preserved_path,
+                        restored_original_name,
+                        durability_error.as_deref(),
+                    ));
+                }
+            }
+        }
+        #[cfg(not(unix))]
         if !destination
             .capability_path_names_file(&self.name, handle)
             .map_err(|error| error.to_string())?
@@ -2659,11 +2974,6 @@ impl OwnedExportArtifact {
             self.durability_handle = None;
             return Ok(());
         }
-        #[cfg(unix)]
-        destination
-            .parent
-            .remove_file(&self.name)
-            .map_err(|error| error.to_string())?;
         #[cfg(windows)]
         remove_capability_file_matching_handle(&destination.parent, &self.name, handle)
             .map_err(|error| error.to_string())?;
@@ -2829,10 +3139,34 @@ impl ExportArtifactOwnership {
                 .as_ref()
                 .ok_or_else(|| "published destination handle is unavailable".to_owned())?;
             #[cfg(unix)]
-            destination
-                .parent
-                .remove_file(&destination.file_name)
-                .map_err(|error| error.to_string())?;
+            match quarantine_capability_file_matching_handle(
+                &destination.parent,
+                &destination.file_name,
+                _handle,
+                &mut published.removal_quarantine,
+            )
+            .map_err(|error| error.to_string())?
+            {
+                UnixQuarantineRemoval::Removed => {}
+                UnixQuarantineRemoval::NoLongerNamed => {
+                    return Err(
+                        "export destination changed outside LCDiff; automatic rollback refused"
+                            .to_owned(),
+                    );
+                }
+                UnixQuarantineRemoval::PreservedMismatch {
+                    preserved_path,
+                    restored_original_name,
+                    durability_error,
+                } => {
+                    return Err(preserved_mismatch_message(
+                        "export destination",
+                        &preserved_path,
+                        restored_original_name,
+                        durability_error.as_deref(),
+                    ));
+                }
+            }
             #[cfg(windows)]
             remove_capability_file_matching_handle(
                 &destination.parent,
@@ -2941,6 +3275,8 @@ impl ExportDestinationBinding {
         artifacts.published = Some(PublishedExportDestination {
             handle: Some(renamed_file),
             state: PublishedExportDestinationState::Present,
+            #[cfg(unix)]
+            removal_quarantine: None,
         });
         let renamed_file = artifacts
             .published

@@ -228,6 +228,8 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
+    #[cfg(unix)]
+    use super::state::set_unix_export_remove_race_hooks;
     use super::state::{
         TempMergeApplyFailurePoint, TempMergeConflictAction, TempMergeDecision,
         TempMergePlanMutation, TempTargetCreation, TempTargetDiscardOutcome, apply_temp_merge,
@@ -3686,6 +3688,121 @@ mod tests {
         drop(shared_state);
 
         assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_unix_rollback_preserves_both_racing_replacements() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("unix-raced-rollback-export.jar");
+        let first_replacement = b"third-party-between-check-and-remove";
+        let second_replacement = b"third-party-before-no-clobber-restore";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let first_destination = destination.clone();
+        let second_destination = destination.clone();
+        set_unix_export_remove_race_hooks(
+            move || {
+                std::fs::remove_file(&first_destination).unwrap();
+                std::fs::write(&first_destination, first_replacement).unwrap();
+            },
+            move || {
+                std::fs::write(&second_destination, second_replacement).unwrap();
+            },
+        );
+
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert!(error.contains(".lcdiff-save-as-preserved-"));
+        assert_eq!(std::fs::read(&destination).unwrap(), second_replacement);
+        let preserved = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-preserved-")
+            })
+            .expect("the first replacement must remain at a stable recovery path")
+            .path()
+            .join("file");
+        assert_eq!(std::fs::read(&preserved).unwrap(), first_replacement);
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), second_replacement);
+        assert_eq!(std::fs::read(&preserved).unwrap(), first_replacement);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_unix_artifact_cleanup_never_unlinks_a_racing_replacement() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("unix-raced-artifact-export.jar");
+        let retry_destination = dir.path().join("unix-raced-artifact-retry.jar");
+        let artifact_replacement = b"third-party-artifact-replacement";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let parent = dir.path().to_owned();
+        set_unix_export_remove_race_hooks(
+            move || {
+                let artifact = std::fs::read_dir(&parent)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".lcdiff-save-as-rollback-")
+                    })
+                    .expect("Save As rollback artifact must exist before cleanup")
+                    .path();
+                std::fs::remove_file(&artifact).unwrap();
+                std::fs::write(&artifact, artifact_replacement).unwrap();
+            },
+            || {},
+        );
+
+        let error = save_temp_target_as(&shared_state, destination).unwrap_err();
+
+        assert!(error.contains("export cleanup is pending"));
+        let artifact = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            })
+            .expect("the raced artifact replacement must remain named")
+            .path();
+        assert_eq!(std::fs::read(&artifact).unwrap(), artifact_replacement);
+        let preserved = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-preserved-")
+            })
+            .expect("the raced artifact must also retain a stable recovery path")
+            .path()
+            .join("file");
+        assert_eq!(std::fs::read(&preserved).unwrap(), artifact_replacement);
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert_eq!(std::fs::read(&artifact).unwrap(), artifact_replacement);
+        assert_eq!(std::fs::read(&preserved).unwrap(), artifact_replacement);
     }
 
     #[test]
