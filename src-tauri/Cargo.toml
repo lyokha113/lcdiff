@@ -27,3 +27,9 @@ url = "2.5"
 [dev-dependencies]
 tauri = { version = "2.11", features = ["test"] }
 zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+] }

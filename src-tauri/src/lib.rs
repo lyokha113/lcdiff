@@ -237,12 +237,22 @@ mod tests {
         discard_temp_target_with_cleanup_and_write_outcome, discard_temp_target_with_outcome,
         install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
         prepare_temp_target, prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
-        save_temp_target_as, save_temp_target_as_with_after_reserve,
+        replace_temp_target_export_destination_for_test, save_temp_target_as,
+        save_temp_target_as_with_after_reserve, save_temp_target_as_with_backup_removal_failure,
         save_temp_target_as_with_cleanup_failure, save_temp_target_as_with_hooks,
-        save_temp_target_as_with_parent_swap, save_temp_target_as_with_post_replace_failure,
-        save_temp_target_as_with_rollback_failure, save_temp_target_as_with_stale_reservation,
-        set_prepared_temp_target_drop_probe, stage_temp_merge_all_shared,
-        stage_temp_merge_all_with_after_reserve, stage_temp_merge_all_with_pre_final_check,
+        save_temp_target_as_with_parent_swap,
+        save_temp_target_as_with_partial_snapshot_capture_failure,
+        save_temp_target_as_with_partial_write_failure,
+        save_temp_target_as_with_post_cleanup_parent_swap,
+        save_temp_target_as_with_post_cleanup_replacement,
+        save_temp_target_as_with_post_rename_durability_failure,
+        save_temp_target_as_with_post_replace_failure,
+        save_temp_target_as_with_pre_capture_destination_creation,
+        save_temp_target_as_with_rollback_failure,
+        save_temp_target_as_with_snapshot_durability_failure,
+        save_temp_target_as_with_stale_reservation, set_prepared_temp_target_drop_probe,
+        stage_temp_merge_all_shared, stage_temp_merge_all_with_after_reserve,
+        stage_temp_merge_all_with_pre_final_check,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -3333,7 +3343,7 @@ mod tests {
     }
 
     #[test]
-    fn temp_merge_save_as_cleanup_failure_is_owned_and_retried_before_next_export() {
+    fn temp_merge_save_as_cleanup_sync_failure_retries_after_backup_was_removed() {
         let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
         let first_destination = dir.path().join("first-export.jar");
         let second_destination = dir.path().join("second-export.jar");
@@ -3354,6 +3364,16 @@ mod tests {
             std::fs::read(&first_destination).unwrap(),
             std::fs::read(&working_path).unwrap()
         );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            }),
+            "the injected failure happens after backup removal"
+        );
 
         save_temp_target_as(&shared_state, second_destination.clone()).unwrap();
 
@@ -3371,6 +3391,419 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".lcdiff-save-as-rollback-")
         }));
+    }
+
+    #[test]
+    fn temp_merge_state_drop_recovers_pending_save_as_rollback() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("drop-rollback-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_rollback_failure(&shared_state, destination.clone()).unwrap_err();
+
+        assert_ne!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+
+        drop(shared_state);
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_state_drop_cleans_pending_save_as_backup() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("drop-cleanup-export.jar");
+        let working_bytes = std::fs::read(&working_path).unwrap();
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_backup_removal_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            working_bytes.as_slice()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+
+        drop(shared_state);
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            working_bytes.as_slice()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_partial_snapshot_before_capture_finishes() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("partial-snapshot-export.jar");
+        let retry_destination = dir.path().join("partial-snapshot-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_partial_snapshot_capture_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("snapshot capture"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            }),
+            "partial backup must remain named by the pending recovery owner"
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_partial_write_when_failure_cleanup_cannot_remove_it() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("partial-write-export.jar");
+        let retry_destination = dir.path().join("partial-write-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error =
+            save_temp_target_as_with_partial_write_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("temporary write cleanup"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-write-")
+            }),
+            "partial write must remain named by the pending recovery owner"
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_rolls_back_when_post_rename_durability_fails() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("durability-failure-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("injected renamed file durability failure"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        save_temp_target_as(&shared_state, dir.path().join("durability-retry.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_backup_when_post_capture_durability_fails() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("capture-durability-export.jar");
+        let retry_destination = dir.path().join("capture-durability-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_snapshot_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("injected snapshot durability failure"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_cleans_a_read_only_snapshot_without_sticking_busy() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("read-only-snapshot-export.jar");
+        let retry_destination = dir.path().join("read-only-snapshot-retry.jar");
+        std::fs::write(&destination, b"caller-owned-read-only").unwrap();
+        let original_permissions = std::fs::metadata(&destination).unwrap().permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_readonly(true);
+        std::fs::set_permissions(&destination, read_only_permissions).unwrap();
+
+        save_temp_target_as_with_snapshot_durability_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-read-only"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        std::fs::set_permissions(&destination, original_permissions).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_never_publishes_or_rolls_back_a_replaced_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("externally-replaced-export.jar");
+        let replacement = b"third-party-replacement";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_hooks(
+            &shared_state,
+            destination.clone(),
+            |_| {},
+            |_| {
+                replace_temp_target_export_destination_for_test(&destination, replacement).unwrap();
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+    }
+
+    #[test]
+    fn temp_merge_save_as_revalidates_the_exact_inode_before_delayed_publication() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("delayed-publication-export.jar");
+        let retry_destination = dir.path().join("delayed-publication-retry.jar");
+        let replacement = b"third-party-after-cleanup-failure";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_cleanup_failure(&shared_state, destination.clone()).unwrap_err();
+        replace_temp_target_export_destination_for_test(&destination, replacement).unwrap();
+
+        let error = save_temp_target_as(&shared_state, retry_destination).unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+    }
+
+    #[test]
+    fn temp_merge_save_as_does_not_publish_a_destination_replaced_after_cleanup() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("post-cleanup-replacement-export.jar");
+        let replacement = b"third-party-after-successful-cleanup";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_cleanup_replacement(
+            &shared_state,
+            destination.clone(),
+            replacement,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None,
+            "a third-party replacement must not become the published Save As path"
+        );
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[test]
+    fn temp_merge_save_as_does_not_overwrite_a_destination_created_after_reservation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("late-created-export.jar");
+        let replacement = b"third-party-created-after-reservation";
+
+        let error = save_temp_target_as_with_pre_capture_destination_creation(
+            &shared_state,
+            destination.clone(),
+            replacement,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("changed before snapshot capture"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None
+        );
+        save_temp_target_as(&shared_state, dir.path().join("late-created-retry.jar")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_recovers_the_pinned_parent_after_post_cleanup_rename() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("post-cleanup-parent");
+        let moved_parent = dir.path().join("post-cleanup-parent-moved");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_cleanup_parent_swap(
+            &shared_state,
+            destination.clone(),
+            parent.clone(),
+            moved_parent.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("changed before publication"));
+        assert!(!destination.exists());
+        assert_eq!(
+            std::fs::read(moved_parent.join("saved.jar")).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None
+        );
+        save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
     }
 
     #[test]
@@ -3553,60 +3986,59 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn temp_merge_save_as_keeps_using_reserved_parent_after_path_is_replaced() {
+    fn temp_merge_save_as_rejects_publication_after_reserved_parent_is_replaced() {
         let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
         let parent = dir.path().join("export-parent");
         let moved_parent = dir.path().join("export-parent-moved");
         let destination = parent.join("saved.jar");
         std::fs::create_dir(&parent).unwrap();
-        let expected_destination = std::fs::canonicalize(&parent).unwrap().join("saved.jar");
 
-        let summary =
+        let error =
             save_temp_target_as_with_after_reserve(&shared_state, destination.clone(), || {
                 std::fs::rename(&parent, &moved_parent).unwrap();
                 std::fs::create_dir(&parent).unwrap();
             })
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(
-            summary.exported_path,
-            Some(expected_destination.display().to_string())
-        );
+        assert!(error.contains("temporary merge export destination parent changed"));
         assert!(!destination.exists());
-        assert!(moved_parent.join("saved.jar").exists());
+        assert!(!moved_parent.join("saved.jar").exists());
+        assert_eq!(
+            apply_temp_merge(&shared_state).unwrap().exported_path,
+            None,
+            "failed Save As must not publish a stale last export path"
+        );
         save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn temp_merge_save_as_stays_in_pinned_parent_during_rename_and_symlink_swap() {
+    fn temp_merge_save_as_rejects_publication_after_reserved_parent_is_symlink_swapped() {
         use std::os::unix::fs::symlink;
 
-        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
         let parent = dir.path().join("export-parent");
         let moved_parent = dir.path().join("export-parent-moved");
         let escape_parent = dir.path().join("escape-parent");
         let destination = parent.join("saved.jar");
         std::fs::create_dir(&parent).unwrap();
         std::fs::create_dir(&escape_parent).unwrap();
-        let expected_destination = std::fs::canonicalize(&parent).unwrap().join("saved.jar");
 
-        let summary =
+        let error =
             save_temp_target_as_with_parent_swap(&shared_state, destination.clone(), || {
                 std::fs::rename(&parent, &moved_parent).unwrap();
                 symlink(&escape_parent, &parent).unwrap();
             })
-            .unwrap();
+            .unwrap_err();
 
-        assert_eq!(
-            summary.exported_path,
-            Some(expected_destination.display().to_string())
-        );
-        assert_eq!(
-            std::fs::read(moved_parent.join("saved.jar")).unwrap(),
-            std::fs::read(working_path).unwrap()
-        );
+        assert!(error.contains("temporary merge export destination parent changed"));
+        assert!(!moved_parent.join("saved.jar").exists());
         assert!(!escape_parent.join("saved.jar").exists());
+        assert_eq!(
+            apply_temp_merge(&shared_state).unwrap().exported_path,
+            None,
+            "failed Save As must not publish a stale last export path"
+        );
     }
 
     #[test]

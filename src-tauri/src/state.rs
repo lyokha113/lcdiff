@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, atomic::AtomicU64},
 };
@@ -226,23 +226,59 @@ struct PreparedTempTargetExport {
     snapshot: TempTargetExportSnapshot,
     reservation: TempMergeReservation,
     destination: ExportDestinationBinding,
+    artifacts: ExportArtifactOwnership,
 }
 
 struct ExportDestinationBinding {
     path: PathBuf,
     file_name: PathBuf,
     parent: Dir,
+    parent_identity: same_file::Handle,
+}
+
+struct OwnedExportArtifact {
+    name: PathBuf,
+    state: OwnedExportArtifactState,
+    durability_handle: Option<cap_std::fs::File>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OwnedExportArtifactState {
+    Reserved,
+    Present,
+    RemovedNeedsSync,
+    RemovedRetained,
+}
+
+struct PublishedExportDestination {
+    handle: Option<cap_std::fs::File>,
+    state: PublishedExportDestinationState,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PublishedExportDestinationState {
+    Present,
+    RemovedNeedsSync,
+    Removed,
+    Restoring,
+}
+
+struct ExportArtifactOwnership {
+    backup: OwnedExportArtifact,
+    write: OwnedExportArtifact,
+    published: Option<PublishedExportDestination>,
 }
 
 enum ExportDestinationSnapshot {
     Missing,
     Existing {
-        backup_name: PathBuf,
+        expected_identity: same_file::Handle,
         preserves_identity: bool,
     },
 }
 
 enum PendingTempTargetExportRecoveryKind {
+    ArtifactCleanup,
     Rollback,
     RollbackCleanup,
     ExportCleanup,
@@ -252,6 +288,18 @@ struct PendingTempTargetExportRecovery {
     prepared: PreparedTempTargetExport,
     snapshot: ExportDestinationSnapshot,
     kind: PendingTempTargetExportRecoveryKind,
+}
+
+impl PendingTempTargetExportRecovery {
+    fn restore(&mut self) -> Result<(), String> {
+        self.snapshot
+            .restore(&self.prepared.destination, &mut self.prepared.artifacts)
+    }
+
+    fn cleanup(&mut self) -> Result<(), String> {
+        self.snapshot
+            .cleanup(&self.prepared.destination, &mut self.prepared.artifacts)
+    }
 }
 
 struct TempMergeArchiveSnapshot {
@@ -364,7 +412,62 @@ impl Default for AppState {
     }
 }
 
+impl Drop for AppState {
+    fn drop(&mut self) {
+        let Some(mut recovery) = self.pending_temp_target_export_recovery.take() else {
+            return;
+        };
+        match recovery.kind {
+            PendingTempTargetExportRecoveryKind::ArtifactCleanup => {
+                let _ = recovery.cleanup();
+            }
+            PendingTempTargetExportRecoveryKind::Rollback => {
+                if recovery.restore().is_ok() {
+                    let _ = recovery.cleanup();
+                } else {
+                    recovery
+                        .prepared
+                        .artifacts
+                        .retain_backup_on_disk_after_failed_shutdown_rollback();
+                }
+            }
+            PendingTempTargetExportRecoveryKind::RollbackCleanup => {
+                let _ = recovery.cleanup();
+            }
+            PendingTempTargetExportRecoveryKind::ExportCleanup => {
+                let published_path_matches = recovery
+                    .prepared
+                    .artifacts
+                    .published
+                    .as_ref()
+                    .is_some_and(|published| {
+                        recovery
+                            .prepared
+                            .destination
+                            .ambient_path_names_published_file(published)
+                            .unwrap_or(false)
+                    });
+                if published_path_matches || recovery.restore().is_ok() {
+                    let _ = recovery.cleanup();
+                } else {
+                    recovery
+                        .prepared
+                        .artifacts
+                        .retain_backup_on_disk_after_failed_shutdown_rollback();
+                }
+            }
+        }
+    }
+}
+
 impl AppState {
+    #[cfg(test)]
+    pub(crate) fn temp_target_exported_path_for_test(&self) -> Option<PathBuf> {
+        self.temp_merge_session
+            .as_ref()
+            .and_then(|session| session.exported_path.clone())
+    }
+
     pub(crate) fn new(resource_dir: Option<PathBuf>) -> Self {
         let sidecar = SidecarClient::new(resource_dir);
         let prefetch_sidecar = sidecar.prefetch_worker();
@@ -986,6 +1089,7 @@ impl AppState {
             snapshot,
             reservation,
             destination,
+            artifacts: ExportArtifactOwnership::new(),
         })
     }
 
@@ -2262,22 +2366,147 @@ fn next_export_artifact_name(prefix: &str) -> PathBuf {
     PathBuf::from(format!("{prefix}{}-{token}", std::process::id()))
 }
 
-#[cfg(unix)]
-fn sync_capability_directory(directory: &Dir) -> io::Result<()> {
-    directory.try_clone()?.into_std_file().sync_all()
+fn sync_capability_change(directory: &Dir, durable_files: &[&cap_std::fs::File]) -> io::Result<()> {
+    if durable_files.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "capability durability requires an open file handle",
+        ));
+    }
+    #[cfg(not(windows))]
+    for file in durable_files {
+        file.sync_all()?;
+    }
+    #[cfg(unix)]
+    {
+        directory.try_clone()?.into_std_file().sync_all()
+    }
+    #[cfg(windows)]
+    {
+        // `copy_into_capability_file` flushes newly-written bytes before the
+        // MoveFileExW(MOVEFILE_WRITE_THROUGH) publication. Windows has no
+        // documented directory-fsync equivalent, so do not keep an alias
+        // handle merely to flush it after a delete/name reuse.
+        let _ = (directory, durable_files);
+        Ok(())
+    }
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        let _ = directory;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "capability-relative durability is not implemented for this platform",
+        ))
+    }
 }
 
-#[cfg(not(unix))]
-fn sync_capability_directory(_directory: &Dir) -> io::Result<()> {
+fn sync_artifact_removals(directory: &Dir, durable_files: &[&cap_std::fs::File]) -> io::Result<()> {
+    #[cfg(not(windows))]
+    for file in durable_files {
+        file.sync_all()?;
+    }
+    #[cfg(unix)]
+    {
+        directory.try_clone()?.into_std_file().sync_all()
+    }
+    #[cfg(windows)]
+    {
+        // File removal uses a short-lived DELETE handle. Do not retain an
+        // old file handle across possible name reuse on Windows.
+        let _ = (directory, durable_files);
+        Ok(())
+    }
+    #[cfg(all(not(unix), not(windows)))]
+    {
+        let _ = directory;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "capability-relative cleanup durability is not implemented for this platform",
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn move_file_write_through(source: &Path, destination: &Path, replace: bool) -> io::Result<()> {
+    use std::{ffi::OsStr, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    fn wide(path: &OsStr) -> Vec<u16> {
+        path.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let source = wide(source.as_os_str());
+    let destination = wide(destination.as_os_str());
+    let mut flags = MOVEFILE_WRITE_THROUGH;
+    if replace {
+        flags |= MOVEFILE_REPLACE_EXISTING;
+    }
+    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), flags) };
+    if moved == 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(())
 }
 
-fn remove_capability_file_if_present(directory: &Dir, path: &Path) -> io::Result<()> {
-    match directory.remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
+#[cfg(windows)]
+fn remove_file_handle_posix(file: &cap_std::fs::File) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+        FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FileDispositionInfoEx,
+        SetFileInformationByHandle,
+    };
+
+    let disposition = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    };
+    let removed = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle() as _,
+            FileDispositionInfoEx,
+            std::ptr::from_ref(&disposition).cast(),
+            std::mem::size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+        )
+    };
+    if removed == 0 {
+        return Err(io::Error::last_os_error());
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn remove_capability_file_matching_handle(
+    directory: &Dir,
+    path: &Path,
+    expected: &cap_std::fs::File,
+) -> io::Result<()> {
+    use cap_std::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::DELETE;
+
+    let mut options = OpenOptions::new();
+    options.access_mode(DELETE);
+    let delete_handle = directory.open_with(path, &options)?;
+    let expected_identity = same_file::Handle::from_file(expected.try_clone()?.into_std())?;
+    let delete_identity = same_file::Handle::from_file(delete_handle.try_clone()?.into_std())?;
+    if expected_identity != delete_identity {
+        return Err(io::Error::other(
+            "capability path no longer names the owned file",
+        ));
+    }
+    remove_file_handle_posix(&delete_handle)?;
+    drop(delete_handle);
+    Ok(())
+}
+
+fn sync_renamed_capability_file(
+    directory: &Dir,
+    renamed_file: &cap_std::fs::File,
+) -> io::Result<()> {
+    sync_capability_change(directory, &[renamed_file])
 }
 
 fn capability_files_have_same_bytes(
@@ -2304,16 +2533,64 @@ fn capability_files_have_same_bytes(
     }
 }
 
+fn capability_files_have_same_identity(
+    directory: &Dir,
+    left: &Path,
+    right: &Path,
+) -> io::Result<bool> {
+    let left = same_file::Handle::from_file(directory.open(left)?.into_std())?;
+    let right = same_file::Handle::from_file(directory.open(right)?.into_std())?;
+    Ok(left == right)
+}
+
+fn capability_file_has_same_bytes(
+    directory: &Dir,
+    left: &cap_std::fs::File,
+    right: &Path,
+) -> io::Result<bool> {
+    let mut left = left.try_clone()?;
+    left.seek(SeekFrom::Start(0))?;
+    let mut right = directory.open(right)?;
+    if left.metadata()?.len() != right.metadata()?.len() {
+        return Ok(false);
+    }
+    let mut left_buffer = [0_u8; 64 * 1024];
+    let mut right_buffer = [0_u8; 64 * 1024];
+    loop {
+        let left_read = left.read(&mut left_buffer)?;
+        let right_read = right.read(&mut right_buffer)?;
+        if left_read != right_read || left_buffer[..left_read] != right_buffer[..right_read] {
+            return Ok(false);
+        }
+        if left_read == 0 {
+            return Ok(true);
+        }
+    }
+}
+
 fn copy_into_capability_file(
     source: &mut impl Read,
     directory: &Dir,
-    destination: &Path,
+    destination: &mut OwnedExportArtifact,
 ) -> Result<(), String> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        use windows_sys::Win32::{Foundation::GENERIC_WRITE, Storage::FileSystem::DELETE};
+
+        options.access_mode(DELETE | GENERIC_WRITE);
+    }
     let mut destination_file = directory
-        .open_with(destination, &options)
+        .open_with(&destination.name, &options)
         .map_err(|error| error.to_string())?;
+    destination.state = OwnedExportArtifactState::Present;
+    destination.durability_handle = Some(
+        destination_file
+            .try_clone()
+            .map_err(|error| error.to_string())?,
+    );
     io::copy(source, &mut destination_file).map_err(|error| error.to_string())?;
     destination_file
         .flush()
@@ -2321,34 +2598,356 @@ fn copy_into_capability_file(
         .map_err(|error| error.to_string())
 }
 
-impl ExportDestinationBinding {
-    fn export_from_ambient(&self, source: &Path) -> Result<(), String> {
-        let mut source = File::open(source).map_err(|error| error.to_string())?;
-        self.export_from_reader(&mut source)
+impl OwnedExportArtifact {
+    fn new(prefix: &str) -> Self {
+        Self {
+            name: next_export_artifact_name(prefix),
+            state: OwnedExportArtifactState::Reserved,
+            durability_handle: None,
+        }
     }
 
-    fn export_from_reader(&self, source: &mut impl Read) -> Result<(), String> {
-        let temporary_name = next_export_artifact_name(".lcdiff-save-as-write-");
-        if let Err(error) = copy_into_capability_file(source, &self.parent, &temporary_name) {
-            let cleanup_error = remove_capability_file_if_present(&self.parent, &temporary_name)
-                .and_then(|()| sync_capability_directory(&self.parent))
-                .err()
-                .map(|cleanup| format!("; cleanup failed: {cleanup}"))
-                .unwrap_or_default();
-            return Err(format!("{error}{cleanup_error}"));
+    fn is_owned(&self) -> bool {
+        self.state != OwnedExportArtifactState::Reserved
+    }
+
+    fn ensure_durability_handle(
+        &mut self,
+        destination: &ExportDestinationBinding,
+    ) -> Result<(), String> {
+        if self.durability_handle.is_some() {
+            return Ok(());
         }
-        let replace_result = self
+        if self.state != OwnedExportArtifactState::Present {
+            return Err("export artifact is not present for durability".to_owned());
+        }
+        let mut options = OpenOptions::new();
+        #[cfg(unix)]
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            use windows_sys::Win32::{Foundation::GENERIC_READ, Storage::FileSystem::DELETE};
+
+            options.access_mode(DELETE | GENERIC_READ);
+        }
+        #[cfg(all(not(unix), not(windows)))]
+        options.read(true).write(true);
+        self.durability_handle = Some(
+            destination
+                .parent
+                .open_with(&self.name, &options)
+                .map_err(|error| error.to_string())?,
+        );
+        Ok(())
+    }
+
+    fn remove_present(&mut self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        if self.state != OwnedExportArtifactState::Present {
+            return Ok(());
+        }
+        self.ensure_durability_handle(destination)?;
+        let handle = self
+            .durability_handle
+            .as_ref()
+            .expect("ensured export artifact handle");
+        if !destination
+            .capability_path_names_file(&self.name, handle)
+            .map_err(|error| error.to_string())?
+        {
+            self.state = OwnedExportArtifactState::Reserved;
+            self.durability_handle = None;
+            return Ok(());
+        }
+        #[cfg(unix)]
+        destination
             .parent
-            .rename(&temporary_name, &self.parent, &self.file_name)
-            .and_then(|()| sync_capability_directory(&self.parent));
-        if let Err(error) = replace_result {
-            let cleanup_error = remove_capability_file_if_present(&self.parent, &temporary_name)
-                .and_then(|()| sync_capability_directory(&self.parent))
+            .remove_file(&self.name)
+            .map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        remove_capability_file_matching_handle(&destination.parent, &self.name, handle)
+            .map_err(|error| error.to_string())?;
+        #[cfg(all(not(unix), not(windows)))]
+        return Err(
+            "capability-relative artifact removal is not implemented for this platform".to_owned(),
+        );
+        self.state = OwnedExportArtifactState::RemovedNeedsSync;
+        Ok(())
+    }
+
+    fn disarm_removed(&mut self) {
+        if self.state == OwnedExportArtifactState::RemovedNeedsSync {
+            self.state = OwnedExportArtifactState::Reserved;
+            self.durability_handle = None;
+        }
+    }
+
+    fn retain_removed(&mut self) {
+        if self.state == OwnedExportArtifactState::RemovedNeedsSync {
+            self.state = OwnedExportArtifactState::RemovedRetained;
+        }
+    }
+
+    fn is_retained_after_removal(&self) -> bool {
+        self.state == OwnedExportArtifactState::RemovedRetained
+    }
+
+    fn release_retained(&mut self) {
+        if self.is_retained_after_removal() {
+            self.state = OwnedExportArtifactState::Reserved;
+            self.durability_handle = None;
+        }
+    }
+
+    fn reader(&self, destination: &ExportDestinationBinding) -> Result<cap_std::fs::File, String> {
+        let mut file = match self.state {
+            OwnedExportArtifactState::RemovedRetained => self
+                .durability_handle
+                .as_ref()
+                .ok_or_else(|| "retained export artifact handle is unavailable".to_owned())?
+                .try_clone()
+                .map_err(|error| error.to_string()),
+            OwnedExportArtifactState::Present => destination
+                .parent
+                .open(&self.name)
+                .map_err(|error| error.to_string()),
+            OwnedExportArtifactState::Reserved | OwnedExportArtifactState::RemovedNeedsSync => {
+                Err("export artifact backup is unavailable".to_owned())
+            }
+        }?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| error.to_string())?;
+        Ok(file)
+    }
+}
+
+impl ExportArtifactOwnership {
+    fn new() -> Self {
+        Self {
+            backup: OwnedExportArtifact::new(".lcdiff-save-as-rollback-"),
+            write: OwnedExportArtifact::new(".lcdiff-save-as-write-"),
+            published: None,
+        }
+    }
+
+    fn cleanup(&mut self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        if !self.backup.is_owned() && !self.write.is_owned() {
+            return Ok(());
+        }
+        let retain_backup = self.published.is_some();
+        self.remove_present(destination)?;
+        self.sync_removed(destination)?;
+        if retain_backup {
+            self.backup.retain_removed();
+        } else {
+            self.backup.disarm_removed();
+            self.backup.release_retained();
+        }
+        self.write.disarm_removed();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn cleanup_with(
+        &mut self,
+        destination: &ExportDestinationBinding,
+        sync_directory: impl FnOnce(&Dir) -> io::Result<()>,
+    ) -> Result<(), String> {
+        if !self.backup.is_owned() && !self.write.is_owned() {
+            return Ok(());
+        }
+        let retain_backup = self.published.is_some();
+        self.remove_present(destination)?;
+        sync_directory(&destination.parent).map_err(|error| error.to_string())?;
+        if retain_backup {
+            self.backup.retain_removed();
+        } else {
+            self.backup.disarm_removed();
+            self.backup.release_retained();
+        }
+        self.write.disarm_removed();
+        Ok(())
+    }
+
+    fn cleanup_write(&mut self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        if !self.write.is_owned() {
+            return Ok(());
+        }
+        self.write.remove_present(destination)?;
+        let handles = self
+            .write
+            .durability_handle
+            .as_ref()
+            .into_iter()
+            .collect::<Vec<_>>();
+        sync_artifact_removals(&destination.parent, &handles).map_err(|error| error.to_string())?;
+        self.write.disarm_removed();
+        Ok(())
+    }
+
+    fn remove_present(&mut self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        self.backup.remove_present(destination)?;
+        self.write.remove_present(destination)
+    }
+
+    fn sync_removed(&self, destination: &ExportDestinationBinding) -> Result<(), String> {
+        let handles = [&self.backup, &self.write]
+            .into_iter()
+            .filter(|artifact| artifact.state == OwnedExportArtifactState::RemovedNeedsSync)
+            .filter_map(|artifact| artifact.durability_handle.as_ref())
+            .collect::<Vec<_>>();
+        if self.backup.state != OwnedExportArtifactState::RemovedNeedsSync
+            && self.write.state != OwnedExportArtifactState::RemovedNeedsSync
+        {
+            return Ok(());
+        }
+        sync_artifact_removals(&destination.parent, &handles).map_err(|error| error.to_string())
+    }
+
+    fn disarm_removed(&mut self) {
+        self.backup.disarm_removed();
+        self.write.disarm_removed();
+    }
+
+    fn remove_published_destination(
+        &mut self,
+        destination: &ExportDestinationBinding,
+    ) -> Result<(), String> {
+        let published = self
+            .published
+            .as_mut()
+            .ok_or_else(|| "published export destination ownership is unavailable".to_owned())?;
+        if published.state == PublishedExportDestinationState::Present {
+            if !destination.destination_names_published_file(published)? {
+                return Err(
+                    "export destination changed outside LCDiff; automatic rollback refused"
+                        .to_owned(),
+                );
+            }
+            let _handle = published
+                .handle
+                .as_ref()
+                .ok_or_else(|| "published destination handle is unavailable".to_owned())?;
+            #[cfg(unix)]
+            destination
+                .parent
+                .remove_file(&destination.file_name)
+                .map_err(|error| error.to_string())?;
+            #[cfg(windows)]
+            remove_capability_file_matching_handle(
+                &destination.parent,
+                &destination.file_name,
+                _handle,
+            )
+            .map_err(|error| error.to_string())?;
+            #[cfg(all(not(unix), not(windows)))]
+            return Err(
+                "published destination rollback is not implemented for this platform".to_owned(),
+            );
+            published.state = PublishedExportDestinationState::RemovedNeedsSync;
+        }
+        if published.state == PublishedExportDestinationState::RemovedNeedsSync {
+            let handle = published
+                .handle
+                .as_ref()
+                .ok_or_else(|| "removed destination durability handle is unavailable".to_owned())?;
+            sync_capability_change(&destination.parent, &[handle])
+                .map_err(|error| error.to_string())?;
+            published.handle = None;
+            published.state = PublishedExportDestinationState::Removed;
+        }
+        Ok(())
+    }
+
+    fn finish_destination_restore(&mut self) {
+        self.published = None;
+    }
+
+    fn finish_destination_publication(&mut self) -> Result<(), String> {
+        let published = self
+            .published
+            .as_ref()
+            .ok_or_else(|| "published export destination ownership is unavailable".to_owned())?;
+        if published.state != PublishedExportDestinationState::Present {
+            return Err("published export destination is not ready".to_owned());
+        }
+        self.published = None;
+        self.backup.release_retained();
+        Ok(())
+    }
+
+    fn retain_backup_on_disk_after_failed_shutdown_rollback(&mut self) {
+        self.backup.state = OwnedExportArtifactState::Reserved;
+        self.backup.durability_handle = None;
+    }
+}
+
+impl Drop for PreparedTempTargetExport {
+    fn drop(&mut self) {
+        let _ = self.artifacts.cleanup(&self.destination);
+    }
+}
+
+impl ExportDestinationBinding {
+    fn export_from_ambient(
+        &self,
+        source: &Path,
+        artifacts: &mut ExportArtifactOwnership,
+    ) -> Result<(), String> {
+        let mut source = File::open(source).map_err(|error| error.to_string())?;
+        self.export_from_reader(&mut source, artifacts)
+    }
+
+    fn export_from_reader(
+        &self,
+        source: &mut impl Read,
+        artifacts: &mut ExportArtifactOwnership,
+    ) -> Result<(), String> {
+        self.export_from_reader_with_durability(source, artifacts, sync_renamed_capability_file)
+    }
+
+    fn export_from_reader_with_durability(
+        &self,
+        source: &mut impl Read,
+        artifacts: &mut ExportArtifactOwnership,
+        sync_after_rename: impl FnOnce(&Dir, &cap_std::fs::File) -> io::Result<()>,
+    ) -> Result<(), String> {
+        if artifacts.published.is_some() {
+            return Err("an exported destination is already owned by this transaction".to_owned());
+        }
+        artifacts.cleanup_write(self)?;
+        if let Err(error) = copy_into_capability_file(source, &self.parent, &mut artifacts.write) {
+            let cleanup_error = artifacts
+                .cleanup_write(self)
                 .err()
                 .map(|cleanup| format!("; cleanup failed: {cleanup}"))
                 .unwrap_or_default();
             return Err(format!("{error}{cleanup_error}"));
         }
+        if let Err(error) = self.rename_artifact_to_destination(&artifacts.write.name, true) {
+            let cleanup_error = artifacts
+                .cleanup_write(self)
+                .err()
+                .map(|cleanup| format!("; cleanup failed: {cleanup}"))
+                .unwrap_or_default();
+            return Err(format!("{error}{cleanup_error}"));
+        }
+        artifacts.write.state = OwnedExportArtifactState::Reserved;
+        let renamed_file = artifacts
+            .write
+            .durability_handle
+            .take()
+            .ok_or_else(|| "renamed file durability handle is unavailable".to_owned())?;
+        artifacts.published = Some(PublishedExportDestination {
+            handle: Some(renamed_file),
+            state: PublishedExportDestinationState::Present,
+        });
+        let renamed_file = artifacts
+            .published
+            .as_ref()
+            .and_then(|published| published.handle.as_ref())
+            .expect("published destination retains the renamed handle");
+        sync_after_rename(&self.parent, renamed_file).map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -2359,88 +2958,555 @@ impl ExportDestinationBinding {
             Err(error) => Err(error.to_string()),
         }
     }
+
+    fn destination_identity(&self) -> Result<Option<same_file::Handle>, String> {
+        match self.parent.open(&self.file_name) {
+            Ok(file) => same_file::Handle::from_file(file.into_std())
+                .map(Some)
+                .map_err(|error| error.to_string()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn open_destination_for_durability(&self) -> Result<Option<cap_std::fs::File>, String> {
+        let mut options = OpenOptions::new();
+        #[cfg(unix)]
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            use windows_sys::Win32::{Foundation::GENERIC_READ, Storage::FileSystem::DELETE};
+
+            options.access_mode(DELETE | GENERIC_READ);
+        }
+        #[cfg(all(not(unix), not(windows)))]
+        options.read(true).write(true);
+        match self.parent.open_with(&self.file_name, &options) {
+            Ok(file) => Ok(Some(file)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn create_destination_for_restore(&self) -> Result<cap_std::fs::File, String> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt;
+            use windows_sys::Win32::{Foundation::GENERIC_WRITE, Storage::FileSystem::DELETE};
+
+            options.access_mode(DELETE | GENERIC_WRITE);
+        }
+        self.parent
+            .open_with(&self.file_name, &options)
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(windows)]
+    fn artifact_path(&self, name: &Path) -> Result<PathBuf, String> {
+        self.path
+            .parent()
+            .map(|parent| parent.join(name))
+            .ok_or_else(|| "temporary merge export destination has no parent".to_owned())
+    }
+
+    fn ambient_parent_matches(&self) -> Result<bool, String> {
+        let parent_path = self
+            .path
+            .parent()
+            .ok_or_else(|| "temporary merge export destination has no parent".to_owned())?;
+        let ambient_parent = match same_file::Handle::from_path(parent_path) {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok(ambient_parent == self.parent_identity)
+    }
+
+    fn capability_path_names_file(
+        &self,
+        name: &Path,
+        expected: &cap_std::fs::File,
+    ) -> io::Result<bool> {
+        let current = match self.parent.open(name) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let expected = same_file::Handle::from_file(expected.try_clone()?.into_std())
+            .map_err(io::Error::other)?;
+        let current = same_file::Handle::from_file(current.into_std()).map_err(io::Error::other)?;
+        Ok(expected == current)
+    }
+
+    fn destination_names_published_file(
+        &self,
+        published: &PublishedExportDestination,
+    ) -> Result<bool, String> {
+        if published.state != PublishedExportDestinationState::Present {
+            return Ok(false);
+        }
+        let handle = published
+            .handle
+            .as_ref()
+            .ok_or_else(|| "published destination handle is unavailable".to_owned())?;
+        self.capability_path_names_file(&self.file_name, handle)
+            .map_err(|error| error.to_string())
+    }
+
+    fn ambient_path_names_published_file(
+        &self,
+        published: &PublishedExportDestination,
+    ) -> Result<bool, String> {
+        if !self.ambient_parent_matches()? || !self.destination_names_published_file(published)? {
+            return Ok(false);
+        }
+        let handle = published
+            .handle
+            .as_ref()
+            .ok_or_else(|| "published destination handle is unavailable".to_owned())?;
+        let expected = same_file::Handle::from_file(
+            handle
+                .try_clone()
+                .map_err(|error| error.to_string())?
+                .into_std(),
+        )
+        .map_err(|error| error.to_string())?;
+        let ambient = match same_file::Handle::from_path(&self.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        };
+        Ok(expected == ambient)
+    }
+
+    fn rename_artifact_to_destination(&self, name: &Path, replace: bool) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            if !replace && self.destination_exists().map_err(io::Error::other)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "export destination already exists",
+                ));
+            }
+            self.parent.rename(name, &self.parent, &self.file_name)
+        }
+        #[cfg(windows)]
+        {
+            if !self.ambient_parent_matches().map_err(io::Error::other)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "export destination parent binding changed",
+                ));
+            }
+            let source = self.artifact_path(name).map_err(io::Error::other)?;
+            move_file_write_through(&source, &self.path, replace)
+        }
+        #[cfg(all(not(unix), not(windows)))]
+        {
+            let _ = (name, replace);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "atomic export replacement is not implemented for this platform",
+            ))
+        }
+    }
 }
 
 impl ExportDestinationSnapshot {
-    fn capture(destination: &ExportDestinationBinding) -> Result<Self, String> {
-        if !destination.destination_exists()? {
-            return Ok(Self::Missing);
+    fn prepare(destination: &ExportDestinationBinding) -> Result<Self, String> {
+        match destination.destination_identity()? {
+            None => Ok(Self::Missing),
+            Some(expected_identity) => Ok(Self::Existing {
+                expected_identity,
+                preserves_identity: false,
+            }),
         }
-        let backup_name = next_export_artifact_name(".lcdiff-save-as-rollback-");
-        let preserves_identity = match destination.parent.hard_link(
+    }
+
+    fn still_matches_prepared_destination(
+        &self,
+        destination: &ExportDestinationBinding,
+    ) -> Result<bool, String> {
+        if !destination.ambient_parent_matches()? {
+            return Ok(false);
+        }
+        match self {
+            Self::Missing => Ok(destination.destination_identity()?.is_none()),
+            Self::Existing {
+                expected_identity, ..
+            } => Ok(destination
+                .destination_identity()?
+                .is_some_and(|current| current == *expected_identity)),
+        }
+    }
+
+    fn capture(
+        &mut self,
+        destination: &ExportDestinationBinding,
+        artifacts: &mut ExportArtifactOwnership,
+    ) -> Result<(), String> {
+        self.capture_with_durability(destination, artifacts, sync_renamed_capability_file)
+    }
+
+    fn capture_with_durability(
+        &mut self,
+        destination: &ExportDestinationBinding,
+        artifacts: &mut ExportArtifactOwnership,
+        sync_after_capture: impl FnOnce(&Dir, &cap_std::fs::File) -> io::Result<()>,
+    ) -> Result<(), String> {
+        if !self.still_matches_prepared_destination(destination)? {
+            return Err(
+                "temporary merge export destination parent changed or file changed before snapshot capture"
+                    .to_owned(),
+            );
+        }
+        let Self::Existing {
+            expected_identity,
+            preserves_identity,
+        } = self
+        else {
+            return Ok(());
+        };
+        match destination.parent.hard_link(
             &destination.file_name,
             &destination.parent,
-            &backup_name,
+            &artifacts.backup.name,
         ) {
-            Ok(()) => true,
+            Ok(()) => {
+                artifacts.backup.state = OwnedExportArtifactState::Present;
+                let backup_identity = destination
+                    .parent
+                    .open(&artifacts.backup.name)
+                    .map_err(|error| error.to_string())
+                    .and_then(|backup| {
+                        same_file::Handle::from_file(backup.into_std())
+                            .map_err(|error| error.to_string())
+                    })?;
+                if backup_identity != *expected_identity {
+                    return Err(
+                        "temporary merge export destination changed while snapshotting".to_owned(),
+                    );
+                }
+                if artifacts
+                    .backup
+                    .ensure_durability_handle(destination)
+                    .is_ok()
+                {
+                    *preserves_identity = true;
+                } else {
+                    artifacts.backup.remove_present(destination)?;
+                    artifacts.sync_removed(destination)?;
+                    artifacts.disarm_removed();
+                    let mut original = destination
+                        .parent
+                        .open(&destination.file_name)
+                        .map_err(|error| error.to_string())?;
+                    let original_identity = same_file::Handle::from_file(
+                        original
+                            .try_clone()
+                            .map_err(|error| error.to_string())?
+                            .into_std(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    if original_identity != *expected_identity {
+                        return Err(
+                            "temporary merge export destination changed while snapshotting"
+                                .to_owned(),
+                        );
+                    }
+                    copy_into_capability_file(
+                        &mut original,
+                        &destination.parent,
+                        &mut artifacts.backup,
+                    )?;
+                    *preserves_identity = false;
+                }
+            }
             Err(_) => {
                 let mut original = destination
                     .parent
                     .open(&destination.file_name)
                     .map_err(|error| error.to_string())?;
-                copy_into_capability_file(&mut original, &destination.parent, &backup_name)?;
-                false
+                let original_identity = same_file::Handle::from_file(
+                    original
+                        .try_clone()
+                        .map_err(|error| error.to_string())?
+                        .into_std(),
+                )
+                .map_err(|error| error.to_string())?;
+                if original_identity != *expected_identity {
+                    return Err(
+                        "temporary merge export destination changed while snapshotting".to_owned(),
+                    );
+                }
+                copy_into_capability_file(
+                    &mut original,
+                    &destination.parent,
+                    &mut artifacts.backup,
+                )?;
+                *preserves_identity = false;
             }
-        };
-        sync_capability_directory(&destination.parent).map_err(|error| error.to_string())?;
-        Ok(Self::Existing {
-            backup_name,
-            preserves_identity,
-        })
+        }
+        artifacts.backup.ensure_durability_handle(destination)?;
+        let backup_file = artifacts
+            .backup
+            .durability_handle
+            .as_ref()
+            .expect("armed backup has a durability handle");
+        sync_after_capture(&destination.parent, backup_file).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
-    fn restore(&self, destination: &ExportDestinationBinding) -> Result<(), String> {
-        remove_capability_file_if_present(&destination.parent, &destination.file_name)
-            .map_err(|error| error.to_string())?;
+    fn restore(
+        &self,
+        destination: &ExportDestinationBinding,
+        artifacts: &mut ExportArtifactOwnership,
+    ) -> Result<(), String> {
+        artifacts.remove_published_destination(destination)?;
         match self {
             Self::Missing => {
-                sync_capability_directory(&destination.parent)
-                    .map_err(|error| error.to_string())?;
                 if destination.destination_exists()? {
-                    return Err("new export destination still exists after rollback".to_owned());
+                    return Err(
+                        "export destination changed outside LCDiff after rollback removal; \
+                         automatic rollback refused"
+                            .to_owned(),
+                    );
                 }
+                artifacts.finish_destination_restore();
             }
             Self::Existing {
-                backup_name,
-                preserves_identity,
+                preserves_identity, ..
             } => {
-                if *preserves_identity {
-                    destination
-                        .parent
-                        .hard_link(backup_name, &destination.parent, &destination.file_name)
-                        .map_err(|error| error.to_string())?;
-                    sync_capability_directory(&destination.parent)
-                        .map_err(|error| error.to_string())?;
+                let backup_is_retained = artifacts.backup.is_retained_after_removal();
+                let preserves_identity = *preserves_identity && !backup_is_retained;
+                let destination_exists = destination.destination_exists()?;
+                let published_state = artifacts
+                    .published
+                    .as_ref()
+                    .map(|published| published.state)
+                    .ok_or_else(|| {
+                        "published export destination ownership is unavailable".to_owned()
+                    })?;
+                if destination_exists {
+                    match published_state {
+                        PublishedExportDestinationState::Restoring => {
+                            let handle = artifacts
+                                .published
+                                .as_ref()
+                                .and_then(|published| published.handle.as_ref())
+                                .ok_or_else(|| {
+                                    "restoring destination handle is unavailable".to_owned()
+                                })?;
+                            if !destination
+                                .capability_path_names_file(&destination.file_name, handle)
+                                .map_err(|error| error.to_string())?
+                            {
+                                return Err(
+                                    "export destination changed outside LCDiff during rollback; \
+                                     automatic rollback refused"
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                        PublishedExportDestinationState::Removed => {
+                            if backup_is_retained
+                                || !capability_files_have_same_identity(
+                                    &destination.parent,
+                                    &artifacts.backup.name,
+                                    &destination.file_name,
+                                )
+                                .map_err(|error| error.to_string())?
+                            {
+                                return Err(
+                                    "export destination was recreated outside LCDiff during \
+                                     rollback; automatic rollback refused"
+                                        .to_owned(),
+                                );
+                            }
+                            let restored =
+                                destination.open_destination_for_durability()?.ok_or_else(
+                                    || "restored export destination is unavailable".to_owned(),
+                                )?;
+                            let published = artifacts
+                                .published
+                                .as_mut()
+                                .expect("removed destination ownership remains present");
+                            published.handle = Some(restored);
+                            published.state = PublishedExportDestinationState::Restoring;
+                        }
+                        PublishedExportDestinationState::Present
+                        | PublishedExportDestinationState::RemovedNeedsSync => {
+                            return Err(
+                                "published destination removal did not complete before restore"
+                                    .to_owned(),
+                            );
+                        }
+                    }
                 } else {
-                    let mut backup = destination
-                        .parent
-                        .open(backup_name)
-                        .map_err(|error| error.to_string())?;
-                    destination.export_from_reader(&mut backup)?;
+                    #[cfg(windows)]
+                    {
+                        artifacts.cleanup_write(destination)?;
+                        if backup_is_retained {
+                            let mut backup = artifacts.backup.reader(destination)?;
+                            copy_into_capability_file(
+                                &mut backup,
+                                &destination.parent,
+                                &mut artifacts.write,
+                            )?;
+                        } else {
+                            match destination.parent.hard_link(
+                                &artifacts.backup.name,
+                                &destination.parent,
+                                &artifacts.write.name,
+                            ) {
+                                Ok(()) => {
+                                    artifacts.write.state = OwnedExportArtifactState::Present;
+                                    artifacts.write.ensure_durability_handle(destination)?;
+                                }
+                                Err(_) => {
+                                    let mut backup = artifacts.backup.reader(destination)?;
+                                    copy_into_capability_file(
+                                        &mut backup,
+                                        &destination.parent,
+                                        &mut artifacts.write,
+                                    )?;
+                                }
+                            }
+                        }
+                        let restored =
+                            artifacts.write.durability_handle.as_ref().ok_or_else(|| {
+                                "restoring destination durability handle is unavailable".to_owned()
+                            })?;
+                        sync_capability_change(&destination.parent, &[restored])
+                            .map_err(|error| error.to_string())?;
+                        destination
+                            .rename_artifact_to_destination(&artifacts.write.name, false)
+                            .map_err(|error| error.to_string())?;
+                        artifacts.write.state = OwnedExportArtifactState::Reserved;
+                        let restored =
+                            artifacts.write.durability_handle.take().ok_or_else(|| {
+                                "restoring destination durability handle is unavailable".to_owned()
+                            })?;
+                        let published = artifacts
+                            .published
+                            .as_mut()
+                            .expect("removed destination ownership remains present");
+                        published.handle = Some(restored);
+                        published.state = PublishedExportDestinationState::Restoring;
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        if !backup_is_retained {
+                            let _ = destination.parent.hard_link(
+                                &artifacts.backup.name,
+                                &destination.parent,
+                                &destination.file_name,
+                            );
+                        }
+                        let restored = match destination.open_destination_for_durability()? {
+                            Some(restored) => restored,
+                            None => destination.create_destination_for_restore()?,
+                        };
+                        let published = artifacts
+                            .published
+                            .as_mut()
+                            .expect("removed destination ownership remains present");
+                        published.handle = Some(restored);
+                        published.state = PublishedExportDestinationState::Restoring;
+                    }
                 }
-                if !capability_files_have_same_bytes(
-                    &destination.parent,
-                    backup_name,
-                    &destination.file_name,
-                )
-                .map_err(|error| error.to_string())?
-                {
+                let already_restored = if backup_is_retained {
+                    let backup = artifacts.backup.reader(destination)?;
+                    capability_file_has_same_bytes(
+                        &destination.parent,
+                        &backup,
+                        &destination.file_name,
+                    )
+                } else {
+                    capability_files_have_same_bytes(
+                        &destination.parent,
+                        &artifacts.backup.name,
+                        &destination.file_name,
+                    )
+                }
+                .map_err(|error| error.to_string())?;
+                if !already_restored {
+                    if preserves_identity {
+                        return Err("identity-preserving export rollback bytes changed".to_owned());
+                    }
+                    let mut backup = artifacts.backup.reader(destination)?;
+                    let restored = artifacts
+                        .published
+                        .as_mut()
+                        .and_then(|published| published.handle.as_mut())
+                        .ok_or_else(|| "restoring destination handle is unavailable".to_owned())?;
+                    restored.set_len(0).map_err(|error| error.to_string())?;
+                    restored
+                        .seek(SeekFrom::Start(0))
+                        .map_err(|error| error.to_string())?;
+                    io::copy(&mut backup, restored).map_err(|error| error.to_string())?;
+                    restored.flush().map_err(|error| error.to_string())?;
+                }
+                let restored = artifacts
+                    .published
+                    .as_ref()
+                    .and_then(|published| published.handle.as_ref())
+                    .ok_or_else(|| "restoring destination handle is unavailable".to_owned())?;
+                sync_capability_change(&destination.parent, &[restored])
+                    .map_err(|error| error.to_string())?;
+                let restored_bytes_match = if backup_is_retained {
+                    let backup = artifacts.backup.reader(destination)?;
+                    capability_file_has_same_bytes(
+                        &destination.parent,
+                        &backup,
+                        &destination.file_name,
+                    )
+                } else {
+                    capability_files_have_same_bytes(
+                        &destination.parent,
+                        &artifacts.backup.name,
+                        &destination.file_name,
+                    )
+                }
+                .map_err(|error| error.to_string())?;
+                if !restored_bytes_match {
                     return Err("restored export destination bytes changed".to_owned());
                 }
+                if preserves_identity
+                    && !capability_files_have_same_identity(
+                        &destination.parent,
+                        &artifacts.backup.name,
+                        &destination.file_name,
+                    )
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("restored export destination identity changed".to_owned());
+                }
+                artifacts.finish_destination_restore();
             }
         }
         Ok(())
     }
 
-    fn cleanup(&self, destination: &ExportDestinationBinding) -> Result<(), String> {
-        let Self::Existing { backup_name, .. } = self else {
-            return Ok(());
-        };
-        destination
-            .parent
-            .remove_file(backup_name)
-            .and_then(|()| sync_capability_directory(&destination.parent))
-            .map_err(|error| error.to_string())
+    fn cleanup(
+        &self,
+        destination: &ExportDestinationBinding,
+        artifacts: &mut ExportArtifactOwnership,
+    ) -> Result<(), String> {
+        artifacts.cleanup(destination)
+    }
+
+    #[cfg(test)]
+    fn cleanup_with(
+        &self,
+        destination: &ExportDestinationBinding,
+        artifacts: &mut ExportArtifactOwnership,
+        sync_directory: impl FnOnce(&Dir) -> io::Result<()>,
+    ) -> Result<(), String> {
+        artifacts.cleanup_with(destination, sync_directory)
     }
 }
 
@@ -2473,10 +3539,18 @@ fn resolve_temp_target_export_destination(
         .to_owned();
     let parent = Dir::open_ambient_dir(&parent_path, ambient_authority())
         .map_err(|error| error.to_string())?;
+    let parent_identity = same_file::Handle::from_file(
+        parent
+            .try_clone()
+            .map_err(|error| error.to_string())?
+            .into_std_file(),
+    )
+    .map_err(|error| error.to_string())?;
     Ok(ExportDestinationBinding {
         path: destination,
         file_name: PathBuf::from(file_name),
         parent,
+        parent_identity,
     })
 }
 
@@ -2508,56 +3582,105 @@ fn validate_temp_target_export_destination(
     Ok(())
 }
 
+fn install_pending_temp_target_export_recovery(
+    shared_state: &SharedState,
+    recovery: PendingTempTargetExportRecovery,
+) -> Result<(), Box<PendingTempTargetExportRecovery>> {
+    {
+        let mut state = recover_state_lock(shared_state);
+        state.install_temp_target_export_recovery(recovery)
+    }
+}
+
 fn restore_or_retain_temp_target_export(
     shared_state: &SharedState,
-    prepared: PreparedTempTargetExport,
-    snapshot: ExportDestinationSnapshot,
+    mut recovery: PendingTempTargetExportRecovery,
     mut error: String,
     restore: &mut impl FnMut(
         &ExportDestinationSnapshot,
-        &ExportDestinationBinding,
+        &mut PreparedTempTargetExport,
     ) -> Result<(), String>,
     cleanup: &mut impl FnMut(
         &ExportDestinationSnapshot,
-        &ExportDestinationBinding,
+        &mut PreparedTempTargetExport,
     ) -> Result<(), String>,
 ) -> Result<TempMergeSessionSummary, String> {
-    if let Err(restore_error) = restore(&snapshot, &prepared.destination) {
+    let restore_result = {
+        let PendingTempTargetExportRecovery {
+            prepared, snapshot, ..
+        } = &mut recovery;
+        restore(snapshot, prepared)
+    };
+    if let Err(restore_error) = restore_result {
         error = format!(
             "{error}; failed to restore export destination: {restore_error}; \
              temporary merge export recovery is pending; retry Save As"
         );
-        let recovery = PendingTempTargetExportRecovery {
-            prepared,
-            snapshot,
-            kind: PendingTempTargetExportRecoveryKind::Rollback,
-        };
-        let install_result =
-            recover_state_lock(shared_state).install_temp_target_export_recovery(recovery);
+        recovery.kind = PendingTempTargetExportRecoveryKind::Rollback;
+        let install_result = install_pending_temp_target_export_recovery(shared_state, recovery);
         if install_result.is_err() {
             error.push_str("; failed to retain export recovery ownership");
         }
         return Err(error);
     }
-    if let Err(cleanup_error) = cleanup(&snapshot, &prepared.destination) {
+    recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
+    let cleanup_result = {
+        let PendingTempTargetExportRecovery {
+            prepared, snapshot, ..
+        } = &mut recovery;
+        cleanup(snapshot, prepared)
+    };
+    if let Err(cleanup_error) = cleanup_result {
         error = format!(
             "{error}; destination restored but rollback cleanup failed: {cleanup_error}; \
              temporary merge export recovery is pending; retry Save As"
         );
-        let recovery = PendingTempTargetExportRecovery {
-            prepared,
-            snapshot,
-            kind: PendingTempTargetExportRecoveryKind::RollbackCleanup,
-        };
-        let install_result =
-            recover_state_lock(shared_state).install_temp_target_export_recovery(recovery);
+        let install_result = install_pending_temp_target_export_recovery(shared_state, recovery);
         if install_result.is_err() {
             error.push_str("; failed to retain export cleanup ownership");
         }
         return Err(error);
     }
-    recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
+    recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
     Err(error)
+}
+
+fn revalidate_temp_target_export_publication(
+    shared_state: &SharedState,
+    recovery: &PendingTempTargetExportRecovery,
+) -> Result<(), String> {
+    if !recover_state_lock(shared_state).temp_target_export_reservation_matches(&recovery.prepared)
+    {
+        return Err("temporary merge export reservation changed".to_owned());
+    }
+    let published = recovery
+        .prepared
+        .artifacts
+        .published
+        .as_ref()
+        .ok_or_else(|| "published export destination ownership is unavailable".to_owned())?;
+    match recovery
+        .prepared
+        .destination
+        .ambient_path_names_published_file(published)
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(
+            "temporary merge export destination parent or file changed before publication"
+                .to_owned(),
+        ),
+        Err(error) => Err(format!(
+            "failed to verify temporary merge export destination before publication: {error}"
+        )),
+    }
+}
+
+fn rollback_pending_temp_target_export_recovery(
+    recovery: &mut PendingTempTargetExportRecovery,
+) -> Result<(), String> {
+    recovery.restore()?;
+    recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
+    recovery.cleanup()
 }
 
 fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), String> {
@@ -2574,30 +3697,20 @@ fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), 
         return Ok(());
     };
     let recover_result = match recovery.kind {
+        PendingTempTargetExportRecoveryKind::ArtifactCleanup => recovery.cleanup(),
         PendingTempTargetExportRecoveryKind::Rollback => {
-            match recovery.snapshot.restore(&recovery.prepared.destination) {
-                Ok(()) => {
-                    recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
-                    recovery.snapshot.cleanup(&recovery.prepared.destination)
-                }
-                Err(error) => Err(error),
-            }
+            rollback_pending_temp_target_export_recovery(&mut recovery)
         }
-        PendingTempTargetExportRecoveryKind::RollbackCleanup => {
-            recovery.snapshot.cleanup(&recovery.prepared.destination)
-        }
+        PendingTempTargetExportRecoveryKind::RollbackCleanup => recovery.cleanup(),
         PendingTempTargetExportRecoveryKind::ExportCleanup => {
-            let reservation_matches = recover_state_lock(shared_state)
-                .temp_target_export_reservation_matches(&recovery.prepared);
-            if reservation_matches {
-                recovery.snapshot.cleanup(&recovery.prepared.destination)
+            if revalidate_temp_target_export_publication(shared_state, &recovery).is_err() {
+                rollback_pending_temp_target_export_recovery(&mut recovery)
             } else {
-                match recovery.snapshot.restore(&recovery.prepared.destination) {
-                    Ok(()) => {
-                        recovery.kind = PendingTempTargetExportRecoveryKind::RollbackCleanup;
-                        recovery.snapshot.cleanup(&recovery.prepared.destination)
-                    }
-                    Err(error) => Err(error),
+                recovery.cleanup()?;
+                if revalidate_temp_target_export_publication(shared_state, &recovery).is_err() {
+                    rollback_pending_temp_target_export_recovery(&mut recovery)
+                } else {
+                    Ok(())
                 }
             }
         }
@@ -2610,9 +3723,21 @@ fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), 
     }
     match recovery.kind {
         PendingTempTargetExportRecoveryKind::ExportCleanup => {
-            recover_state_lock(shared_state).finish_temp_target_export(&recovery.prepared)?;
+            let finish_result = {
+                let mut state = recover_state_lock(shared_state);
+                state.finish_temp_target_export(&recovery.prepared)
+            };
+            if let Err(error) = finish_result {
+                let _ = install_pending_temp_target_export_recovery(shared_state, recovery);
+                return Err(error);
+            }
+            recovery
+                .prepared
+                .artifacts
+                .finish_destination_publication()?;
         }
-        PendingTempTargetExportRecoveryKind::Rollback
+        PendingTempTargetExportRecoveryKind::ArtifactCleanup
+        | PendingTempTargetExportRecoveryKind::Rollback
         | PendingTempTargetExportRecoveryKind::RollbackCleanup => {
             recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
         }
@@ -2623,6 +3748,7 @@ fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), 
 struct TempTargetExportOperations<
     AfterResolve,
     AfterReserve,
+    Capture,
     BeforeExport,
     Export,
     Restore,
@@ -2631,6 +3757,7 @@ struct TempTargetExportOperations<
 > {
     after_resolve: AfterResolve,
     after_reserve: AfterReserve,
+    capture: Capture,
     before_export: BeforeExport,
     export: Export,
     restore: Restore,
@@ -2646,28 +3773,38 @@ fn no_temp_target_export_state_hook(_: &SharedState) {}
 
 fn export_temp_target_to_destination(
     source: &Path,
-    destination: &ExportDestinationBinding,
+    prepared: &mut PreparedTempTargetExport,
 ) -> Result<(), String> {
-    destination.export_from_ambient(source)
+    prepared
+        .destination
+        .export_from_ambient(source, &mut prepared.artifacts)
+}
+
+fn capture_temp_target_export_snapshot(
+    snapshot: &mut ExportDestinationSnapshot,
+    prepared: &mut PreparedTempTargetExport,
+) -> Result<(), String> {
+    snapshot.capture(&prepared.destination, &mut prepared.artifacts)
 }
 
 fn restore_temp_target_export_destination(
     snapshot: &ExportDestinationSnapshot,
-    destination: &ExportDestinationBinding,
+    prepared: &mut PreparedTempTargetExport,
 ) -> Result<(), String> {
-    snapshot.restore(destination)
+    snapshot.restore(&prepared.destination, &mut prepared.artifacts)
 }
 
 fn cleanup_temp_target_export_snapshot(
     snapshot: &ExportDestinationSnapshot,
-    destination: &ExportDestinationBinding,
+    prepared: &mut PreparedTempTargetExport,
 ) -> Result<(), String> {
-    snapshot.cleanup(destination)
+    snapshot.cleanup(&prepared.destination, &mut prepared.artifacts)
 }
 
 fn save_temp_target_as_with_operations<
     AfterResolve,
     AfterReserve,
+    Capture,
     BeforeExport,
     Export,
     Restore,
@@ -2679,6 +3816,7 @@ fn save_temp_target_as_with_operations<
     operations: TempTargetExportOperations<
         AfterResolve,
         AfterReserve,
+        Capture,
         BeforeExport,
         Export,
         Restore,
@@ -2689,21 +3827,26 @@ fn save_temp_target_as_with_operations<
 where
     AfterResolve: for<'a> FnOnce(&'a Path),
     AfterReserve: FnOnce(),
+    Capture: for<'a, 'b> FnMut(
+        &'a mut ExportDestinationSnapshot,
+        &'b mut PreparedTempTargetExport,
+    ) -> Result<(), String>,
     BeforeExport: FnOnce(),
-    Export: for<'a, 'b> FnMut(&'a Path, &'b ExportDestinationBinding) -> Result<(), String>,
+    Export: for<'a, 'b> FnMut(&'a Path, &'b mut PreparedTempTargetExport) -> Result<(), String>,
     Restore: for<'a, 'b> FnMut(
         &'a ExportDestinationSnapshot,
-        &'b ExportDestinationBinding,
+        &'b mut PreparedTempTargetExport,
     ) -> Result<(), String>,
     Cleanup: for<'a, 'b> FnMut(
         &'a ExportDestinationSnapshot,
-        &'b ExportDestinationBinding,
+        &'b mut PreparedTempTargetExport,
     ) -> Result<(), String>,
     AfterExport: for<'a> FnOnce(&'a SharedState),
 {
     let TempTargetExportOperations {
         after_resolve,
         after_reserve,
+        mut capture,
         before_export,
         mut export,
         mut restore,
@@ -2739,65 +3882,151 @@ where
         recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
         return Err("temporary merge export reservation changed".to_owned());
     }
-    let destination_snapshot = match ExportDestinationSnapshot::capture(&prepared.destination) {
+    let destination_snapshot = match ExportDestinationSnapshot::prepare(&prepared.destination) {
         Ok(snapshot) => snapshot,
         Err(error) => {
             recover_state_lock(shared_state).cancel_temp_target_export(&prepared);
             return Err(error);
         }
     };
-    let pre_export_check =
-        if recover_state_lock(shared_state).temp_target_export_reservation_matches(&prepared) {
-            Ok(())
-        } else {
-            Err("temporary merge export reservation changed".to_owned())
-        };
+    let mut recovery = PendingTempTargetExportRecovery {
+        prepared,
+        snapshot: destination_snapshot,
+        kind: PendingTempTargetExportRecoveryKind::ArtifactCleanup,
+    };
+    let capture_result = {
+        let PendingTempTargetExportRecovery {
+            prepared, snapshot, ..
+        } = &mut recovery;
+        capture(snapshot, prepared)
+    };
+    if let Err(error) = capture_result {
+        if !recovery.prepared.artifacts.backup.is_owned()
+            && !recovery.prepared.artifacts.write.is_owned()
+        {
+            recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
+            return Err(format!(
+                "temporary merge export snapshot capture failed: {error}"
+            ));
+        }
+        install_pending_temp_target_export_recovery(shared_state, recovery)
+            .map_err(|_| "failed to retain snapshot capture cleanup ownership".to_owned())?;
+        return Err(format!(
+            "temporary merge export snapshot capture failed: {error}; \
+             cleanup recovery is pending; retry Save As"
+        ));
+    }
+    recovery.kind = PendingTempTargetExportRecoveryKind::Rollback;
+    let pre_export_check = if recover_state_lock(shared_state)
+        .temp_target_export_reservation_matches(&recovery.prepared)
+    {
+        Ok(())
+    } else {
+        Err("temporary merge export reservation changed".to_owned())
+    };
     if let Err(error) = pre_export_check {
-        return restore_or_retain_temp_target_export(
-            shared_state,
-            prepared,
-            destination_snapshot,
-            error,
-            &mut restore,
-            &mut cleanup,
-        );
+        recovery.kind = PendingTempTargetExportRecoveryKind::ArtifactCleanup;
+        let cleanup_result = {
+            let PendingTempTargetExportRecovery {
+                prepared, snapshot, ..
+            } = &mut recovery;
+            cleanup(snapshot, prepared)
+        };
+        if let Err(cleanup_error) = cleanup_result {
+            install_pending_temp_target_export_recovery(shared_state, recovery)
+                .map_err(|_| "failed to retain pre-export cleanup ownership".to_owned())?;
+            return Err(format!(
+                "{error}; pre-export cleanup failed: {cleanup_error}; retry Save As"
+            ));
+        }
+        recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
+        return Err(error);
     }
     before_export();
-    if let Err(error) = export(&prepared.snapshot.working_path, &prepared.destination) {
+    let destination_still_matches = recovery
+        .snapshot
+        .still_matches_prepared_destination(&recovery.prepared.destination)
+        .and_then(|matches| {
+            matches.then_some(()).ok_or_else(|| {
+                "temporary merge export destination parent changed or file changed before export"
+                    .to_owned()
+            })
+        });
+    if let Err(error) = destination_still_matches {
+        recovery.kind = PendingTempTargetExportRecoveryKind::ArtifactCleanup;
+        let cleanup_result = {
+            let PendingTempTargetExportRecovery {
+                prepared, snapshot, ..
+            } = &mut recovery;
+            cleanup(snapshot, prepared)
+        };
+        if let Err(cleanup_error) = cleanup_result {
+            install_pending_temp_target_export_recovery(shared_state, recovery)
+                .map_err(|_| "failed to retain pre-export cleanup ownership".to_owned())?;
+            return Err(format!(
+                "{error}; pre-export cleanup failed: {cleanup_error}; retry Save As"
+            ));
+        }
+        recover_state_lock(shared_state).cancel_temp_target_export(&recovery.prepared);
+        return Err(error);
+    }
+    let working_path = recovery.prepared.snapshot.working_path.clone();
+    if let Err(error) = export(&working_path, &mut recovery.prepared) {
+        if recovery.prepared.artifacts.published.is_none() {
+            recovery.kind = PendingTempTargetExportRecoveryKind::ArtifactCleanup;
+            install_pending_temp_target_export_recovery(shared_state, recovery)
+                .map_err(|_| "failed to retain temporary write cleanup ownership".to_owned())?;
+            return Err(format!(
+                "{error}; temporary write cleanup is pending; retry Save As"
+            ));
+        }
         return restore_or_retain_temp_target_export(
             shared_state,
-            prepared,
-            destination_snapshot,
+            recovery,
             error,
             &mut restore,
             &mut cleanup,
         );
     }
     after_export(shared_state);
-    if !recover_state_lock(shared_state).temp_target_export_reservation_matches(&prepared) {
+    if let Err(error) = revalidate_temp_target_export_publication(shared_state, &recovery) {
         return restore_or_retain_temp_target_export(
             shared_state,
-            prepared,
-            destination_snapshot,
-            "temporary merge export reservation changed".to_owned(),
+            recovery,
+            error,
             &mut restore,
             &mut cleanup,
         );
     }
-    if let Err(error) = cleanup(&destination_snapshot, &prepared.destination) {
-        let recovery = PendingTempTargetExportRecovery {
-            prepared,
-            snapshot: destination_snapshot,
-            kind: PendingTempTargetExportRecoveryKind::ExportCleanup,
-        };
-        recover_state_lock(shared_state)
-            .install_temp_target_export_recovery(recovery)
+    recovery.kind = PendingTempTargetExportRecoveryKind::ExportCleanup;
+    let cleanup_result = {
+        let PendingTempTargetExportRecovery {
+            prepared, snapshot, ..
+        } = &mut recovery;
+        cleanup(snapshot, prepared)
+    };
+    if let Err(error) = cleanup_result {
+        install_pending_temp_target_export_recovery(shared_state, recovery)
             .map_err(|_| "failed to retain export cleanup ownership".to_owned())?;
         return Err(format!(
             "temporary merge export cleanup is pending: {error}; retry Save As"
         ));
     }
-    recover_state_lock(shared_state).finish_temp_target_export(&prepared)
+    if let Err(error) = revalidate_temp_target_export_publication(shared_state, &recovery) {
+        return restore_or_retain_temp_target_export(
+            shared_state,
+            recovery,
+            error,
+            &mut restore,
+            &mut cleanup,
+        );
+    }
+    let summary = recover_state_lock(shared_state).finish_temp_target_export(&recovery.prepared)?;
+    recovery
+        .prepared
+        .artifacts
+        .finish_destination_publication()?;
+    Ok(summary)
 }
 
 pub(crate) fn save_temp_target_as(
@@ -2810,6 +4039,7 @@ pub(crate) fn save_temp_target_as(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
@@ -2832,6 +4062,7 @@ pub(crate) fn save_temp_target_as_with_hooks(
         TempTargetExportOperations {
             after_resolve,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
@@ -2852,9 +4083,12 @@ pub(crate) fn save_temp_target_as_with_post_replace_failure(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
-            export: |source: &Path, destination: &ExportDestinationBinding| {
-                destination.export_from_ambient(source)?;
+            export: |source: &Path, prepared: &mut PreparedTempTargetExport| {
+                prepared
+                    .destination
+                    .export_from_ambient(source, &mut prepared.artifacts)?;
                 Err("injected post-replace parent sync failure".to_owned())
             },
             restore: restore_temp_target_export_destination,
@@ -2876,6 +4110,7 @@ pub(crate) fn save_temp_target_as_with_after_reserve(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
@@ -2896,6 +4131,7 @@ pub(crate) fn save_temp_target_as_with_stale_reservation(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
@@ -2925,6 +4161,7 @@ pub(crate) fn save_temp_target_as_with_parent_swap(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
@@ -2945,12 +4182,15 @@ pub(crate) fn save_temp_target_as_with_rollback_failure(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
-            export: |source: &Path, destination: &ExportDestinationBinding| {
-                destination.export_from_ambient(source)?;
+            export: |source: &Path, prepared: &mut PreparedTempTargetExport| {
+                prepared
+                    .destination
+                    .export_from_ambient(source, &mut prepared.artifacts)?;
                 Err("injected post-replace export failure".to_owned())
             },
-            restore: |_: &ExportDestinationSnapshot, _: &ExportDestinationBinding| {
+            restore: |_: &ExportDestinationSnapshot, _: &mut PreparedTempTargetExport| {
                 Err("injected export rollback failure".to_owned())
             },
             cleanup: cleanup_temp_target_export_snapshot,
@@ -2970,15 +4210,293 @@ pub(crate) fn save_temp_target_as_with_cleanup_failure(
         TempTargetExportOperations {
             after_resolve: no_temp_target_export_path_hook,
             after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
             before_export: no_temp_target_export_hook,
             export: export_temp_target_to_destination,
             restore: restore_temp_target_export_destination,
-            cleanup: |_: &ExportDestinationSnapshot, _: &ExportDestinationBinding| {
-                Err("injected export backup cleanup failure".to_owned())
+            cleanup: |snapshot: &ExportDestinationSnapshot,
+                      prepared: &mut PreparedTempTargetExport| {
+                snapshot.cleanup_with(&prepared.destination, &mut prepared.artifacts, |_| {
+                    Err(io::Error::other(
+                        "injected export backup directory sync failure",
+                    ))
+                })
             },
             after_export: no_temp_target_export_state_hook,
         },
     )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_pre_capture_destination_creation(
+    shared_state: &SharedState,
+    destination: PathBuf,
+    replacement: &[u8],
+) -> Result<TempMergeSessionSummary, String> {
+    let replacement = replacement.to_vec();
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: move |snapshot: &mut ExportDestinationSnapshot,
+                           prepared: &mut PreparedTempTargetExport| {
+                std::fs::write(&prepared.destination.path, &replacement)
+                    .map_err(|error| error.to_string())?;
+                snapshot.capture(&prepared.destination, &mut prepared.artifacts)
+            },
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_post_cleanup_replacement(
+    shared_state: &SharedState,
+    destination: PathBuf,
+    replacement: &[u8],
+) -> Result<TempMergeSessionSummary, String> {
+    let replacement = replacement.to_vec();
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: move |snapshot: &ExportDestinationSnapshot,
+                           prepared: &mut PreparedTempTargetExport| {
+                snapshot.cleanup(&prepared.destination, &mut prepared.artifacts)?;
+                replace_temp_target_export_destination_for_test(
+                    &prepared.destination.path,
+                    &replacement,
+                )
+            },
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn save_temp_target_as_with_post_cleanup_parent_swap(
+    shared_state: &SharedState,
+    destination: PathBuf,
+    parent: PathBuf,
+    moved_parent: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: move |snapshot: &ExportDestinationSnapshot,
+                           prepared: &mut PreparedTempTargetExport| {
+                snapshot.cleanup(&prepared.destination, &mut prepared.artifacts)?;
+                std::fs::rename(&parent, &moved_parent).map_err(|error| error.to_string())?;
+                std::fs::create_dir(&parent).map_err(|error| error.to_string())
+            },
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_backup_removal_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: |_: &ExportDestinationSnapshot, _: &mut PreparedTempTargetExport| {
+                Err("injected export backup removal failure".to_owned())
+            },
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+struct FailingExportReader {
+    bytes: &'static [u8],
+    emitted: bool,
+}
+
+#[cfg(test)]
+impl Read for FailingExportReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.emitted {
+            return Err(io::Error::other("injected partial export read failure"));
+        }
+        let count = buffer.len().min(self.bytes.len());
+        buffer[..count].copy_from_slice(&self.bytes[..count]);
+        self.emitted = true;
+        Ok(count)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_partial_snapshot_capture_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: |snapshot: &mut ExportDestinationSnapshot,
+                      prepared: &mut PreparedTempTargetExport| {
+                if !matches!(snapshot, ExportDestinationSnapshot::Existing { .. }) {
+                    return Err("injected snapshot capture requires an existing file".to_owned());
+                }
+                let mut partial = FailingExportReader {
+                    bytes: b"partial-backup",
+                    emitted: false,
+                };
+                copy_into_capability_file(
+                    &mut partial,
+                    &prepared.destination.parent,
+                    &mut prepared.artifacts.backup,
+                )
+            },
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_partial_write_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
+            before_export: no_temp_target_export_hook,
+            export: |_: &Path, prepared: &mut PreparedTempTargetExport| {
+                let mut partial = FailingExportReader {
+                    bytes: b"partial-write",
+                    emitted: false,
+                };
+                copy_into_capability_file(
+                    &mut partial,
+                    &prepared.destination.parent,
+                    &mut prepared.artifacts.write,
+                )
+            },
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_post_rename_durability_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: capture_temp_target_export_snapshot,
+            before_export: no_temp_target_export_hook,
+            export: |source: &Path, prepared: &mut PreparedTempTargetExport| {
+                let mut source = File::open(source).map_err(|error| error.to_string())?;
+                prepared.destination.export_from_reader_with_durability(
+                    &mut source,
+                    &mut prepared.artifacts,
+                    |_, _| Err(io::Error::other("injected renamed file durability failure")),
+                )
+            },
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn save_temp_target_as_with_snapshot_durability_failure(
+    shared_state: &SharedState,
+    destination: PathBuf,
+) -> Result<TempMergeSessionSummary, String> {
+    save_temp_target_as_with_operations(
+        shared_state,
+        destination,
+        TempTargetExportOperations {
+            after_resolve: no_temp_target_export_path_hook,
+            after_reserve: no_temp_target_export_hook,
+            capture: |snapshot: &mut ExportDestinationSnapshot,
+                      prepared: &mut PreparedTempTargetExport| {
+                snapshot.capture_with_durability(
+                    &prepared.destination,
+                    &mut prepared.artifacts,
+                    |_, _| Err(io::Error::other("injected snapshot durability failure")),
+                )
+            },
+            before_export: no_temp_target_export_hook,
+            export: export_temp_target_to_destination,
+            restore: restore_temp_target_export_destination,
+            cleanup: cleanup_temp_target_export_snapshot,
+            after_export: no_temp_target_export_state_hook,
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn replace_temp_target_export_destination_for_test(
+    destination: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let destination = resolve_temp_target_export_destination(destination)?;
+    let mut artifacts = ExportArtifactOwnership::new();
+    let mut bytes = io::Cursor::new(bytes);
+    copy_into_capability_file(&mut bytes, &destination.parent, &mut artifacts.write)?;
+    if let Err(error) = destination.rename_artifact_to_destination(&artifacts.write.name, true) {
+        let cleanup_error = artifacts
+            .cleanup_write(&destination)
+            .err()
+            .map(|cleanup| format!("; cleanup failed: {cleanup}"))
+            .unwrap_or_default();
+        return Err(format!("{error}{cleanup_error}"));
+    }
+    artifacts.write.state = OwnedExportArtifactState::Reserved;
+    artifacts.write.durability_handle = None;
+    Ok(())
 }
 
 fn temp_merge_review_changed_on_disk(snapshot: &TempMergeStageSnapshot) -> Result<bool, String> {
