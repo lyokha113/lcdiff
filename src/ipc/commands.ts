@@ -11,6 +11,11 @@ import type {
   SearchOptions,
   Side,
   SystemFont,
+  TempMergeConflictPreview,
+  TempMergeDecision,
+  TempMergeSessionSummary,
+  TempTargetCreation,
+  TempTargetDiscardOutcome,
   TextFileContent,
   ViewSourceSummary,
 } from "@/ipc/types";
@@ -29,6 +34,38 @@ export function listSystemFonts(): Promise<SystemFont[]> {
 
 export function openArchive(path: string, side: Side): Promise<ArchiveSummary> {
   return invoke("open_archive", { path, side });
+}
+
+export function createTempTarget(
+  sourceSide: Side,
+  creation: TempTargetCreation,
+): Promise<TempMergeSessionSummary> {
+  return invoke("create_temp_target", { sourceSide, creation });
+}
+
+export function previewMergeAllConflicts(
+  sourceSide: Side,
+): Promise<TempMergeConflictPreview> {
+  return invoke("preview_merge_all_conflicts", { sourceSide });
+}
+
+export function stageTempMergeAll(
+  sourceSide: Side,
+  decisions: TempMergeDecision[],
+): Promise<void> {
+  return invoke("stage_temp_merge_all", { sourceSide, decisions });
+}
+
+export function applyTempMerge(): Promise<TempMergeSessionSummary> {
+  return invoke("apply_temp_merge");
+}
+
+export function saveTempTargetAs(path: string): Promise<TempMergeSessionSummary> {
+  return invoke("save_temp_target_as", { path });
+}
+
+export function discardTempTarget(): Promise<TempTargetDiscardOutcome> {
+  return invoke("discard_temp_target");
 }
 
 export function openCompareSources(
