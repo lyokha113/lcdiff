@@ -215,3 +215,79 @@ Result: exit 0.
   facade; real OS modal behavior is not exercised in jsdom.
 - The existing Node local-storage warning and Vite large-chunk advisory remain
   non-failing and unchanged.
+
+## Fix Round 2 — Picker Admission and Recovery Fixtures
+
+### Requirements resolved
+
+- Centralized synchronous temp-controller reservation in
+  `reserveTempControllerCall`. Every Create, preview, Apply, Save As, and Discard
+  admission invalidates outstanding Save picker ownership before invoking the
+  controller. A picker rejection from before a newer Apply or Discard therefore
+  cannot publish an error or overwrite the current status.
+- Preserved Save As single-flight and recovery semantics: controller reservation
+  invalidates only picker ownership, not `tempSavePathRef`, so the exact selected
+  destination remains available to matching Save As recovery.
+- Made `openLeftAndCreateRightTemp` use backend-realistic archive summaries while
+  retaining the suite-wide `sourceKind: file` default for unrelated standalone
+  file-merge tests. Requested archive paths continue to flow through `fileSummary`.
+- Strengthened App recovery acceptance coverage. Save As now fails twice with the
+  identical recovery value before succeeding on the third attempt, reusing one
+  selected path and opening the picker exactly once. Discard likewise returns the
+  identical retry-only outcome twice before succeeding on the third attempt.
+
+### TDD evidence
+
+RED:
+
+```bash
+pnpm vitest run src/app/App.test.tsx
+```
+
+Result before the production change: 142 passed and 2 failed. Both failures were
+the intended regressions: an old Save picker rejection overwrote the existing
+status while a newer Apply or Discard controller call remained pending.
+
+GREEN:
+
+```bash
+pnpm vitest run src/app/App.test.tsx
+```
+
+Result: 144 passed, 0 failed. The parameterized stale-rejection regression passed
+for both Apply and Discard, together with the strengthened repeated Save As and
+Discard recovery cases.
+
+### Validation
+
+```bash
+pnpm verify:all
+```
+
+Result: exit 0. Architecture, TypeScript/Vite build, frontend render, branding,
+and docs gates passed; the full frontend suite passed 41 files and 523 tests.
+
+```bash
+env -u RUSTC_WRAPPER cargo test -p lcdiff-desktop temp_merge --lib
+```
+
+Result: 52 passed, 0 failed.
+
+### Fix-round self-review
+
+- Picker invalidation occurs at the authoritative App-side controller reservation,
+  closing the pre-render window where `busy` and session identity are not yet
+  observable through React state.
+- Recovery path reuse remains independent from picker generation and is asserted
+  by three identical Save As command paths after one picker selection.
+- The test-only archive default is scoped to the temp helper; standalone file
+  tests continue to start from `summarySourceKind = "file"` in `beforeEach`.
+- `.github/workflows/windows-release.yml` remains the unrelated pre-existing
+  unstaged modification and is excluded from this fix commit.
+
+### Fix-round concerns
+
+- Native picker/modal behavior remains represented through the platform facade
+  in jsdom rather than a real OS modal.
+- The existing Node local-storage, npm config, and Vite large-chunk warnings remain
+  non-failing and unchanged.

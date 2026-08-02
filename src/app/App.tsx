@@ -1285,12 +1285,19 @@ export function App() {
     tempMerge.setCreateOpen(true);
   }
 
+  function reserveTempControllerCall() {
+    if (tempControllerCallPendingRef.current) return false;
+    tempControllerCallPendingRef.current = true;
+    tempSavePickerGenerationRef.current += 1;
+    tempSavePickerPendingRef.current = false;
+    return true;
+  }
+
   function createTempTarget(creation: Parameters<typeof tempMerge.create>[1]) {
     const sourceSide = tempCreateSourceSideRef.current;
-    if (!sourceSide || tempControllerCallPendingRef.current) return;
+    if (!sourceSide || !reserveTempControllerCall()) return;
     const targetSide: Side = sourceSide === "left" ? "right" : "left";
     compareOpenGenerationRef.current[targetSide] += 1;
-    tempControllerCallPendingRef.current = true;
     void tempMerge.create(sourceSide, creation).finally(() => {
       tempControllerCallPendingRef.current = false;
     });
@@ -1300,10 +1307,9 @@ export function App() {
     if (
       !tempStateRef.current.session
       || tempStateRef.current.retryOperation
-      || tempControllerCallPendingRef.current
+      || !reserveTempControllerCall()
     ) return;
     setTempConflictReviewDismissed(false);
-    tempControllerCallPendingRef.current = true;
     void tempMerge.previewMergeAll(sourceSide).finally(() => {
       tempControllerCallPendingRef.current = false;
     });
@@ -1316,12 +1322,11 @@ export function App() {
   ) {
     if (
       (intentRef.current && !intentRef.current.settled)
-      || tempControllerCallPendingRef.current
+      || !reserveTempControllerCall()
     ) return;
     const attemptId = tempAttemptIdRef.current + 1;
     tempAttemptIdRef.current = attemptId;
     intentRef.current = { ...intent, attemptId, settled: false } as T;
-    tempControllerCallPendingRef.current = true;
     void operation().finally(() => {
       tempControllerCallPendingRef.current = false;
       if (intentRef.current?.attemptId !== attemptId) return;
