@@ -46,6 +46,10 @@ type RenderDiffViewOverrides = Partial<
     | "onContentFilterChange"
     | "onDiffEditEither"
     | "preview"
+    | "tempSession"
+    | "tempBusy"
+    | "onCopyToTemp"
+    | "onMergeAllToTemp"
   >
 >;
 
@@ -77,6 +81,10 @@ function renderDiffView(
     onDiffEditEither: vi.fn(),
     onTakeAll: vi.fn(),
     onMoveHunk: vi.fn(),
+    tempSession: undefined,
+    tempBusy: false,
+    onCopyToTemp: vi.fn(),
+    onMergeAllToTemp: vi.fn(),
     diffNavigator: {
       current: 0,
       total: 0,
@@ -436,5 +444,34 @@ describe("DiffView", () => {
     expect(props.onCopy.mock.calls).toEqual([["right", "left"], ["left", "right"]]);
     expect(props.onTakeAll.mock.calls).toEqual([["left"], ["right"]]);
     expect(props.onMoveHunk.mock.calls).toEqual([["left"], ["right"]]);
+  });
+
+  it("offers copy-selected and merge-all actions toward an active temp target", async () => {
+    const user = userEvent.setup();
+    const props = renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      tempSession: {
+        id: "temp-1", targetSide: "right", workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy selected -> temp" }));
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+
+    expect(props.onCopyToTemp).toHaveBeenCalledWith("left");
+    expect(props.onMergeAllToTemp).toHaveBeenCalledWith("left");
+  });
+
+  it("disables temporary merge controls while the controller is busy", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      tempBusy: true,
+      tempSession: {
+        id: "temp-1", targetSide: "left", workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    expect(screen.getByRole("button", { name: "Copy selected -> temp" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Merge all -> temp" })).toBeDisabled();
   });
 });

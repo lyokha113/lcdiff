@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/features/preferences/preferences";
 import type { ComparePair, ContentFilter, EntryPreview, Mode, Side } from "@/lib/types";
+import type { TempMergeSessionSummary } from "@/ipc/types";
 
 export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
@@ -38,6 +39,10 @@ interface DiffViewProps {
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
   onMoveHunk: (target: Side) => void;
+  tempSession?: TempMergeSessionSummary;
+  tempBusy?: boolean;
+  onCopyToTemp?: (sourceSide: Side) => void;
+  onMergeAllToTemp?: (sourceSide: Side) => void;
   diffNavigator?: DiffNavigatorProps;
 }
 
@@ -65,6 +70,7 @@ export function DiffView({
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
   fileMerge, entryCopyEnabled = true, diffEditableSides, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  tempSession, tempBusy = false, onCopyToTemp, onMergeAllToTemp,
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
   const editableSidesRef = useRef(diffEditableSides);
@@ -184,6 +190,34 @@ export function DiffView({
     );
   };
 
+  const renderTempMergeActions = () => {
+    if (mode !== "compare" || !tempSession) return null;
+    const sourceSide: Side = tempSession.targetSide === "left" ? "right" : "left";
+    const sourceEntry = selected?.[sourceSide];
+    const canCopySelected = !tempBusy && !!sourceEntry && sourceEntry.kind !== "directory";
+
+    return (
+      <div className="temp-merge-actions" role="group" aria-label="Temporary merge actions">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!canCopySelected}
+          onClick={() => onCopyToTemp?.(sourceSide)}
+        >
+          Copy selected -&gt; temp
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={tempBusy}
+          onClick={() => onMergeAllToTemp?.(sourceSide)}
+        >
+          Merge all -&gt; temp
+        </Button>
+      </div>
+    );
+  };
+
   return (
     <div className="editor-panel">
       {mode === "compare" && (
@@ -194,6 +228,7 @@ export function DiffView({
             {hunkMerge && renderMoveHunkButton("left")}
           </div>
           <div className="diff-toolbar-center">
+            {renderTempMergeActions()}
             {renderContentLineFilter()}
             {renderDiffNavigator()}
           </div>

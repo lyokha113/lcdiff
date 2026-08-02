@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { SourceChips } from "./SourceChips";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -11,8 +12,8 @@ const leftArchive: ArchiveSummary = {
   entries: [],
 };
 
-function setup(overrides = {}) {
-  const props = {
+function setup(overrides: Partial<ComponentProps<typeof SourceChips>> = {}) {
+  const props: ComponentProps<typeof SourceChips> = {
     mode: "compare" as const, archives: { left: leftArchive }, paths: { left: "", right: "" },
     pathErrors: {}, onPathChange: vi.fn(), onOpenPath: vi.fn(), onBrowse: vi.fn(),
     onBrowseFolder: vi.fn(),
@@ -62,6 +63,44 @@ describe("SourceChips", () => {
     await userEvent.click(screen.getByRole("button", { name: /change left source/i }));
     await userEvent.click(screen.getByRole("button", { name: /Browse file/i }));
     expect(props.onBrowse).toHaveBeenCalledWith("left");
+  });
+
+  it("offers a temporary target only from the empty side of one loaded archive", async () => {
+    const user = userEvent.setup();
+    const props = setup({ onCreateTempTarget: vi.fn() });
+
+    await user.click(screen.getByRole("button", { name: /change right source/i }));
+    await user.click(screen.getByRole("button", { name: "Create temp target..." }));
+
+    expect(props.onCreateTempTarget).toHaveBeenCalledWith("left");
+  });
+
+  it("labels temp roles and blocks target replacement controls", async () => {
+    const user = userEvent.setup();
+    setup({
+      archives: { left: leftArchive, right: { ...leftArchive, path: "/tmp/working.jar" } },
+      tempSession: {
+        id: "temp-1", targetSide: "right", workingName: "working.jar", entryCount: 4,
+        appliedSourceCount: 2, exportedPath: null,
+      },
+    });
+
+    expect(screen.getByText("SOURCE - REPLACEABLE")).toBeInTheDocument();
+    expect(screen.getByText("TEMP TARGET - SESSION ONLY")).toBeInTheDocument();
+    expect(screen.getByText("working.jar · 4 entries · 2 sources applied")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /change right source/i }));
+    expect(screen.getByRole("textbox", { name: "Right File/Folder path" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Browse file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Browse folder" })).toBeDisabled();
+  });
+
+  it("does not offer a new temporary target while a controller operation is busy", async () => {
+    const user = userEvent.setup();
+    setup({ onCreateTempTarget: vi.fn(), tempBusy: true });
+
+    await user.click(screen.getByRole("button", { name: /change right source/i }));
+    expect(screen.queryByRole("button", { name: "Create temp target..." })).not.toBeInTheDocument();
   });
 
 });
