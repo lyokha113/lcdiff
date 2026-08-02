@@ -228,8 +228,6 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
-    #[cfg(unix)]
-    use super::state::set_unix_export_remove_race_hooks;
     use super::state::{
         TempMergeApplyFailurePoint, TempMergeConflictAction, TempMergeDecision,
         TempMergePlanMutation, TempTargetCreation, TempTargetDiscardOutcome, apply_temp_merge,
@@ -255,6 +253,10 @@ mod tests {
         save_temp_target_as_with_stale_reservation, set_prepared_temp_target_drop_probe,
         stage_temp_merge_all_shared, stage_temp_merge_all_with_after_reserve,
         stage_temp_merge_all_with_pre_final_check,
+    };
+    #[cfg(unix)]
+    use super::state::{
+        fail_next_unix_export_quarantine_finish, set_unix_export_remove_race_hooks,
     };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
@@ -3335,6 +3337,46 @@ mod tests {
             std::fs::read(&destination).unwrap(),
             b"caller-owned-before-export"
         );
+        assert!(retry_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_retries_quarantined_rollback_before_ambient_validation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("quarantined-rollback-export.jar");
+        let retry_destination = dir.path().join("quarantined-rollback-retry.jar");
+        let original_destination = b"caller-owned-before-export";
+        std::fs::write(&destination, original_destination).unwrap();
+
+        fail_next_unix_export_quarantine_finish();
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge export recovery is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            !destination.exists(),
+            "the owned file moved into quarantine"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert_eq!(std::fs::read(&destination).unwrap(), original_destination);
         assert!(retry_destination.is_file());
         assert!(
             !shared_state

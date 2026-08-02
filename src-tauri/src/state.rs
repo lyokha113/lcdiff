@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 struct UnixExportRemoveRaceHooks {
     before_remove: Option<Box<dyn FnOnce()>>,
     before_mismatch_restore: Option<Box<dyn FnOnce()>>,
+    before_quarantine_finish: Option<Box<dyn FnOnce() -> io::Result<()>>>,
 }
 
 #[cfg(all(test, unix))]
@@ -37,6 +38,7 @@ thread_local! {
         const { std::cell::RefCell::new(UnixExportRemoveRaceHooks {
             before_remove: None,
             before_mismatch_restore: None,
+            before_quarantine_finish: None,
         }) };
 }
 
@@ -49,7 +51,17 @@ pub(crate) fn set_unix_export_remove_race_hooks(
         *hooks.borrow_mut() = UnixExportRemoveRaceHooks {
             before_remove: Some(Box::new(before_remove)),
             before_mismatch_restore: Some(Box::new(before_mismatch_restore)),
+            before_quarantine_finish: None,
         };
+    });
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn fail_next_unix_export_quarantine_finish() {
+    UNIX_EXPORT_REMOVE_RACE_HOOKS.with(|hooks| {
+        hooks.borrow_mut().before_quarantine_finish = Some(Box::new(|| {
+            Err(io::Error::other("injected Unix quarantine finish failure"))
+        }));
     });
 }
 
@@ -69,6 +81,16 @@ fn run_before_unix_export_mismatch_restore_hook() {
             hook();
         }
     });
+}
+
+#[cfg(all(test, unix))]
+fn run_before_unix_export_quarantine_finish_hook() -> io::Result<()> {
+    UNIX_EXPORT_REMOVE_RACE_HOOKS.with(|hooks| {
+        match hooks.borrow_mut().before_quarantine_finish.take() {
+            Some(hook) => hook(),
+            None => Ok(()),
+        }
+    })
 }
 
 #[cfg(all(not(test), unix))]
@@ -2615,6 +2637,8 @@ fn finish_unix_owned_quarantine_removal(
     let owned = quarantine
         .as_mut()
         .ok_or_else(|| io::Error::other("owned removal quarantine is unavailable"))?;
+    #[cfg(test)]
+    run_before_unix_export_quarantine_finish_hook()?;
     if !owned.file_removed {
         owned.directory.remove_file("file")?;
         owned.file_removed = true;
@@ -3128,7 +3152,13 @@ impl ExportArtifactOwnership {
             .as_mut()
             .ok_or_else(|| "published export destination ownership is unavailable".to_owned())?;
         if published.state == PublishedExportDestinationState::Present {
-            if !destination.destination_names_published_file(published)? {
+            #[cfg(unix)]
+            let quarantine_removal_is_pending = published.removal_quarantine.is_some();
+            #[cfg(not(unix))]
+            let quarantine_removal_is_pending = false;
+            if !quarantine_removal_is_pending
+                && !destination.destination_names_published_file(published)?
+            {
                 return Err(
                     "export destination changed outside LCDiff; automatic rollback refused"
                         .to_owned(),
