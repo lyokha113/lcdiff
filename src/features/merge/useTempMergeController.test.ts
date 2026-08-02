@@ -84,8 +84,8 @@ describe("temporary merge controller", () => {
 
     expect(result.current.session).toEqual(session);
     expect(result.current.error).toBe("Error: destination is unavailable");
-    expect(result.current.retryOperation).toBe("saveAs");
     expect(result.current.busy).toBeUndefined();
+    expect(result.current.retryOperation).toBeUndefined();
   });
 
   it("clears the session only after a successful discard", async () => {
@@ -115,6 +115,59 @@ describe("temporary merge controller", () => {
     expect(result.current.conflictReview).toBeUndefined();
     expect(result.current.error).toBe("cleanup recovery is pending");
     expect(result.current.retryOperation).toBe("discard");
+    expect(result.current.busy).toBe("discard");
+  });
+
+  it("keeps a rejected Apply recovery busy and rejects fresh and stale Save As callbacks", async () => {
+    commands.createTempTarget.mockResolvedValue(session);
+    commands.applyTempMerge
+      .mockRejectedValueOnce(new Error("temporary merge Apply recovery is pending; retry Apply"))
+      .mockResolvedValueOnce(appliedSession);
+    const { result } = renderHook(() => useTempMergeController());
+
+    await act(async () => result.current.create("left", { kind: "copyCurrent" }));
+    const staleSaveAs = result.current.saveAs;
+    await act(async () => result.current.apply());
+
+    expect(result.current.session).toBeUndefined();
+    expect(result.current.conflictReview).toBeUndefined();
+    expect(result.current.busy).toBe("apply");
+    expect(result.current.retryOperation).toBe("apply");
+
+    await act(async () => result.current.saveAs("/tmp/fresh.jar"));
+    await act(async () => staleSaveAs("/tmp/stale.jar"));
+
+    expect(commands.saveTempTargetAs).not.toHaveBeenCalled();
+    await act(async () => result.current.apply());
+    expect(result.current.session).toEqual(appliedSession);
+    expect(result.current.busy).toBeUndefined();
+    expect(result.current.retryOperation).toBeUndefined();
+  });
+
+  it("keeps a pending Save As recovery busy and rejects fresh and stale Apply callbacks", async () => {
+    const exportedSession = { ...session, exportedPath: "/tmp/exported.jar" };
+    commands.createTempTarget.mockResolvedValue(session);
+    commands.saveTempTargetAs
+      .mockRejectedValueOnce(new Error("temporary merge export recovery is pending; retry Save As"))
+      .mockResolvedValueOnce(exportedSession);
+    const { result } = renderHook(() => useTempMergeController());
+
+    await act(async () => result.current.create("left", { kind: "copyCurrent" }));
+    const staleApply = result.current.apply;
+    await act(async () => result.current.saveAs("/tmp/exported.jar"));
+
+    expect(result.current.session).toBeUndefined();
+    expect(result.current.busy).toBe("saveAs");
+    expect(result.current.retryOperation).toBe("saveAs");
+
+    await act(async () => result.current.apply());
+    await act(async () => staleApply());
+
+    expect(commands.applyTempMerge).not.toHaveBeenCalled();
+    await act(async () => result.current.saveAs("/tmp/exported.jar"));
+    expect(result.current.session).toEqual(exportedSession);
+    expect(result.current.busy).toBeUndefined();
+    expect(result.current.retryOperation).toBeUndefined();
   });
 
   it("does not start a second operation while the current request is pending", async () => {

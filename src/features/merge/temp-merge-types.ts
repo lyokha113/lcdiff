@@ -14,13 +14,15 @@ export type TempMergeOperation =
   | "saveAs"
   | "discard";
 
+export type TempMergeRecoveryOperation = "apply" | "saveAs" | "discard";
+
 export interface TempMergeController {
   session: TempMergeSessionSummary | undefined;
   createOpen: boolean;
   conflictReview: TempMergeConflictPreview | undefined;
   busy: TempMergeOperation | undefined;
   error: string | undefined;
-  retryOperation: TempMergeOperation | undefined;
+  retryOperation: TempMergeRecoveryOperation | undefined;
   setCreateOpen(open: boolean): void;
   create(sourceSide: Side, creation: TempTargetCreation): Promise<void>;
   previewMergeAll(sourceSide: Side): Promise<void>;

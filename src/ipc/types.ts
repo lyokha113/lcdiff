@@ -121,7 +121,7 @@ export interface AppActionPayload {
 }
 
 export type TempTargetCreation =
-  | { kind: "empty"; extension: "jar" | "zip" | "war" | "ear" }
+  | { kind: "empty"; extension: string }
   | { kind: "copyCurrent" };
 
 export interface TempMergeSessionSummary {

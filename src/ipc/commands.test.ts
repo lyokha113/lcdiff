@@ -376,7 +376,7 @@ describe("wire DTO declarations", () => {
     expectTypeOf<SearchHit["preview"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<ViewSourceSummary>().toMatchTypeOf<{ signed: boolean }>();
     expectTypeOf<TempTargetCreation>().toEqualTypeOf<
-      | { kind: "empty"; extension: "jar" | "zip" | "war" | "ear" }
+      | { kind: "empty"; extension: string }
       | { kind: "copyCurrent" }
     >();
     expectTypeOf<TempMergeDecision["action"]>().toEqualTypeOf<"overwrite" | "skip">();
