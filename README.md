@@ -148,8 +148,9 @@ can install it manually.
    text edit in the intended direction.
 6. Review pending changes and save the target. For a cumulative merge, choose
    **Create temp target...** on one side, select **Empty** or **Copy current
-   source**, merge each replacement source into the temporary target, resolve
-   conflicts, then choose **Save temp as** or **Discard temp**.
+   source**. For each replacement source, preview conflicts, choose overwrite
+   or skip, stage the decisions, then choose **Apply**. Repeat for more
+   sources, then choose **Save temp as** or **Discard temp**.
 
 ### Compare pasted text
 

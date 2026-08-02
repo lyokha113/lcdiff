@@ -43,7 +43,7 @@ src-tauri/src/
     archive.rs            archive/diff/nested/View-source lifecycle and atomic pair opens
     preview.rs            entry reads, UTF-8 text-file reads, decompile, bytecode and engine selection
     merge.rs              stage, unstage, commit and signed-save boundary
-    temp_merge.rs         temporary target lifecycle, cumulative merge preview/stage/apply, save and discard
+    temp_merge.rs         thin Tauri adapters for temporary-target lifecycle commands
     search.rs             T2/T3 search, cancellation and sibling prefetch
   sidecar_process.rs      Java process, protocol, cache, timeout and retry
   system_fonts.rs         blocking native font enumeration
@@ -74,7 +74,7 @@ src/
     workspace/            Monaco runtime, models, tab LRU and previews
     free-text/            feature-owned drafts, file-drop loading, readonly results and bounded history
     search/               search controls, projection and result state
-    merge/                generation-guarded staging, temporary target lifecycle, and save confirmation
+    merge/                generation-guarded staging, temporary-target UI flow, and save confirmation
     preferences/          preferences, fonts and updater state/UI
   components/ui/          approved shared shadcn/Radix primitives only
   lib/                    pure React/Monaco/Tauri/feature-free utilities
@@ -102,7 +102,7 @@ each in-session workspace context.
 | free-text/history/search/preferences/source/tab helpers under generic folders | their matching `src/features/*` owner |
 | builder, state, commands, events and menu in `src-tauri/src/main.rs` | `lib.rs`, `state.rs`, `commands/*`, `events.rs`, and `menu.rs` |
 | JVM process/cache mixed with desktop orchestration | `src-tauri/src/sidecar_process.rs` |
-| temporary target filesystem lifecycle mixed with general merge handling | `src-tauri/src/commands/temp_merge.rs` and `src/features/merge/useTempMergeController.ts` |
+| temporary target session, filesystem lifecycle, and recovery mixed with general merge handling | `src-tauri/src/state.rs`; `commands/temp_merge.rs` is the thin Tauri adapter and `useTempMergeController.ts` owns frontend intent/state only |
 
 ## Dependency Directions
 
@@ -176,12 +176,14 @@ packaging where supported.
   changes only Free text drafts.
 - `MergePlan` remains the only write path. Original entry bytes are staged and
   saved atomically with optional backup; signed targets require confirmation.
-- A temporary merge target is an owned session workspace. `create_temp_target`
-  begins from an empty archive or copies the selected source; preview/stage/apply
-  merge one replacement source at a time. A conflict decision of `skip` leaves
-  the target entry's original bytes unchanged. `save_temp_target_as` exports
-  explicitly, while `discard_temp_target` removes only the owned temporary
-  workspace.
+- `state.rs` owns the temporary merge session, filesystem creation/apply/save/
+  discard operations, and recovery. `commands/temp_merge.rs` only adapts the
+  stable Tauri commands; `useTempMergeController` owns frontend intent/state.
+  `create_temp_target` begins from an empty archive or copies the selected
+  source; each replacement source follows preview/conflict decisions/stage,
+  then `apply_temp_merge`. A conflict decision of `skip` leaves the target
+  entry's original bytes unchanged. `save_temp_target_as` exports explicitly,
+  while `discard_temp_target` removes only the owned temporary workspace.
 - Java 17 resource lookup, framed JSON, the 30-second watchdog, one
   restart/retry, 128 MiB shared response cache, warm start, and separate
   interactive/prefetch/deep-search workers remain unchanged.

@@ -41,10 +41,12 @@ saves the target, and reopens the archive. Pass evidence is exact byte equality:
 
 For each packaged desktop target, manually confirm the same lifecycle: create
 an **Empty** and a **Copy current source** target, replace the non-target source
-between merges, use the bulk conflict dialog, then verify **Save temp as**,
-**Discard temp**, and session-only status. The local render gate covers these
-controls in Light and Dark themes; Windows installer launch and MSVC CRT
-behavior remain separate external Windows evidence.
+between merges, preview conflicts, choose the bulk decisions, stage them, then
+choose **Apply**. Repeat that sequence for each source before **Save temp as**
+or **Discard temp**, and verify session-only status. The local render gate
+covers both creation modes and these controls in Light and Dark themes; Windows
+installer launch and MSVC CRT behavior remain separate external Windows
+evidence.
 
 ## Windows Release Builder
 

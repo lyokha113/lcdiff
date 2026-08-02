@@ -718,6 +718,8 @@ try {
       appliedSourceCount: 1,
       exportedPath: null,
     };
+    const tempCreations = [];
+    window.__LCDIFF_RENDER_TEMP_CREATIONS__ = tempCreations;
     const callbacks = new Map();
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event, id) => callbacks.delete(id),
@@ -781,7 +783,16 @@ try {
           opened[args.side] = archives[args.path];
           return archives[args.path];
         }
-        if (cmd === "create_temp_target") return tempSession;
+        if (cmd === "create_temp_target") {
+          tempCreations.push(args.creation);
+          return {
+            ...tempSession,
+            workingName: args.creation.kind === "empty"
+              ? `temporary-target.${args.creation.extension}`
+              : "left.jar",
+            entryCount: args.creation.kind === "empty" ? 0 : tempSession.entryCount,
+          };
+        }
         if (cmd === "preview_merge_all_conflicts") {
           return { newEntries: ["selected.txt"], conflicts: ["conflict.txt", "skipped.txt"] };
         }
@@ -1379,7 +1390,7 @@ try {
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
 
-  async function verifyTemporaryMergeFixture(pattern) {
+  async function verifyTemporaryMergeFixture(pattern, creation, expectedWorkingName) {
     await mockedPage.evaluate((nextPattern) => {
       localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
         appearance: { colorPattern: nextPattern },
@@ -1397,13 +1408,28 @@ try {
     await mockedPage.getByRole("button", { name: "Create temp target..." }).click();
     const createDialog = mockedPage.getByRole("dialog", { name: "Create temporary merge target" });
     await createDialog.getByLabel("Temporary target type").click();
-    await mockedPage.getByRole("option", { name: "Copy current source" }).click();
+    await mockedPage.getByRole("option", {
+      name: creation.kind === "empty" ? "Empty archive" : "Copy current source",
+    }).click();
+    if (creation.kind === "empty") {
+      await createDialog.getByLabel("Archive extension").click();
+      await mockedPage.getByRole("option", { name: `.${creation.extension}` }).click();
+    }
     await createDialog.getByRole("button", { name: "Create temp target" }).click();
+    const creations = await mockedPage.evaluate(() => window.__LCDIFF_RENDER_TEMP_CREATIONS__ ?? []);
+    const actualCreation = creations.at(-1);
+    if (JSON.stringify(actualCreation) !== JSON.stringify(creation)) {
+      throw new Error(`temporary merge creation did not reach the backend: ${JSON.stringify(actualCreation)}`);
+    }
     await mockedPage.getByText("TEMP TARGET - SESSION ONLY").waitFor({ timeout: 5_000 });
     await mockedPage.getByText("SOURCE - REPLACEABLE").waitFor({ timeout: 5_000 });
     await mockedPage.getByRole("button", { name: "Save temp as" }).waitFor({ timeout: 5_000 });
     await mockedPage.getByRole("button", { name: "Discard temp" }).waitFor({ timeout: 5_000 });
-    await mockedPage.getByLabel("Temporary merge status").waitFor({ timeout: 5_000 });
+    const status = mockedPage.getByLabel("Temporary merge status");
+    await status.waitFor({ timeout: 5_000 });
+    if (!(await status.textContent()).includes(expectedWorkingName)) {
+      throw new Error(`temporary merge status did not show ${expectedWorkingName}`);
+    }
     await mockedPage.getByRole("button", { name: "Merge all -> temp" }).click();
     const conflictDialog = mockedPage.getByRole("dialog", { name: "Resolve merge conflicts" });
     await conflictDialog.getByRole("button", { name: "Overwrite all" }).waitFor({ timeout: 5_000 });
@@ -1415,8 +1441,8 @@ try {
     }
   }
 
-  await verifyTemporaryMergeFixture("light");
-  await verifyTemporaryMergeFixture("dark");
+  await verifyTemporaryMergeFixture("light", { kind: "empty", extension: "jar" }, "temporary-target.jar");
+  await verifyTemporaryMergeFixture("dark", { kind: "copyCurrent" }, "left.jar");
   await mockedPage.evaluate(() => {
     localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
       appearance: { colorPattern: "light" },
