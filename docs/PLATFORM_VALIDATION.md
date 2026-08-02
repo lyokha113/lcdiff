@@ -23,6 +23,29 @@ Pass evidence:
 - Built NSIS/MSI artifacts exist under `target/<target>/debug/bundle/` or
   `target/<target>/release/bundle/`.
 
+## Temporary Merge Lifecycle
+
+Run the deterministic backend smoke locally before platform-specific packaging:
+
+```bash
+npm run test:temp-merge-smoke
+```
+
+It creates a copied temporary target with `base.txt=A`, `conflict.txt=seed`,
+and `skipped.txt=seed`; merges a second source that adds `selected.txt=B`; then
+merges a third source with `conflict.txt=third` and `skipped.txt=third`. The
+run chooses **Overwrite** for `conflict.txt` and **Skip** for `skipped.txt`,
+saves the target, and reopens the archive. Pass evidence is exact byte equality:
+`base.txt=A`, `selected.txt=B`, `conflict.txt=third`, and
+`skipped.txt=seed`.
+
+For each packaged desktop target, manually confirm the same lifecycle: create
+an **Empty** and a **Copy current source** target, replace the non-target source
+between merges, use the bulk conflict dialog, then verify **Save temp as**,
+**Discard temp**, and session-only status. The local render gate covers these
+controls in Light and Dark themes; Windows installer launch and MSVC CRT
+behavior remain separate external Windows evidence.
+
 ## Windows Release Builder
 
 Release installers are built by `.github/workflows/windows-release.yml` on

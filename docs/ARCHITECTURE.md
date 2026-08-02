@@ -43,12 +43,13 @@ src-tauri/src/
     archive.rs            archive/diff/nested/View-source lifecycle and atomic pair opens
     preview.rs            entry reads, UTF-8 text-file reads, decompile, bytecode and engine selection
     merge.rs              stage, unstage, commit and signed-save boundary
+    temp_merge.rs         temporary target lifecycle, cumulative merge preview/stage/apply, save and discard
     search.rs             T2/T3 search, cancellation and sibling prefetch
   sidecar_process.rs      Java process, protocol, cache, timeout and retry
   system_fonts.rs         blocking native font enumeration
 ```
 
-`lib.rs` preserves the ordered 32-command handler list and constructs the
+`lib.rs` preserves the ordered 38-command handler list and constructs the
 existing single `Arc<Mutex<AppState>>`. `state.rs` stores archives, per-source
 nested caches, View sources, merge plans, sidecar workers, cancellation
 generations, engine selection, and pending open paths. Command modules own
@@ -63,7 +64,7 @@ src/
   app/App.tsx             composition and cross-feature lifecycle wiring
   ipc/
     types.ts              exact Rust wire DTOs and event payloads
-    commands.ts           typed wrappers for the 32 stable commands
+    commands.ts           typed wrappers for the 38 stable commands
     events.ts             typed subscriptions and unlisten ownership
     platform.ts           dialog/window/drop/asset adapters
     updater.ts            app/updater/process/opener adapters
@@ -73,15 +74,16 @@ src/
     workspace/            Monaco runtime, models, tab LRU and previews
     free-text/            feature-owned drafts, file-drop loading, readonly results and bounded history
     search/               search controls, projection and result state
-    merge/                generation-guarded staging and save confirmation
+    merge/                generation-guarded staging, temporary target lifecycle, and save confirmation
     preferences/          preferences, fonts and updater state/UI
   components/ui/          approved shared shadcn/Radix primitives only
   lib/                    pure React/Monaco/Tauri/feature-free utilities
 ```
 
 `src/app/App.tsx` is the single composition root, not a second service layer.
-Workspace and merge side effects live in `useWorkspaceController` and
-`useMergeController`; feature components render typed state and emit intent.
+Workspace and merge side effects live in `useWorkspaceController`,
+`useMergeController`, and `useTempMergeController`; feature components render
+typed state and emit intent.
 `useWorkspaceController` keeps Compare and View workspace projections separate,
 so source tabs, entry tabs, selection, and previews do not leak between those
 workspaces. `useFreeTextController` owns Free text drafts, temporary history,
@@ -100,6 +102,7 @@ each in-session workspace context.
 | free-text/history/search/preferences/source/tab helpers under generic folders | their matching `src/features/*` owner |
 | builder, state, commands, events and menu in `src-tauri/src/main.rs` | `lib.rs`, `state.rs`, `commands/*`, `events.rs`, and `menu.rs` |
 | JVM process/cache mixed with desktop orchestration | `src-tauri/src/sidecar_process.rs` |
+| temporary target filesystem lifecycle mixed with general merge handling | `src-tauri/src/commands/temp_merge.rs` and `src/features/merge/useTempMergeController.ts` |
 
 ## Dependency Directions
 
@@ -173,6 +176,12 @@ packaging where supported.
   changes only Free text drafts.
 - `MergePlan` remains the only write path. Original entry bytes are staged and
   saved atomically with optional backup; signed targets require confirmation.
+- A temporary merge target is an owned session workspace. `create_temp_target`
+  begins from an empty archive or copies the selected source; preview/stage/apply
+  merge one replacement source at a time. A conflict decision of `skip` leaves
+  the target entry's original bytes unchanged. `save_temp_target_as` exports
+  explicitly, while `discard_temp_target` removes only the owned temporary
+  workspace.
 - Java 17 resource lookup, framed JSON, the 30-second watchdog, one
   restart/retry, 128 MiB shared response cache, warm start, and separate
   interactive/prefetch/deep-search workers remain unchanged.

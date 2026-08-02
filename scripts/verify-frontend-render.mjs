@@ -710,6 +710,14 @@ try {
     ];
     let nextCallback = 1;
     let commitCount = 0;
+    const tempSession = {
+      id: "render-temp-merge",
+      targetSide: "right",
+      workingName: "working.jar",
+      entryCount: 3,
+      appliedSourceCount: 1,
+      exportedPath: null,
+    };
     const callbacks = new Map();
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event, id) => callbacks.delete(id),
@@ -773,6 +781,14 @@ try {
           opened[args.side] = archives[args.path];
           return archives[args.path];
         }
+        if (cmd === "create_temp_target") return tempSession;
+        if (cmd === "preview_merge_all_conflicts") {
+          return { newEntries: ["selected.txt"], conflicts: ["conflict.txt", "skipped.txt"] };
+        }
+        if (cmd === "stage_temp_merge_all") return undefined;
+        if (cmd === "apply_temp_merge") return { ...tempSession, appliedSourceCount: 2 };
+        if (cmd === "save_temp_target_as") return { ...tempSession, exportedPath: args.path };
+        if (cmd === "discard_temp_target") return { kind: "discarded" };
         if (cmd === "open_view_source") {
           const summary = viewSources[args.path];
           if (!summary) throw new Error(`unexpected open_view_source fixture: ${JSON.stringify(args)}`);
@@ -1362,6 +1378,63 @@ try {
   await mockedPage.getByRole("button", { name: "Save to archive (1)" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
+
+  async function verifyTemporaryMergeFixture(pattern) {
+    await mockedPage.evaluate((nextPattern) => {
+      localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+        appearance: { colorPattern: nextPattern },
+        misc: { updates: { autoCheck: false } },
+      }));
+    }, pattern);
+    await mockedPage.reload({ waitUntil: "domcontentloaded" });
+    await disableAnimations(mockedPage);
+    await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
+    await openLeftPopover();
+    await archiveInput().fill("/fixtures/left.jar");
+    await archiveInput().press("Enter");
+    await closePopover(leftSourceTrigger);
+    await openRightPopover();
+    await mockedPage.getByRole("button", { name: "Create temp target..." }).click();
+    const createDialog = mockedPage.getByRole("dialog", { name: "Create temporary merge target" });
+    await createDialog.getByLabel("Temporary target type").click();
+    await mockedPage.getByRole("option", { name: "Copy current source" }).click();
+    await createDialog.getByRole("button", { name: "Create temp target" }).click();
+    await mockedPage.getByText("TEMP TARGET - SESSION ONLY").waitFor({ timeout: 5_000 });
+    await mockedPage.getByText("SOURCE - REPLACEABLE").waitFor({ timeout: 5_000 });
+    await mockedPage.getByRole("button", { name: "Save temp as" }).waitFor({ timeout: 5_000 });
+    await mockedPage.getByRole("button", { name: "Discard temp" }).waitFor({ timeout: 5_000 });
+    await mockedPage.getByLabel("Temporary merge status").waitFor({ timeout: 5_000 });
+    await mockedPage.getByRole("button", { name: "Merge all -> temp" }).click();
+    const conflictDialog = mockedPage.getByRole("dialog", { name: "Resolve merge conflicts" });
+    await conflictDialog.getByRole("button", { name: "Overwrite all" }).waitFor({ timeout: 5_000 });
+    await conflictDialog.getByRole("button", { name: "Skip all" }).waitFor({ timeout: 5_000 });
+    await assertViewportFits(mockedPage, 1024, 640, `temporary merge ${pattern}`);
+    const actualPattern = await mockedPage.locator(".app-shell").getAttribute("data-effective-color-pattern");
+    if (actualPattern !== pattern) {
+      throw new Error(`temporary merge fixture did not render ${pattern}: ${actualPattern}`);
+    }
+  }
+
+  await verifyTemporaryMergeFixture("light");
+  await verifyTemporaryMergeFixture("dark");
+  await mockedPage.evaluate(() => {
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "light" },
+      editor: { fontFamily: "Monaco" },
+      misc: { updates: { autoCheck: false } },
+    }));
+  });
+  await mockedPage.reload({ waitUntil: "domcontentloaded" });
+  await disableAnimations(mockedPage);
+  await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
+  await openLeftPopover();
+  await archiveInput().fill("/fixtures/left.jar");
+  await archiveInput().press("Enter");
+  await closePopover(leftSourceTrigger);
+  await openRightPopover();
+  await archiveInput().fill("/fixtures/right.jar");
+  await archiveInput().press("Enter");
+  await closePopover(rightSourceTrigger);
 
   // Complete the mode lifecycle through Free text before returning to Compare.
   await mockedPage.getByRole("button", { name: "Text mode" }).click();

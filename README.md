@@ -57,7 +57,7 @@ source its own entry workspace.
 | Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, **All / Differences** line display, whitespace controls, font settings, and compact layouts. Differences keeps local context and lets Monaco reveal collapsed unchanged regions on demand. |
 | Binary inspection | Size, CRC, SHA-256, metadata, and hex previews when an entry is not safely renderable as text. |
 | Deep search | Path, text, constant-pool, and optional decompiled-source search with cancellable background work and clickable results. |
-| Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. |
+| Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. For cumulative work, create a session-only temporary target from an empty archive or a copy of one source, merge replacement sources into it, then explicitly save or discard it. |
 | Signed-JAR guard rails | Warnings before rewriting signed archives or discarding staged work. |
 | Native desktop integration | File associations, Finder/Explorer open-with support, keyboard shortcuts, themes, and installed editor fonts. |
 | In-app updates | Automatic checks plus signed native updater artifacts; GitHub Releases remains the fallback when native update is unavailable. |
@@ -67,6 +67,7 @@ source its own entry workspace.
 - Decompiled Java is a view, never a write path.
 - Archive merges copy original entry bytes.
 - Changes are staged before save.
+- A temporary merge target is session-only until **Save temp as**; **Discard temp** removes only that temporary workspace.
 - Saves are atomic and can preserve a `.bak` backup.
 - Signed archives and destructive transitions require confirmation.
 
@@ -145,7 +146,10 @@ can install it manually.
    blocks with nearby context; expand a collapsed region when you need it.
 5. Inspect the diff, then stage an entry, text hunk, or supported one-sided
    text edit in the intended direction.
-6. Review pending changes and save the target.
+6. Review pending changes and save the target. For a cumulative merge, choose
+   **Create temp target...** on one side, select **Empty** or **Copy current
+   source**, merge each replacement source into the temporary target, resolve
+   conflicts, then choose **Save temp as** or **Discard temp**.
 
 ### Compare pasted text
 

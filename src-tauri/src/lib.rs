@@ -1523,6 +1523,90 @@ mod tests {
     }
 
     #[test]
+    fn temp_merge_three_source_smoke_preserves_selected_and_skipped_target_bytes() {
+        let dir = tempdir().unwrap();
+        let seed = dir.path().join("seed.jar");
+        let source_two = dir.path().join("source-two.jar");
+        let source_three = dir.path().join("source-three.jar");
+        let output = dir.path().join("output.jar");
+        create_zip(
+            &seed,
+            &[
+                ("base.txt", b"A"),
+                ("conflict.txt", b"seed"),
+                ("skipped.txt", b"seed"),
+            ],
+        );
+        create_zip(&source_two, &[("selected.txt", b"B")]);
+        create_zip(
+            &source_three,
+            &[("conflict.txt", b"third"), ("skipped.txt", b"third")],
+        );
+
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, seed.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .install_archive(
+                    Archive::open(source_two.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            preview_merge_all_conflicts(&shared_state, Side::Left)
+                .unwrap()
+                .new_entries,
+            ["selected.txt"]
+        );
+        stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap();
+        apply_temp_merge(&shared_state).unwrap();
+
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .install_archive(
+                    Archive::open(source_three.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            preview_merge_all_conflicts(&shared_state, Side::Left)
+                .unwrap()
+                .conflicts,
+            ["conflict.txt", "skipped.txt"]
+        );
+        stage_temp_merge_all_shared(
+            &shared_state,
+            Side::Left,
+            vec![
+                TempMergeDecision {
+                    entry_path: "conflict.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                },
+                TempMergeDecision {
+                    entry_path: "skipped.txt".to_owned(),
+                    action: TempMergeConflictAction::Skip,
+                },
+            ],
+        )
+        .unwrap();
+        apply_temp_merge(&shared_state).unwrap();
+        save_temp_target_as(&shared_state, output.clone()).unwrap();
+
+        let output = Archive::open(output.to_string_lossy()).unwrap();
+        assert_eq!(output.read_entry("base.txt").unwrap(), b"A");
+        assert_eq!(output.read_entry("selected.txt").unwrap(), b"B");
+        assert_eq!(output.read_entry("conflict.txt").unwrap(), b"third");
+        assert_eq!(output.read_entry("skipped.txt").unwrap(), b"seed");
+    }
+
+    #[test]
     fn temp_merge_all_requires_exactly_one_known_decision_per_conflict() {
         let (_dir, mut state) = temp_session_with_source_and_target(
             &[("new.txt", b"new"), ("same.txt", b"source")],
