@@ -1,12 +1,14 @@
 import { Button } from "@/components/ui/button";
 import type { TempMergeSessionSummary } from "@/ipc/types";
+import { downloadPercent, type DownloadProgress } from "@/features/preferences/update-client";
+import { formatByteRange } from "@/lib/format";
 
 export interface StatusBarUpdatePrompt {
   status: "available" | "downloading" | "readyToRestart" | "fallback" | "error";
   message: string;
   primaryLabel?: string;
-  primaryDisabled?: boolean;
   fallbackLabel?: string;
+  progress?: DownloadProgress;
   onPrimaryAction?: () => void;
   onFallbackAction?: () => void;
 }
@@ -30,8 +32,14 @@ export function StatusBar({
   tempConflictCount = 0,
   updatePrompt,
 }: StatusBarProps) {
-  const showPrimary = updatePrompt?.primaryLabel && (updatePrompt.onPrimaryAction || updatePrompt.primaryDisabled);
+  const showPrimary = updatePrompt?.primaryLabel && updatePrompt.onPrimaryAction;
   const showFallback = updatePrompt?.status !== "readyToRestart" && updatePrompt?.fallbackLabel && updatePrompt.onFallbackAction;
+  const progress = updatePrompt?.status === "downloading" ? updatePrompt.progress : undefined;
+  const progressPercent = progress ? downloadPercent(progress) : null;
+  const progressLabel =
+    progress && progress.totalBytes != null && progress.totalBytes > 0
+      ? `${progressPercent}% · ${formatByteRange(progress.downloadedBytes, progress.totalBytes)}`
+      : null;
 
   return (
     <footer className="status-bar" data-tour="status">
@@ -55,12 +63,29 @@ export function StatusBar({
         {updatePrompt && (
           <span className={`status-bar__update status-bar__update--${updatePrompt.status}`} aria-live="polite">
             <span className="status-bar__update-text">{updatePrompt.message}</span>
+            {progress && (
+              <>
+                <span
+                  className="status-bar__progress"
+                  role="progressbar"
+                  aria-label="Update download progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progressPercent ?? undefined}
+                >
+                  <span
+                    className={`status-bar__progress-fill${progressPercent === null ? " indeterminate" : ""}`}
+                    style={progressPercent === null ? undefined : { width: `${progressPercent}%` }}
+                  />
+                </span>
+                {progressLabel && <span className="status-bar__progress-text">{progressLabel}</span>}
+              </>
+            )}
             {showPrimary && (
               <Button
                 type="button"
                 variant="secondary"
                 size="xs"
-                disabled={updatePrompt.primaryDisabled}
                 onClick={updatePrompt.onPrimaryAction}
               >
                 {updatePrompt.primaryLabel}

@@ -1,12 +1,15 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
+
+export type NativeDownloadEvent = DownloadEvent;
+export type NativeDownloadListener = (event: NativeDownloadEvent) => void;
 
 export type NativeUpdate = {
   version: string;
   body?: string;
-  downloadAndInstall(): Promise<void>;
+  downloadAndInstall(onEvent?: NativeDownloadListener): Promise<void>;
 };
 
 export function getAppVersion(): Promise<string> {

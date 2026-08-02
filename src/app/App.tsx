@@ -540,8 +540,15 @@ export function App() {
       ...currentState,
       status: "downloading",
       message: "Downloading update...",
+      progress: { downloadedBytes: 0, totalBytes: null, finished: false },
     });
-    const nextState = await downloadAndInstallAppUpdate(currentState);
+    const nextState = await downloadAndInstallAppUpdate(currentState, (progress) => {
+      setCurrentUpdateState({
+        ...updateStateRef.current,
+        progress,
+        message: progress.finished ? "Installing update..." : updateStateRef.current.message,
+      });
+    });
     setCurrentUpdateState(nextState);
     if (nextState.message) setMessage(nextState.message);
   }, [setCurrentUpdateState]);
@@ -1990,8 +1997,7 @@ export function App() {
         ? {
             status: "downloading",
             message: updateState.message ?? "Downloading update...",
-            primaryLabel: "Downloading...",
-            primaryDisabled: true,
+            progress: updateState.progress,
           }
         : updateState.status === "readyToRestart"
         ? {

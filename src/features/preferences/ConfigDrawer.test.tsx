@@ -334,6 +334,50 @@ describe("ConfigDrawer", () => {
     expect(screen.getByRole("button", { name: "Downloading..." })).toBeDisabled();
   });
 
+  it("shows determinate download progress inside Misc", async () => {
+    const updateState: AppUpdateState = {
+      status: "downloading",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      latestVersion: "0.3.3",
+      message: "Downloading LCDiff v0.3.3.",
+      progress: {
+        downloadedBytes: 15 * 1024 * 1024,
+        totalBytes: 30 * 1024 * 1024,
+        finished: false,
+      },
+    };
+
+    setup({ updateState });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Downloading... 50%" })).toBeDisabled();
+  });
+
+  it("shows the installing phase inside Misc", async () => {
+    const updateState: AppUpdateState = {
+      status: "downloading",
+      releaseUrl: "https://github.com/lyokha113/lcdiff/releases/latest",
+      currentVersion: "0.3.2",
+      latestVersion: "0.3.3",
+      message: "Installing update...",
+      progress: {
+        downloadedBytes: 30 * 1024 * 1024,
+        totalBytes: 30 * 1024 * 1024,
+        finished: true,
+      },
+    };
+
+    setup({ updateState });
+
+    await userEvent.click(screen.getByRole("button", { name: "Misc" }));
+    await userEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    expect(screen.getByRole("button", { name: "Installing..." })).toBeDisabled();
+  });
+
   it("renders release-page fallback for error update state inside Misc", async () => {
     const onOpenUpdateFallback = vi.fn();
     const updateState: AppUpdateState = {

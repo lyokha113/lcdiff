@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { timeAgo } from "@/lib/format";
+import { formatByteRange, timeAgo } from "@/lib/format";
 
 const NOW = 1_000_000_000_000;
 const SEC = 1000;
@@ -32,5 +32,24 @@ describe("timeAgo", () => {
 
   it("treats future timestamps as 'just now'", () => {
     expect(timeAgo(NOW + 5 * MIN, NOW)).toBe("just now");
+  });
+});
+
+describe("formatByteRange", () => {
+  it("shares the total's unit between downloaded and total", () => {
+    expect(formatByteRange(15 * 1024 * 1024, 30 * 1024 * 1024)).toBe("15.0/30.0 MB");
+    expect(formatByteRange(30 * 1024 * 1024, 30 * 1024 * 1024)).toBe("30.0/30.0 MB");
+  });
+
+  it("shows whole bytes when the total is under a kilobyte", () => {
+    expect(formatByteRange(512, 900)).toBe("512/900 B");
+  });
+
+  it("keeps one decimal for small downloads against a large total", () => {
+    expect(formatByteRange(100 * 1024, 1.5 * 1024 * 1024 * 1024)).toBe("0.0/1.5 GB");
+  });
+
+  it("clamps negative values to zero", () => {
+    expect(formatByteRange(-100, 2048)).toBe("0.0/2.0 KB");
   });
 });

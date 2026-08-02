@@ -4,6 +4,10 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 
+const KB = 1024;
+const MB = 1024 * KB;
+const GB = 1024 * MB;
+
 export function timeAgo(ts: number, now: number): string {
   const delta = now - ts;
   if (delta < MIN) return "just now";
@@ -11,4 +15,13 @@ export function timeAgo(ts: number, now: number): string {
   if (delta < DAY) return `${Math.floor(delta / HOUR)}h ago`;
   if (delta < WEEK) return `${Math.floor(delta / DAY)}d ago`;
   return new Date(ts).toLocaleDateString();
+}
+
+export function formatByteRange(downloaded: number, total: number): string {
+  const d = Math.max(0, downloaded);
+  const t = Math.max(0, total);
+  if (t < KB) return `${Math.floor(d)}/${Math.floor(t)} B`;
+  const unit = t >= GB ? GB : t >= MB ? MB : KB;
+  const suffix = unit === GB ? "GB" : unit === MB ? "MB" : "KB";
+  return `${(d / unit).toFixed(1)}/${(t / unit).toFixed(1)} ${suffix}`;
 }

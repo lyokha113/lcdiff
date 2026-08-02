@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { UiPreferences } from "@/features/preferences/preferences";
-import type { AppUpdateState } from "@/features/preferences/update-client";
+import { downloadPercent, type AppUpdateState } from "@/features/preferences/update-client";
 
 interface MiscPreferencesProps {
   preferences: UiPreferences;
@@ -56,6 +56,15 @@ export function MiscPreferences({
   const isDownloading = updateStatus === "downloading";
   const isUpdateBusy = isChecking || isDownloading;
   const canOpenReleasePage = ["available", "fallback", "error"].includes(updateStatus);
+  const downloadProgress = isDownloading ? updateState.progress : undefined;
+  const downloadProgressPercent = downloadProgress ? downloadPercent(downloadProgress) : null;
+  const downloadButtonLabel = !isDownloading
+    ? "Download and install"
+    : downloadProgress?.finished
+      ? "Installing..."
+      : downloadProgressPercent !== null
+        ? `Downloading... ${downloadProgressPercent}%`
+        : "Downloading...";
 
   return (
     <section className="drawer-group" aria-label="Misc preferences">
@@ -222,7 +231,7 @@ export function MiscPreferences({
                 disabled={isDownloading || !onDownloadAndInstallUpdate}
                 onClick={onDownloadAndInstallUpdate}
               >
-                {isDownloading ? "Downloading..." : "Download and install"}
+                {downloadButtonLabel}
               </Button>
             )}
             {updateStatus === "readyToRestart" && (

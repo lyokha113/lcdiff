@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppUpdateState } from "@/features/preferences/update-client";
+import type { AppUpdateState, DownloadProgress } from "@/features/preferences/update-client";
 import { onboardingKeyForMode } from "@/features/shell/OnboardingTour";
 
 // ---------------------------------------------------------------------------
@@ -854,6 +854,7 @@ describe("App file-merge wiring", () => {
   it("keeps update feedback visible while downloading", async () => {
     const user = userEvent.setup();
     let resolveDownload!: (state: AppUpdateState) => void;
+    let reportProgress!: (progress: DownloadProgress) => void;
     updateClientMocks.state.current = {
       status: "available",
       releaseUrl: updateClientMocks.releaseUrl,
@@ -864,17 +865,38 @@ describe("App file-merge wiring", () => {
       message: "LCDiff v0.3.5 is available.",
     } as AppUpdateState;
     updateClientMocks.downloadAndInstallAppUpdate.mockImplementationOnce(
-      () => new Promise<AppUpdateState>((resolve) => {
-        resolveDownload = resolve;
-      }),
+      (_state: AppUpdateState, onProgress?: (progress: DownloadProgress) => void) =>
+        new Promise<AppUpdateState>((resolve) => {
+          reportProgress = onProgress ?? (() => undefined);
+          reportProgress({
+            downloadedBytes: 15 * 1024 * 1024,
+            totalBytes: 30 * 1024 * 1024,
+            finished: false,
+          });
+          resolveDownload = resolve;
+        }),
     );
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
     await user.click(await screen.findByRole("button", { name: "Download and install" }));
 
-    const downloadingButton = await screen.findByRole("button", { name: "Downloading..." });
-    expect(downloadingButton).toBeDisabled();
+    const bar = await screen.findByRole("progressbar", { name: "Update download progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText("50% · 15.0/30.0 MB")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Downloading..." })).not.toBeInTheDocument();
+
+    act(() => {
+      reportProgress({
+        downloadedBytes: 30 * 1024 * 1024,
+        totalBytes: 30 * 1024 * 1024,
+        finished: true,
+      });
+    });
+    expect(await screen.findByText("Installing update...")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Update download progress" }),
+    ).toHaveAttribute("aria-valuenow", "100");
 
     resolveDownload({
       ...updateClientMocks.state.current,

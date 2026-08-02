@@ -75,6 +75,72 @@ describe("StatusBar", () => {
     expect(onFallbackAction).not.toHaveBeenCalled();
   });
 
+  it("renders a determinate download progress bar while downloading", () => {
+    render(
+      <StatusBar
+        message="Ready"
+        searching={false}
+        pendingCount={0}
+        updatePrompt={{
+          status: "downloading",
+          message: "Downloading update...",
+          progress: {
+            downloadedBytes: 15 * 1024 * 1024,
+            totalBytes: 30 * 1024 * 1024,
+            finished: false,
+          },
+        }}
+      />,
+    );
+
+    const bar = screen.getByRole("progressbar", { name: "Update download progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText("50% · 15.0/30.0 MB")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Downloading..." })).not.toBeInTheDocument();
+  });
+
+  it("renders an indeterminate progress bar when the total size is unknown", () => {
+    render(
+      <StatusBar
+        message="Ready"
+        searching={false}
+        pendingCount={0}
+        updatePrompt={{
+          status: "downloading",
+          message: "Downloading update...",
+          progress: { downloadedBytes: 1024, totalBytes: null, finished: false },
+        }}
+      />,
+    );
+
+    const bar = screen.getByRole("progressbar", { name: "Update download progress" });
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("shows the full bar while the download installs", () => {
+    render(
+      <StatusBar
+        message="Ready"
+        searching={false}
+        pendingCount={0}
+        updatePrompt={{
+          status: "downloading",
+          message: "Installing update...",
+          progress: {
+            downloadedBytes: 30 * 1024 * 1024,
+            totalBytes: 30 * 1024 * 1024,
+            finished: true,
+          },
+        }}
+      />,
+    );
+
+    const bar = screen.getByRole("progressbar", { name: "Update download progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "100");
+    expect(screen.getByText("100% · 30.0/30.0 MB")).toBeInTheDocument();
+  });
+
   it("summarizes the authoritative temporary target without inventing an export", () => {
     render(
       <StatusBar

@@ -19,6 +19,12 @@ export type UpdateStatus =
   | "fallback"
   | "error";
 
+export type DownloadProgress = {
+  downloadedBytes: number;
+  totalBytes: number | null;
+  finished: boolean;
+};
+
 export type AppUpdateState = {
   status: UpdateStatus;
   releaseUrl: string;
@@ -28,6 +34,7 @@ export type AppUpdateState = {
   latestVersion?: string;
   message?: string;
   update?: NativeUpdate;
+  progress?: DownloadProgress;
 };
 
 export const IDLE_UPDATE_STATE: AppUpdateState = {
@@ -85,7 +92,18 @@ export async function checkForAppUpdate(
   }
 }
 
-export async function downloadAndInstallAppUpdate(state: AppUpdateState): Promise<AppUpdateState> {
+export function downloadPercent(progress: DownloadProgress): number | null {
+  if (progress.finished) return 100;
+  if (progress.totalBytes == null || progress.totalBytes <= 0) return null;
+  return Math.min(99, Math.floor((progress.downloadedBytes / progress.totalBytes) * 100));
+}
+
+const PROGRESS_THROTTLE_MS = 200;
+
+export async function downloadAndInstallAppUpdate(
+  state: AppUpdateState,
+  onProgress?: (progress: DownloadProgress) => void,
+): Promise<AppUpdateState> {
   if (state.status !== "available" || !state.update) {
     return {
       ...state,
@@ -94,18 +112,57 @@ export async function downloadAndInstallAppUpdate(state: AppUpdateState): Promis
     };
   }
 
+  let downloadedBytes = 0;
+  let totalBytes: number | null = null;
+  let finished = false;
+  let lastEmitAt = 0;
+  let trailingTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const emit = (force = false) => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastEmitAt < PROGRESS_THROTTLE_MS) {
+      if (!trailingTimer) {
+        trailingTimer = setTimeout(() => {
+          trailingTimer = undefined;
+          lastEmitAt = Date.now();
+          onProgress({ downloadedBytes, totalBytes, finished });
+        }, PROGRESS_THROTTLE_MS);
+      }
+      return;
+    }
+    lastEmitAt = now;
+    onProgress({ downloadedBytes, totalBytes, finished });
+  };
+
   try {
-    await state.update.downloadAndInstall();
+    await state.update.downloadAndInstall((event) => {
+      if (event.event === "Started") {
+        totalBytes = event.data.contentLength ?? null;
+        downloadedBytes = 0;
+        emit(true);
+      } else if (event.event === "Progress") {
+        downloadedBytes += event.data.chunkLength;
+        emit();
+      } else {
+        finished = true;
+        emit(true);
+      }
+    });
+    if (trailingTimer) clearTimeout(trailingTimer);
     return {
       ...state,
       status: "readyToRestart",
       message: "Update downloaded. Restart to finish.",
+      progress: undefined,
     };
   } catch {
+    if (trailingTimer) clearTimeout(trailingTimer);
     return {
       ...state,
       status: "fallback",
       message: "Could not install the update.",
+      progress: undefined,
     };
   }
 }

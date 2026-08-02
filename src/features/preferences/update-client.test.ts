@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const tauri = vi.hoisted(() => ({
   check: vi.fn(),
@@ -26,12 +26,15 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 import {
   checkForAppUpdate,
   downloadAndInstallAppUpdate,
+  downloadPercent,
   IDLE_UPDATE_STATE,
   openUpdateFallback,
   RELEASE_URL,
   restartToApplyUpdate,
   type AppUpdateState,
+  type DownloadProgress,
 } from "./update-client";
+import type { NativeDownloadEvent } from "@/ipc/updater";
 
 type TestUpdate = NonNullable<AppUpdateState["update"]> & {
   downloadAndInstall: ReturnType<typeof vi.fn>;
@@ -156,5 +159,116 @@ describe("update client", () => {
     await openUpdateFallback();
 
     expect(tauri.openUrl).toHaveBeenCalledWith(RELEASE_URL);
+  });
+});
+
+type EventUpdate = TestUpdate & {
+  listener?: (event: NativeDownloadEvent) => void;
+  resolveInstall: () => void;
+};
+
+function pendingUpdate(): EventUpdate {
+  const update = {
+    version: "0.4.0",
+    body: "Release notes",
+    listener: undefined as ((event: NativeDownloadEvent) => void) | undefined,
+    resolveInstall: () => undefined,
+    downloadAndInstall: vi.fn(),
+  } as unknown as EventUpdate;
+  update.downloadAndInstall = vi.fn((listener?: (event: NativeDownloadEvent) => void) => {
+    update.listener = listener;
+    return new Promise<void>((resolve) => {
+      update.resolveInstall = resolve;
+    });
+  }) as unknown as TestUpdate["downloadAndInstall"];
+  return update;
+}
+
+function availableStateWith(update: TestUpdate): AppUpdateState {
+  return {
+    ...IDLE_UPDATE_STATE,
+    status: "available",
+    source: "manual",
+    currentVersion: "0.3.4",
+    latestVersion: "0.4.0",
+    message: "LCDiff v0.4.0 is available.",
+    update,
+  };
+}
+
+describe("download progress reporting", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("streams throttled progress snapshots while downloading", async () => {
+    vi.useFakeTimers();
+    const update = pendingUpdate();
+    const snapshots: DownloadProgress[] = [];
+    const promise = downloadAndInstallAppUpdate(availableStateWith(update), (progress) =>
+      snapshots.push(progress),
+    );
+
+    update.listener?.({ event: "Started", data: { contentLength: 1000 } });
+    expect(snapshots).toEqual([{ downloadedBytes: 0, totalBytes: 1000, finished: false }]);
+
+    update.listener?.({ event: "Progress", data: { chunkLength: 100 } });
+    update.listener?.({ event: "Progress", data: { chunkLength: 100 } });
+    expect(snapshots).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(snapshots.at(-1)).toEqual({ downloadedBytes: 200, totalBytes: 1000, finished: false });
+
+    update.listener?.({ event: "Finished" });
+    expect(snapshots.at(-1)).toEqual({ downloadedBytes: 200, totalBytes: 1000, finished: true });
+
+    update.resolveInstall();
+    await expect(promise).resolves.toMatchObject({
+      status: "readyToRestart",
+      message: "Update downloaded. Restart to finish.",
+    });
+  });
+
+  it("reports indeterminate progress when the content length is unknown", async () => {
+    vi.useFakeTimers();
+    const update = pendingUpdate();
+    const snapshots: DownloadProgress[] = [];
+    const promise = downloadAndInstallAppUpdate(availableStateWith(update), (progress) =>
+      snapshots.push(progress),
+    );
+
+    update.listener?.({ event: "Started", data: {} });
+    expect(snapshots.at(-1)).toEqual({ downloadedBytes: 0, totalBytes: null, finished: false });
+
+    update.listener?.({ event: "Progress", data: { chunkLength: 512 } });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(snapshots.at(-1)).toEqual({ downloadedBytes: 512, totalBytes: null, finished: false });
+
+    update.resolveInstall();
+    await expect(promise).resolves.toMatchObject({ status: "readyToRestart" });
+  });
+
+  it("clears progress from the terminal state", async () => {
+    const update = availableUpdate();
+    const state = availableStateWith(update);
+
+    const next = await downloadAndInstallAppUpdate(state, () => undefined);
+
+    expect(next.progress).toBeUndefined();
+  });
+});
+
+describe("downloadPercent", () => {
+  it("returns 100 once the download finishes", () => {
+    expect(downloadPercent({ downloadedBytes: 50, totalBytes: 100, finished: true })).toBe(100);
+  });
+
+  it("returns null when the total is unknown", () => {
+    expect(downloadPercent({ downloadedBytes: 50, totalBytes: null, finished: false })).toBeNull();
+  });
+
+  it("floors partial progress and caps at 99 while downloading", () => {
+    expect(downloadPercent({ downloadedBytes: 50, totalBytes: 100, finished: false })).toBe(50);
+    expect(downloadPercent({ downloadedBytes: 999, totalBytes: 1000, finished: false })).toBe(99);
   });
 });
