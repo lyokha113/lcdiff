@@ -474,4 +474,39 @@ describe("DiffView", () => {
     expect(screen.getByRole("button", { name: "Copy selected -> temp" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Merge all -> temp" })).toBeDisabled();
   });
+
+  it.each([
+    { targetSide: "left" as const, blockedTarget: "right" as const, allowedTarget: "left" as const },
+    { targetSide: "right" as const, blockedTarget: "left" as const, allowedTarget: "right" as const },
+  ])("blocks every legacy route into the replaceable $blockedTarget source when temp target is $targetSide", async ({ targetSide, blockedTarget, allowedTarget }) => {
+    const user = userEvent.setup();
+    const props = renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      hunkMerge: true,
+      tempSession: {
+        id: "temp-1", targetSide, workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    const blockedCopy = screen.getByRole("button", { name: `Copy file to ${blockedTarget}` });
+    const blockedTakeAll = screen.getByRole("button", { name: `Take all into ${blockedTarget}` });
+    const blockedMoveHunk = screen.getByRole("button", { name: `Move hunk into ${blockedTarget}` });
+    expect(blockedCopy).toBeDisabled();
+    expect(blockedTakeAll).toBeDisabled();
+    expect(blockedMoveHunk).toBeDisabled();
+
+    await user.click(blockedCopy);
+    await user.click(blockedTakeAll);
+    await user.click(blockedMoveHunk);
+    expect(props.onCopy).not.toHaveBeenCalled();
+    expect(props.onTakeAll).not.toHaveBeenCalled();
+    expect(props.onMoveHunk).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: `Copy file to ${allowedTarget}` }));
+    await user.click(screen.getByRole("button", { name: `Take all into ${allowedTarget}` }));
+    await user.click(screen.getByRole("button", { name: `Move hunk into ${allowedTarget}` }));
+    expect(props.onCopy).toHaveBeenCalledTimes(1);
+    expect(props.onTakeAll).toHaveBeenCalledWith(allowedTarget);
+    expect(props.onMoveHunk).toHaveBeenCalledWith(allowedTarget);
+  });
 });

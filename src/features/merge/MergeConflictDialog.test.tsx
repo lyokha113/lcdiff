@@ -59,6 +59,28 @@ describe("MergeConflictDialog", () => {
     ]);
   });
 
+  it("preserves mixed per-entry decisions in its sorted submission", async () => {
+    const user = userEvent.setup();
+    const props = setup();
+
+    await user.click(within(screen.getByRole("group", { name: "a.txt conflict" })).getByRole("button", { name: "Overwrite" }));
+    await user.click(within(screen.getByRole("group", { name: "b.txt conflict" })).getByRole("button", { name: "Skip" }));
+    await user.click(screen.getByRole("button", { name: "Stage merge decisions" }));
+
+    expect(props.onSubmit).toHaveBeenCalledWith([
+      { entryPath: "a.txt", action: "overwrite" },
+      { entryPath: "b.txt", action: "skip" },
+    ]);
+  });
+
+  it("uses the conflict-only overflow layout when there are no new entries", () => {
+    setup({ preview: { conflicts: ["a.txt", "b.txt"], newEntries: [] } });
+
+    expect(screen.getByRole("dialog")).toHaveClass("temp-merge-conflicts--without-new");
+    expect(document.querySelector(".temp-merge-conflicts__list")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "New entries" })).not.toBeInTheDocument();
+  });
+
   it("disables conflict controls while the controller is busy", () => {
     setup({ busy: true });
     expect(screen.getByRole("button", { name: "Overwrite all" })).toBeDisabled();

@@ -27,6 +27,7 @@ export function MergeConflictDialog({
 }: MergeConflictDialogProps) {
   const [decisions, setDecisions] = useState<Record<string, TempMergeConflictAction>>({});
   const conflicts = [...preview.conflicts].sort();
+  const hasNewEntries = preview.newEntries.length > 0;
 
   useEffect(() => {
     setDecisions({});
@@ -52,14 +53,14 @@ export function MergeConflictDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (nextOpen || !busy) onOpenChange(nextOpen); }}>
-      <DialogContent className="temp-merge-dialog temp-merge-conflicts" showCloseButton={!busy}>
+      <DialogContent className={`temp-merge-dialog temp-merge-conflicts ${hasNewEntries ? "temp-merge-conflicts--with-new" : "temp-merge-conflicts--without-new"}`} showCloseButton={!busy}>
         <DialogHeader>
           <DialogTitle>Resolve merge conflicts</DialogTitle>
           <DialogDescription>
             Choose whether each source entry overwrites the temporary target or is skipped.
           </DialogDescription>
         </DialogHeader>
-        {preview.newEntries.length > 0 && (
+        {hasNewEntries && (
           <section className="temp-merge-conflicts__new" aria-label="New entries">
             <strong>New entries will be added</strong>
             <ul>{preview.newEntries.map((path) => <li key={path}>{path}</li>)}</ul>

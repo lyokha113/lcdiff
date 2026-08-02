@@ -821,7 +821,9 @@ main.app-shell {
 .temp-merge-dialog { width: min(34rem, calc(100vw - 2rem)); max-width: 34rem; }
 .temp-merge-dialog__fields { display: grid; gap: 0.75rem; }
 .temp-merge-dialog__field { display: grid; gap: 0.35rem; color: var(--text-1); font-size: 0.72rem; font-weight: 600; }
-.temp-merge-conflicts { max-height: min(42rem, calc(100vh - 2rem)); grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+.temp-merge-conflicts { max-height: min(42rem, calc(100vh - 2rem)); }
+.temp-merge-conflicts--with-new { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+.temp-merge-conflicts--without-new { grid-template-rows: auto auto minmax(0, 1fr) auto; }
 .temp-merge-conflicts__new { display: grid; gap: 0.25rem; padding: 0.6rem 0.7rem; border: 1px solid var(--line-soft); border-radius: 0.45rem; background: color-mix(in oklab, var(--ink-2) 78%, transparent); color: var(--text-1); font-size: 0.7rem; }
 .temp-merge-conflicts__new ul { max-height: 5.5rem; margin: 0; padding-left: 1.1rem; overflow: auto; color: var(--text-2); font-family: var(--font-mono); font-size: 0.64rem; }
 .temp-merge-conflicts__bulk { display: flex; gap: 0.35rem; }

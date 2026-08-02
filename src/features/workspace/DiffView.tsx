@@ -91,6 +91,9 @@ export function DiffView({
     lineNumbers: preferences.editor.lineNumbers,
     automaticLayout: true,
   };
+  const legacyRouteDisabled = (target: Side) => Boolean(
+    tempSession && (tempBusy || tempSession.targetSide !== target),
+  );
 
   const renderCopyButton = (target: Side) => {
     const source: Side = target === "left" ? "right" : "left";
@@ -108,8 +111,8 @@ export function DiffView({
               variant="outline"
               size="sm"
               aria-label={`Copy file to ${target}`}
-              disabled={!entryCopyEnabled || !sourceEntry || sourceEntry.kind === "directory"}
-              onClick={() => onCopy(source, target)}
+              disabled={!entryCopyEnabled || !sourceEntry || sourceEntry.kind === "directory" || legacyRouteDisabled(target)}
+              onClick={() => { if (!legacyRouteDisabled(target)) onCopy(source, target); }}
             >
               Copy file {arrow}
             </Button>
@@ -126,7 +129,7 @@ export function DiffView({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`Take all into ${target}`} onClick={() => onTakeAll(target)}>
+          <Button variant="outline" size="sm" aria-label={`Take all into ${target}`} disabled={legacyRouteDisabled(target)} onClick={() => { if (!legacyRouteDisabled(target)) onTakeAll(target); }}>
             Take all {arrow}
           </Button>
         </TooltipTrigger>
@@ -141,7 +144,7 @@ export function DiffView({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`Move hunk into ${target}`} onClick={() => onMoveHunk(target)}>
+          <Button variant="outline" size="sm" aria-label={`Move hunk into ${target}`} disabled={legacyRouteDisabled(target)} onClick={() => { if (!legacyRouteDisabled(target)) onMoveHunk(target); }}>
             Move hunk {arrow}
           </Button>
         </TooltipTrigger>
