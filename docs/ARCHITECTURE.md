@@ -40,15 +40,16 @@ src-tauri/src/
   archive_access.rs       validated/canonical opens and nested-entry resolution
   commands/
     app.rs                path validation, platform hints, pending paths, fonts
-    archive.rs            archive/diff/nested/View-source lifecycle
-    preview.rs            reads, decompile, bytecode and engine selection
+    archive.rs            archive/diff/nested/View-source lifecycle and atomic pair opens
+    preview.rs            entry reads, UTF-8 text-file reads, decompile, bytecode and engine selection
     merge.rs              stage, unstage, commit and signed-save boundary
+    temp_merge.rs         thin Tauri adapters for temporary-target lifecycle commands
     search.rs             T2/T3 search, cancellation and sibling prefetch
   sidecar_process.rs      Java process, protocol, cache, timeout and retry
   system_fonts.rs         blocking native font enumeration
 ```
 
-`lib.rs` preserves the ordered 30-command handler list and constructs the
+`lib.rs` preserves the ordered 38-command handler list and constructs the
 existing single `Arc<Mutex<AppState>>`. `state.rs` stores archives, per-source
 nested caches, View sources, merge plans, sidecar workers, cancellation
 generations, engine selection, and pending open paths. Command modules own
@@ -63,7 +64,7 @@ src/
   app/App.tsx             composition and cross-feature lifecycle wiring
   ipc/
     types.ts              exact Rust wire DTOs and event payloads
-    commands.ts           typed wrappers for the 30 stable commands
+    commands.ts           typed wrappers for the 38 stable commands
     events.ts             typed subscriptions and unlisten ownership
     platform.ts           dialog/window/drop/asset adapters
     updater.ts            app/updater/process/opener adapters
@@ -71,17 +72,23 @@ src/
     shell/                mode, navigation, history, onboarding and status
     sources/              source inputs, View state/tabs and file tree
     workspace/            Monaco runtime, models, tab LRU and previews
-    free-text/            drafts, readonly results and bounded history
+    free-text/            feature-owned drafts, file-drop loading, readonly results and bounded history
     search/               search controls, projection and result state
-    merge/                generation-guarded staging and save confirmation
+    merge/                generation-guarded staging, temporary-target UI flow, and save confirmation
     preferences/          preferences, fonts and updater state/UI
   components/ui/          approved shared shadcn/Radix primitives only
   lib/                    pure React/Monaco/Tauri/feature-free utilities
 ```
 
 `src/app/App.tsx` is the single composition root, not a second service layer.
-Workspace and merge side effects live in `useWorkspaceController` and
-`useMergeController`; feature components render typed state and emit intent.
+Workspace and merge side effects live in `useWorkspaceController`,
+`useMergeController`, and `useTempMergeController`; feature components render
+typed state and emit intent.
+`useWorkspaceController` keeps Compare and View workspace projections separate,
+so source tabs, entry tabs, selection, and previews do not leak between those
+workspaces. `useFreeTextController` owns Free text drafts, temporary history,
+and active-result selection independently, allowing mode changes to preserve
+each in-session workspace context.
 
 ## Completed Ownership Mapping
 
@@ -95,6 +102,7 @@ Workspace and merge side effects live in `useWorkspaceController` and
 | free-text/history/search/preferences/source/tab helpers under generic folders | their matching `src/features/*` owner |
 | builder, state, commands, events and menu in `src-tauri/src/main.rs` | `lib.rs`, `state.rs`, `commands/*`, `events.rs`, and `menu.rs` |
 | JVM process/cache mixed with desktop orchestration | `src-tauri/src/sidecar_process.rs` |
+| temporary target session, filesystem lifecycle, and recovery mixed with general merge handling | `src-tauri/src/state.rs`; `commands/temp_merge.rs` is the thin Tauri adapter and `useTempMergeController.ts` owns frontend intent/state only |
 
 ## Dependency Directions
 
@@ -138,7 +146,10 @@ deliberate projections after the IPC boundary and are not wire declarations.
 
 The command names, handler order, argument keys, event names, camelCase fields,
 enum spelling, null/omission behavior, and error strings are compatibility
-contracts. Rust serialization fixtures and frontend facade tests lock them.
+contracts. `open_compare_sources(leftPath, rightPath)` opens and installs a
+Compare pair as one backend operation; `read_text_file(path)` canonicalizes and
+accepts only regular UTF-8 text files for Free text drops. Rust serialization
+fixtures and frontend facade tests lock them.
 
 ## Executable Architecture Guard
 
@@ -160,8 +171,19 @@ packaging where supported.
 
 - `NestedArchiveCache` remains scoped per left/right/View source and resets on
   source replacement or successful commit; `!/` lookup stays lazy.
+- A two-source Compare drop uses `open_compare_sources` so both sides and their
+  initial diff install together; a Free text drop uses `read_text_file` and
+  changes only Free text drafts.
 - `MergePlan` remains the only write path. Original entry bytes are staged and
   saved atomically with optional backup; signed targets require confirmation.
+- `state.rs` owns the temporary merge session, filesystem creation/apply/save/
+  discard operations, and recovery. `commands/temp_merge.rs` only adapts the
+  stable Tauri commands; `useTempMergeController` owns frontend intent/state.
+  `create_temp_target` begins from an empty archive or copies the selected
+  source; each replacement source follows preview/conflict decisions/stage,
+  then `apply_temp_merge`. A conflict decision of `skip` leaves the target
+  entry's original bytes unchanged. `save_temp_target_as` exports explicitly,
+  while `discard_temp_target` removes only the owned temporary workspace.
 - Java 17 resource lookup, framed JSON, the 30-second watchdog, one
   restart/retry, 128 MiB shared response cache, warm start, and separate
   interactive/prefetch/deep-search workers remain unchanged.
@@ -169,7 +191,8 @@ packaging where supported.
   `RunEvent::Opened`, and store-before-emit pending path order remain unchanged.
 - Monaco models/workers, ten-tab LRU, staged buffers, diff options, installed
   font fallback/remeasure, and read-only editability boundaries remain
-  feature-owned.
+  feature-owned. Compare, View, and Free text retain independent in-session
+  workspace state across mode changes.
 - Persistence keys remain `lcdiff.history`, `lcdiff.freeTextHistory.v1` with a
   20-entry cap, and `lcdiff.onboarding.v1.<mode>`.
 

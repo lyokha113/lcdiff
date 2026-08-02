@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_UI_PREFERENCES } from "@/features/preferences/preferences";
 import { FREE_TEXT_HISTORY_STORAGE_KEY } from "./free-text-history";
 import { FreeTextWorkspace } from "./FreeTextWorkspace";
+import { useFreeTextController } from "./useFreeTextController";
 
 const monacoMockState = vi.hoisted(() => ({
   diffOptions: undefined as Record<string, unknown> | undefined,
@@ -38,9 +39,36 @@ vi.mock("@monaco-editor/react", () => ({
   },
 }));
 
-function renderWorkspace(overrides: Partial<ComponentProps<typeof FreeTextWorkspace>> = {}) {
-  return render(
+type WorkspaceHarnessProps = Pick<
+  ComponentProps<typeof FreeTextWorkspace>,
+  "preferences" | "effectiveColorPattern" | "ignoreTrimWhitespace"
+> & {
+  onMessage: (message: string) => void;
+};
+
+function WorkspaceHarness(props: WorkspaceHarnessProps) {
+  const controller = useFreeTextController(props.onMessage);
+  return (
     <FreeTextWorkspace
+      preferences={props.preferences}
+      effectiveColorPattern={props.effectiveColorPattern}
+      ignoreTrimWhitespace={props.ignoreTrimWhitespace}
+      draftLeft={controller.draftLeft}
+      draftRight={controller.draftRight}
+      history={controller.history}
+      activeResultId={controller.activeResultId}
+      onDraftChange={controller.setDraft}
+      onClearDrafts={controller.clearDrafts}
+      onConfirmDiff={controller.confirmDiff}
+      onClearHistory={controller.clearHistory}
+      onSelectResult={controller.selectResult}
+    />
+  );
+}
+
+function renderWorkspace(overrides: Partial<WorkspaceHarnessProps> = {}) {
+  return render(
+    <WorkspaceHarness
       preferences={DEFAULT_UI_PREFERENCES}
       effectiveColorPattern="dark"
       ignoreTrimWhitespace={false}
@@ -87,6 +115,20 @@ describe("Free text workspace", () => {
 
     expect(screen.getByTestId("diff-original")).toHaveTextContent("first");
     expect(screen.getByTestId("diff-modified")).toHaveTextContent("second");
+  });
+
+  it("keeps both drafts when clearing is canceled", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    renderWorkspace();
+
+    await user.type(screen.getByLabelText("Left free text input"), "left draft");
+    await user.type(screen.getByLabelText("Right free text input"), "right draft");
+    await user.click(screen.getByRole("button", { name: "Clear drafts" }));
+
+    expect(confirm).toHaveBeenCalledWith("Clear both free text drafts?");
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("left draft");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("right draft");
   });
 
   it("persists confirmed Free text results across remount and clears history", async () => {

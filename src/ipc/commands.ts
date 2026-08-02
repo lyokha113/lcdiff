@@ -3,6 +3,7 @@ import type {
   ArchiveDiff,
   ArchiveSummary,
   CommitResult,
+  CompareSourcesResult,
   Engine,
   EntryPreview,
   PlatformHints,
@@ -10,6 +11,12 @@ import type {
   SearchOptions,
   Side,
   SystemFont,
+  TempMergeConflictPreview,
+  TempMergeDecision,
+  TempMergeSessionSummary,
+  TempTargetCreation,
+  TempTargetDiscardOutcome,
+  TextFileContent,
   ViewSourceSummary,
 } from "@/ipc/types";
 
@@ -27,6 +34,45 @@ export function listSystemFonts(): Promise<SystemFont[]> {
 
 export function openArchive(path: string, side: Side): Promise<ArchiveSummary> {
   return invoke("open_archive", { path, side });
+}
+
+export function createTempTarget(
+  sourceSide: Side,
+  creation: TempTargetCreation,
+): Promise<TempMergeSessionSummary> {
+  return invoke("create_temp_target", { sourceSide, creation });
+}
+
+export function previewMergeAllConflicts(
+  sourceSide: Side,
+): Promise<TempMergeConflictPreview> {
+  return invoke("preview_merge_all_conflicts", { sourceSide });
+}
+
+export function stageTempMergeAll(
+  sourceSide: Side,
+  decisions: TempMergeDecision[],
+): Promise<void> {
+  return invoke("stage_temp_merge_all", { sourceSide, decisions });
+}
+
+export function applyTempMerge(): Promise<TempMergeSessionSummary> {
+  return invoke("apply_temp_merge");
+}
+
+export function saveTempTargetAs(path: string): Promise<TempMergeSessionSummary> {
+  return invoke("save_temp_target_as", { path });
+}
+
+export function discardTempTarget(): Promise<TempTargetDiscardOutcome> {
+  return invoke("discard_temp_target");
+}
+
+export function openCompareSources(
+  leftPath: string,
+  rightPath: string,
+): Promise<CompareSourcesResult> {
+  return invoke("open_compare_sources", { leftPath, rightPath });
 }
 
 export function computeDiff(): Promise<ArchiveDiff> {
@@ -47,6 +93,10 @@ export function listViewSources(): Promise<ViewSourceSummary[]> {
 
 export function readEntry(side: Side, entryPath: string): Promise<EntryPreview> {
   return invoke("read_entry", { side, entryPath });
+}
+
+export function readTextFile(path: string): Promise<TextFileContent> {
+  return invoke("read_text_file", { path });
 }
 
 export function readViewEntry(sourceId: string, entryPath: string): Promise<EntryPreview> {

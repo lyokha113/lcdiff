@@ -5,9 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { editorFontFamilyForCss, type EffectiveColorPattern, type UiPreferences } from "@/features/preferences/preferences";
 import type { ComparePair, ContentFilter, EntryPreview, Mode, Side } from "@/lib/types";
+import type { TempMergeSessionSummary } from "@/ipc/types";
 
 export function pairHasClass(pair?: ComparePair) {
   return pair?.left?.kind === "class" || pair?.right?.kind === "class";
+}
+
+export interface DiffEditableSides {
+  left: boolean;
+  right: boolean;
 }
 
 interface DiffViewProps {
@@ -28,11 +34,15 @@ interface DiffViewProps {
   onEditBlur: (content: string) => void;
   fileMerge: boolean;
   entryCopyEnabled?: boolean;
-  diffEditable?: boolean;
+  diffEditableSides: DiffEditableSides;
   hunkMerge: boolean;
   onDiffEditEither: (side: Side, content: string) => void;
   onTakeAll: (target: Side) => void;
   onMoveHunk: (target: Side) => void;
+  tempSession?: TempMergeSessionSummary;
+  tempBusy?: boolean;
+  onCopyToTemp?: (sourceSide: Side) => void;
+  onMergeAllToTemp?: (sourceSide: Side) => void;
   diffNavigator?: DiffNavigatorProps;
 }
 
@@ -59,13 +69,13 @@ export function DiffView({
   contentFilter, onContentFilterChange,
   onCopy, onEditorMount, onDiffMount,
   editable, editValue, onEditChange, onEditBlur,
-  fileMerge, entryCopyEnabled = true, diffEditable, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  fileMerge, entryCopyEnabled = true, diffEditableSides, hunkMerge, onDiffEditEither, onTakeAll, onMoveHunk,
+  tempSession, tempBusy = false, onCopyToTemp, onMergeAllToTemp,
   diffNavigator = emptyDiffNavigator,
 }: DiffViewProps) {
-  const resolvedDiffEditable = diffEditable ?? hunkMerge;
-  const diffEditableRef = useRef(resolvedDiffEditable);
+  const editableSidesRef = useRef(diffEditableSides);
   const onDiffEditEitherRef = useRef(onDiffEditEither);
-  diffEditableRef.current = resolvedDiffEditable;
+  editableSidesRef.current = diffEditableSides;
   onDiffEditEitherRef.current = onDiffEditEither;
 
   const monacoTheme = effectiveColorPattern === "light" ? "light" : "vs-dark";
@@ -81,6 +91,9 @@ export function DiffView({
     lineNumbers: preferences.editor.lineNumbers,
     automaticLayout: true,
   };
+  const legacyRouteDisabled = (target: Side) => Boolean(
+    tempSession && (tempBusy || tempSession.targetSide !== target),
+  );
 
   const renderCopyButton = (target: Side) => {
     const source: Side = target === "left" ? "right" : "left";
@@ -98,8 +111,8 @@ export function DiffView({
               variant="outline"
               size="sm"
               aria-label={`Copy file to ${target}`}
-              disabled={!entryCopyEnabled || !sourceEntry || sourceEntry.kind === "directory"}
-              onClick={() => onCopy(source, target)}
+              disabled={!entryCopyEnabled || !sourceEntry || sourceEntry.kind === "directory" || legacyRouteDisabled(target)}
+              onClick={() => { if (!legacyRouteDisabled(target)) onCopy(source, target); }}
             >
               Copy file {arrow}
             </Button>
@@ -116,7 +129,7 @@ export function DiffView({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`Take all into ${target}`} onClick={() => onTakeAll(target)}>
+          <Button variant="outline" size="sm" aria-label={`Take all into ${target}`} disabled={legacyRouteDisabled(target)} onClick={() => { if (!legacyRouteDisabled(target)) onTakeAll(target); }}>
             Take all {arrow}
           </Button>
         </TooltipTrigger>
@@ -131,7 +144,7 @@ export function DiffView({
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="outline" size="sm" aria-label={`Move hunk into ${target}`} onClick={() => onMoveHunk(target)}>
+          <Button variant="outline" size="sm" aria-label={`Move hunk into ${target}`} disabled={legacyRouteDisabled(target)} onClick={() => { if (!legacyRouteDisabled(target)) onMoveHunk(target); }}>
             Move hunk {arrow}
           </Button>
         </TooltipTrigger>
@@ -180,6 +193,34 @@ export function DiffView({
     );
   };
 
+  const renderTempMergeActions = () => {
+    if (mode !== "compare" || !tempSession) return null;
+    const sourceSide: Side = tempSession.targetSide === "left" ? "right" : "left";
+    const sourceEntry = selected?.[sourceSide];
+    const canCopySelected = !tempBusy && !!sourceEntry && sourceEntry.kind !== "directory";
+
+    return (
+      <div className="temp-merge-actions" role="group" aria-label="Temporary merge actions">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!canCopySelected}
+          onClick={() => onCopyToTemp?.(sourceSide)}
+        >
+          Copy selected -&gt; temp
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={tempBusy}
+          onClick={() => onMergeAllToTemp?.(sourceSide)}
+        >
+          Merge all -&gt; temp
+        </Button>
+      </div>
+    );
+  };
+
   return (
     <div className="editor-panel">
       {mode === "compare" && (
@@ -190,6 +231,7 @@ export function DiffView({
             {hunkMerge && renderMoveHunkButton("left")}
           </div>
           <div className="diff-toolbar-center">
+            {renderTempMergeActions()}
             {renderContentLineFilter()}
             {renderDiffNavigator()}
           </div>
@@ -211,15 +253,19 @@ export function DiffView({
         {mode === "compare" || mode === "text" ? (
           <DiffEditor
             height="100%"
+            originalModelPath="inmemory://lcdiff/compare/original"
+            modifiedModelPath="inmemory://lcdiff/compare/modified"
+            keepCurrentOriginalModel
+            keepCurrentModifiedModel
             language={preview.left?.language ?? preview.right?.language ?? "plaintext"}
             original={preview.left?.content ?? ""}
             modified={preview.right?.content ?? ""}
             theme={monacoTheme}
             options={{
               ...editorOptions,
-              readOnly: !resolvedDiffEditable,
-              originalEditable: resolvedDiffEditable,
-              renderMarginRevertIcon: resolvedDiffEditable,
+              originalEditable: diffEditableSides.left,
+              readOnly: !diffEditableSides.right,
+              renderMarginRevertIcon: hunkMerge,
               renderSideBySide: true,
               useInlineViewWhenSpaceIsLimited: false,
               ignoreTrimWhitespace,
@@ -233,12 +279,14 @@ export function DiffView({
               const orig = editor.getOriginalEditor();
               const mod = editor.getModifiedEditor();
               const d1 = orig.onDidChangeModelContent((event) => {
-                if (event.isFlush) return;
-                if (diffEditableRef.current) onDiffEditEitherRef.current("left", orig.getValue());
+                if (!event.isFlush && editableSidesRef.current.left) {
+                  onDiffEditEitherRef.current("left", orig.getValue());
+                }
               });
               const d2 = mod.onDidChangeModelContent((event) => {
-                if (event.isFlush) return;
-                if (diffEditableRef.current) onDiffEditEitherRef.current("right", mod.getValue());
+                if (!event.isFlush && editableSidesRef.current.right) {
+                  onDiffEditEitherRef.current("right", mod.getValue());
+                }
               });
               editor.onDidDispose(() => { d1.dispose(); d2.dispose(); });
             }}
@@ -250,7 +298,10 @@ export function DiffView({
             value={editable ? editValue : (preview.left?.content ?? "")}
             theme={monacoTheme}
             options={{ ...editorOptions, readOnly: !editable }}
-            onChange={(value) => editable && onEditChange(value)}
+            onChange={(value, event) => {
+              if (!editable || event.isFlush) return;
+              onEditChange(value);
+            }}
             onMount={(editor, monaco) => {
               onEditorMount(editor, monaco);
               editor.onDidBlurEditorText(() => editable && onEditBlur(editor.getValue()));

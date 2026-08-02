@@ -34,14 +34,16 @@ let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
 let dragDropHandler: ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) | undefined;
+let closeRequestHandler: ((event: { preventDefault(): void }) => void) | undefined;
+const destroyWindow = vi.fn(async () => undefined);
 const viewRootEntries: Record<string, string[]> = {
-  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json"],
+  "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json", "alpha-two.json"],
   "view:/tmp/beta.jar": ["beta.json"],
   "view:/tmp/from-finder.jar": ["finder.json"],
 };
-function fileSummary(side: "left" | "right") {
+function fileSummary(side: "left" | "right", path?: string) {
   return {
-    path: side === "left" ? "/tmp/config.json" : "/tmp/other/config.json",
+    path: path ?? (side === "left" ? "/tmp/config.json" : "/tmp/other/config.json"),
     metadata: { sourceKind: summarySourceKind, signed: false, multiRelease: false, zip64: false },
     entries: [FILE_ENTRY],
   };
@@ -70,6 +72,15 @@ const onePairDiff = {
   ],
 };
 
+const tempSession = {
+  id: "temp-merge-1",
+  targetSide: "right" as const,
+  workingName: "lcdiff-working.jar",
+  entryCount: 1,
+  appliedSourceCount: 0,
+  exportedPath: null as string | null,
+};
+
 function entryPreview(side: "left" | "right") {
   return {
     path: "config.json",
@@ -77,6 +88,78 @@ function entryPreview(side: "left" | "right") {
     language: "json",
     details: null,
     content: side === "left" ? '{\n  "v": 1\n}\n' : '{\n  "v": 2\n}\n',
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function sourceMarker(path: string) {
+  return `from-${(path.split("/").pop() ?? path).replace(/[^a-z0-9]+/gi, "-")}.txt`;
+}
+
+function sourceAwareDiff(path: string) {
+  const marker = sourceMarker(path);
+  const entry = { ...FILE_ENTRY, path: marker };
+  return {
+    pairs: [{ path: marker, status: "different" as const, left: entry, right: entry }],
+  };
+}
+
+function installSourceAwareTempFixture(targetSide: "left" | "right" = "right") {
+  const sourceSide = targetSide === "left" ? "right" : "left";
+  const paths: Partial<Record<"left" | "right", string>> = {};
+  const queuedDiffs: Array<Promise<typeof onePairDiff>> = [];
+  let computeCount = 0;
+
+  invoke.mockImplementation(async (cmd, args) => {
+    if (cmd === "open_archive") {
+      const side = args?.side as "left" | "right";
+      const path = args?.path as string;
+      paths[side] = path;
+      return {
+        path,
+        metadata: { sourceKind: "archive" as const, signed: false, multiRelease: false, zip64: false },
+        entries: [{ ...FILE_ENTRY, path: sourceMarker(path) }],
+      };
+    }
+    if (cmd === "create_temp_target") {
+      paths[targetSide] = tempSession.workingName;
+      return { ...tempSession, targetSide };
+    }
+    if (cmd === "compute_diff") {
+      computeCount += 1;
+      const queued = queuedDiffs.shift();
+      if (queued) return queued;
+      return sourceAwareDiff(paths[sourceSide] ?? `/tmp/${sourceSide}-missing.jar`);
+    }
+    if (cmd === "read_entry") {
+      const side = args?.side as "left" | "right";
+      return { ...entryPreview(side), path: args?.entryPath as string };
+    }
+    if (cmd === "apply_temp_merge") {
+      return { ...tempSession, targetSide, entryCount: 2, appliedSourceCount: 1 };
+    }
+    if (cmd === "save_temp_target_as") {
+      return { ...tempSession, targetSide, exportedPath: args?.path as string };
+    }
+    if (cmd === "discard_temp_target") {
+      delete paths[targetSide];
+      return { kind: "discarded" as const };
+    }
+    return defaultInvoke(cmd, args);
+  });
+
+  return {
+    computeCount: () => computeCount,
+    deferNextDiff: (promise: Promise<typeof onePairDiff>) => queuedDiffs.push(promise),
   };
 }
 
@@ -108,9 +191,19 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
     case "validate_path":
       return (args?.raw as string) ?? "/tmp/config.json";
     case "open_archive":
-      return fileSummary(args?.side as "left" | "right");
+      return fileSummary(args?.side as "left" | "right", args?.path as string);
+    case "open_compare_sources":
+      return {
+        left: fileSummary("left", args?.leftPath as string),
+        right: fileSummary("right", args?.rightPath as string),
+        diff: onePairDiff,
+      };
     case "open_view_source":
       return viewSummary(args?.path as string);
+    case "read_text_file": {
+      const path = args?.path as string;
+      return { path, content: `contents:${path}` };
+    }
     case "list_view_sources":
       return [];
     case "compute_diff":
@@ -128,6 +221,18 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
     }
     case "read_entry":
       return entryPreview(args?.side as "left" | "right");
+    case "create_temp_target":
+      return tempSession;
+    case "preview_merge_all_conflicts":
+      return { newEntries: ["new.txt"], conflicts: ["config.json"] };
+    case "stage_temp_merge_all":
+      return undefined;
+    case "apply_temp_merge":
+      return { ...tempSession, entryCount: 2, appliedSourceCount: 1 };
+    case "save_temp_target_as":
+      return { ...tempSession, exportedPath: args?.path as string };
+    case "discard_temp_target":
+      return { kind: "discarded" as const };
     case "read_view_entry": {
       const entryPath = args?.entryPath as string;
       return {
@@ -192,8 +297,11 @@ vi.mock("@tauri-apps/api/window", () => ({
       dragDropHandler = handler;
       return vi.fn();
     }),
-    onCloseRequested: vi.fn(async () => vi.fn()),
-    destroy: vi.fn(),
+    onCloseRequested: vi.fn(async (handler: typeof closeRequestHandler) => {
+      closeRequestHandler = handler;
+      return vi.fn();
+    }),
+    destroy: destroyWindow,
   }),
 }));
 const listen = vi.fn((eventName: string, handler: unknown) => {
@@ -246,7 +354,11 @@ const DIRECTORY_PICKER_OPTIONS: OpenDialogOptions = {
 // chooseFile (plugin-dialog `open`) returns a fixed path; openPath then drives
 // validate_path + open_archive.
 const chooseFile = vi.fn(async (_options?: OpenDialogOptions): Promise<string | null> => "/tmp/config.json");
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (options?: OpenDialogOptions) => chooseFile(options) }));
+const chooseSave = vi.fn(async (_options?: unknown): Promise<string | null> => "/tmp/merged.jar");
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (options?: OpenDialogOptions) => chooseFile(options),
+  save: (options?: unknown) => chooseSave(options),
+}));
 
 const updateClientMocks = vi.hoisted(() => {
   const releaseUrl = "https://github.com/lyokha113/lcdiff/releases/latest";
@@ -307,13 +419,33 @@ const MODIFY_LINE_2 = {
 let lineChanges: Array<Record<string, number>> = [MODIFY_LINE_2];
 let diffEditorMounted = false;
 let diffEditorProps: { original?: string; modified?: string; options?: { readOnly?: boolean; originalEditable?: boolean } } = {};
+type DiffModelChangeEvent = { isFlush: boolean };
+const diffModelChangeHandlers: Partial<
+  Record<"left" | "right", (event: DiffModelChangeEvent) => void>
+> = {};
+type ViewEditorChangeEvent = { isFlush: boolean };
+let viewEditorProps: {
+  value?: string;
+  onChange?: (value: string | undefined, event: ViewEditorChangeEvent) => void;
+  options?: { ariaLabel?: string; readOnly?: boolean };
+} = {};
 function makeFakeDiffEditor() {
   // App's search-highlight effect calls deltaDecorations/revealLineInCenter on
   // each sub-editor whenever preview changes, so the fakes must expose them.
   const subEditor = (buf: "left" | "right", set: typeof setOriginal, reveal: typeof revealOriginal) => ({
     getValue: () => buffers[buf],
     setValue: set,
-    onDidChangeModelContent: vi.fn(() => ({ dispose: vi.fn() })),
+    onDidChangeModelContent: vi.fn((handler: (event: DiffModelChangeEvent) => void) => {
+      diffModelChangeHandlers[buf] = handler;
+      return {
+        dispose: vi.fn(() => {
+          if (diffModelChangeHandlers[buf] === handler) {
+            delete diffModelChangeHandlers[buf];
+          }
+        }),
+      };
+    }),
+    onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
     onDidChangeCursorPosition: vi.fn(() => ({ dispose: vi.fn() })),
     onDidFocusEditorText: vi.fn((handler: () => void) => {
       if (buf === "left") focusOriginalEditor = handler;
@@ -348,19 +480,18 @@ vi.mock("@/features/workspace/monaco-runtime", () => ({}));
 
 vi.mock("@monaco-editor/react", () => ({
   __esModule: true,
-  default: (props: {
-    value?: string;
-    onChange?: (value: string | undefined) => void;
-    options?: { ariaLabel?: string; readOnly?: boolean };
-  }) => (
-    <textarea
-      data-testid="editor"
-      aria-label={props.options?.ariaLabel}
-      readOnly={props.options?.readOnly}
-      value={props.value}
-      onChange={(event) => props.onChange?.(event.target.value)}
-    />
-  ),
+  default: (props: typeof viewEditorProps) => {
+    viewEditorProps = props;
+    return (
+      <textarea
+        data-testid="editor"
+        aria-label={props.options?.ariaLabel}
+        readOnly={props.options?.readOnly}
+        value={props.value}
+        onChange={(event) => props.onChange?.(event.target.value, { isFlush: false })}
+      />
+    );
+  },
   // DiffEditor fires onMount with a fake editor + monaco on render so App's
   // handleDiffMount captures it into diffEditorRef.
   DiffEditor: (props: {
@@ -426,6 +557,29 @@ async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 }
 
+async function openLeftAndCreateRightTemp(user: ReturnType<typeof userEvent.setup>) {
+  summarySourceKind = "archive";
+  await openCompareWorkspace(user);
+  await user.click(screen.getByLabelText("Change left source"));
+  await user.click(await screen.findByText("Browse file"));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+    "open_archive",
+    { path: "/tmp/config.json", side: "left" },
+  ));
+
+  await user.click(screen.getByLabelText("Change right source"));
+  await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+  await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+  await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+  await user.click(screen.getByRole("button", { name: "Create temp target" }));
+
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+    "create_temp_target",
+    { sourceSide: "left", creation: { kind: "copyCurrent" } },
+  ));
+  expect(await screen.findByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+}
+
 async function switchMode(mode: "View" | "Compare" | "Text") {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: `${mode} mode` }));
@@ -440,6 +594,21 @@ async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
   await user.click(browseButton);
 }
 
+async function clickBrowseFileForSide(
+  user: ReturnType<typeof userEvent.setup>,
+  side: "left" | "right",
+) {
+  const label = `${side === "left" ? "Left" : "Right"} File/Folder path`;
+  let input = screen.queryByLabelText(label);
+  if (!input) {
+    await user.click(screen.getByLabelText(`Change ${side} source`));
+    input = await screen.findByLabelText(label);
+  }
+  const picker = input.closest(".source-picker");
+  if (!(picker instanceof HTMLElement)) throw new Error(`No ${side} source picker is available`);
+  await user.click(within(picker).getByRole("button", { name: /Browse file/i }));
+}
+
 describe("App file-merge wiring", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -450,12 +619,18 @@ describe("App file-merge wiring", () => {
     invoke.mockImplementation(defaultInvoke);
     chooseFile.mockReset();
     chooseFile.mockImplementation(async () => "/tmp/config.json");
+    chooseSave.mockReset();
+    chooseSave.mockImplementation(async () => "/tmp/merged.jar");
+    destroyWindow.mockClear();
     setOriginal.mockClear();
     setModified.mockClear();
     revealOriginal.mockClear();
     revealModified.mockClear();
     focusOriginalEditor = undefined;
     diffEditorProps = {};
+    viewEditorProps = {};
+    delete diffModelChangeHandlers.left;
+    delete diffModelChangeHandlers.right;
     buffers.left = LEFT_TEXT;
     buffers.right = RIGHT_TEXT;
     lineChanges = [MODIFY_LINE_2];
@@ -479,6 +654,7 @@ describe("App file-merge wiring", () => {
     appActionHandler = undefined;
     osOpenPathsHandler = undefined;
     dragDropHandler = undefined;
+    closeRequestHandler = undefined;
     listen.mockClear();
     Object.defineProperty(Element.prototype, "hasPointerCapture", {
       configurable: true,
@@ -789,6 +965,250 @@ describe("App file-merge wiring", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
   });
 
+  it("preserves Free text drafts and selected history result across mode switches", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+
+    await user.type(screen.getByLabelText("Left free text input"), "old");
+    await user.type(screen.getByLabelText("Right free text input"), "first right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.clear(screen.getByLabelText("Left free text input"));
+    await user.clear(screen.getByLabelText("Right free text input"));
+    await user.type(screen.getByLabelText("Left free text input"), "newer left");
+    await user.type(screen.getByLabelText("Right free text input"), "newer right");
+    await user.click(screen.getByRole("button", { name: "Compare free text" }));
+    await user.click(screen.getAllByRole("button", { name: /characters/ })[1]);
+
+    await switchMode("Compare");
+    await switchMode("Text");
+
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("newer left");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("newer right");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("old");
+    expect(screen.getByTestId("diff-modified")).toHaveTextContent("first right");
+  });
+
+  it("preserves independent Compare, View, and Free text workspaces through a full mode cycle", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/left.jar")
+      .mockResolvedValueOnce("/tmp/right.jar")
+      .mockResolvedValueOnce("/tmp/alpha.jar");
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_archive") {
+        return Promise.resolve({
+          ...fileSummary(args?.side as "left" | "right"),
+          path: args?.path as string,
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    const compareCells = await screen.findAllByText("config.json");
+    await user.click(compareCells.find((cell) => cell.closest("button.tree-file"))!);
+    expect(await screen.findByRole("tab", { name: /config\.json/ })).toBeInTheDocument();
+
+    await switchMode("View");
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    expect(await screen.findByRole("tab", { name: /alpha\.json/ })).toBeInTheDocument();
+
+    await switchMode("Text");
+    await user.type(screen.getByLabelText("Left free text input"), "left draft");
+    await user.type(screen.getByLabelText("Right free text input"), "right draft");
+
+    await switchMode("Compare");
+    expect(screen.getAllByText(/left\.jar/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
+
+    await switchMode("View");
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /alpha\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("editor")).toHaveValue("view:/tmp/alpha.jar:alpha.json");
+
+    await switchMode("Text");
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("left draft");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("right draft");
+  });
+
+  it("preserves manually expanded Compare folders across a mode cycle", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "manual/child.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "manual/child.json" },
+              right: { ...FILE_ENTRY, path: "manual/child.json" },
+            },
+          ],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(screen.getAllByText("manual")[0].closest("button")!);
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+
+    await switchMode("Text");
+    await switchMode("Compare");
+
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+    expect(screen.getAllByText("manual")[0].closest("button"))
+      .toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("preserves Expand-all per mode without expanding the other mode", async () => {
+    chooseFile
+      .mockResolvedValueOnce("/tmp/config.json")
+      .mockResolvedValueOnce("/tmp/config.json")
+      .mockResolvedValueOnce("/tmp/alpha.jar");
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "compare-only/child.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "compare-only/child.json" },
+              right: { ...FILE_ENTRY, path: "compare-only/child.json" },
+            },
+          ],
+        });
+      }
+      if (
+        cmd === "compute_view_nested_entries" &&
+        args?.nestedPath === ""
+      ) {
+        return Promise.resolve({
+          pairs: [{
+            path: "view-only/entry.json",
+            status: "onlyLeft" as const,
+            left: { path: "view-only/entry.json", kind: "text" as const },
+          }],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(screen.getByRole("button", { name: "Expand all folders" }));
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+
+    await switchMode("View");
+    await browseViewSource(user);
+    expect(screen.queryByText("entry.json")).not.toBeInTheDocument();
+
+    await switchMode("Compare");
+    expect(screen.getAllByText("child.json")).toHaveLength(2);
+    await switchMode("View");
+    expect(screen.queryByText("entry.json")).not.toBeInTheDocument();
+  });
+
+  it("ignores a pending Compare preview after switching to Free text", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview",
+      });
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview")).not.toBeInTheDocument();
+  });
+
+  it("ignores a pending Compare preview after switching to View", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("View");
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview",
+      });
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview")).not.toBeInTheDocument();
+  });
+
+  it("keeps retained Compare sources inert while Free text is active", async () => {
+    summarySourceKind = "archive";
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    const refresh = screen.getByRole("button", { name: "Refresh sources" });
+    expect(refresh).toBeDisabled();
+    invoke.mockClear();
+
+    fireEvent.keyDown(window, { key: "r", ...cmdOrCtrl() });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "compute_diff")).toBe(false);
+  });
+
+  it("keeps Free text tab shortcuts inert without closing retained Compare tabs", async () => {
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+
+    await switchMode("Text");
+    fireEvent.keyDown(window, { key: "Tab", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "w", ...cmdOrCtrl() });
+    await switchMode("Compare");
+
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
+  });
+
   it("closes Compare search and makes search inert when switching to Free text", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -822,7 +1242,409 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByLabelText("Toggle search")).not.toBeInTheDocument();
   });
 
-  it("ignores file picker, native open, and drag/drop source opens in Free text mode", async () => {
+  it("opens exactly two dropped Compare sources through the atomic pair command", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/left.jar", "/tmp/right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(invoke).toHaveBeenCalledWith("open_compare_sources", {
+      leftPath: "/tmp/left.jar",
+      rightPath: "/tmp/right.jar",
+    });
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("preserves Compare sources when the atomic dropped pair fails", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/existing.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Change left source" })).toHaveTextContent("existing.jar"),
+    );
+
+    invoke.mockClear();
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "open_compare_sources") throw new Error("pair failed");
+      return defaultInvoke(cmd, args);
+    });
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/new-left.jar", "/tmp/new-right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText("Error: pair failed")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Change left source" })).toHaveTextContent("existing.jar");
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
+  });
+
+  it("confirms before replacing open Compare diffs with a dropped pair", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "left" },
+    ));
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "right" },
+    ));
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/new-left.jar", "/tmp/new-right.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Close open diffs?" })).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_compare_sources")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("open_compare_sources", {
+      leftPath: "/tmp/new-left.jar",
+      rightPath: "/tmp/new-right.jar",
+    }));
+  });
+
+  it("routes one dropped Compare source by position and rejects larger drops", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/right.jar"],
+          position: { x: window.innerWidth, y: 10 },
+        },
+      });
+    });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("open_archive", { path: "/tmp/right.jar", side: "right" }),
+    );
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("compute_diff"));
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/one.jar", "/tmp/two.jar", "/tmp/three.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("opens dropped View sources sequentially and reports partial failures", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/b.jar") {
+        throw new Error("unreadable");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/a.jar", "/tmp/b.jar", "/tmp/c.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(
+        "2 opened, 1 failed — /tmp/b.jar: Error: unreadable",
+      )).toBeInTheDocument(),
+    );
+    expect(
+      invoke.mock.calls
+        .filter(([cmd]) => cmd === "open_view_source")
+        .map(([, args]) => args),
+    ).toEqual([
+      { path: "/tmp/a.jar" },
+      { path: "/tmp/b.jar" },
+      { path: "/tmp/c.jar" },
+    ]);
+    expect(screen.getByRole("tab", { name: /a\.jar/ })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /c\.jar/ })).toBeInTheDocument();
+  });
+
+  it("reports a blocked View drop without counting a staged edit as opened", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    fireEvent.change(await screen.findByTestId("editor"), {
+      target: { value: "staged View edit" },
+    });
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    invoke.mockClear();
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/blocked.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    expect(await screen.findByText(
+      "0 opened, 0 failed, 1 blocked — /tmp/blocked.jar: Save or clear unsaved changes before opening another View source.",
+    )).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_view_source")).toBe(false);
+    expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument();
+  });
+
+  it("stops a cancelled View drop instead of opening its remaining paths", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-a.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-a.jar", "/tmp/never-open.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/newest-b.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(screen.getByText("1 opened, 0 failed")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-a.jar"));
+    });
+
+    await waitFor(() =>
+      expect(invoke.mock.calls.some(([, args]) => args?.path === "/tmp/never-open.jar")).toBe(false),
+    );
+    expect(screen.getByRole("tab", { name: /newest-b\.jar/ })).toBeInTheDocument();
+    expect(screen.queryByText(/cancelled/)).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite a newer OS-open result", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    act(() => osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-os.jar"] } }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_view_source",
+      { path: "/tmp/from-os.jar" },
+    ));
+    await waitFor(() => expect(screen.getByText("Opened /tmp/from-os.jar")).toBeInTheDocument());
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    await waitFor(() => expect(screen.getByText("Opened /tmp/from-os.jar")).toBeInTheDocument());
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite Free text mode", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Text mode" }));
+    expect(screen.getByText("Free text is ready. Edit both sides, then compare when you want a result.")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
+  it("does not let a cancelled View drop overwrite Compare mode", async () => {
+    let resolveFirstOpen: ((value: ReturnType<typeof viewSummary>) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "open_view_source" && args?.path === "/tmp/slow-drop.jar") {
+        return new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/slow-drop.jar"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+    await waitFor(() => expect(resolveFirstOpen).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirstOpen?.(viewSummary("/tmp/slow-drop.jar"));
+    });
+
+    expect(screen.queryByText("0 opened, 0 failed")).not.toBeInTheDocument();
+  });
+
+  it("loads one dropped text file into its positioned Free text draft", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,
@@ -833,26 +1655,75 @@ describe("App file-merge wiring", () => {
     await waitFor(() => expect(appActionHandler).toBeDefined());
     await waitFor(() => expect(dragDropHandler).toBeDefined());
 
-    chooseFile.mockClear();
     invoke.mockClear();
 
-    fireEvent.keyDown(window, { key: "o", ...cmdOrCtrl() });
     await act(async () => {
-      appActionHandler?.({ payload: { actionId: "file.openLeftFile" } });
-      appActionHandler?.({ payload: { actionId: "file.openRightFile" } });
       dragDropHandler?.({
         payload: {
           type: "drop",
-          paths: ["/tmp/dropped.jar"],
+          paths: ["/tmp/dropped.txt"],
+          position: { x: window.innerWidth, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_text_file", { path: "/tmp/dropped.txt" }),
+    );
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/dropped.txt");
+  });
+
+  it("publishes two dropped text files atomically and preserves drafts when either read fails", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Open Text mode" }));
+    await user.type(screen.getByLabelText("Left free text input"), "kept left");
+    await user.type(screen.getByLabelText("Right free text input"), "kept right");
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/left.txt", "/tmp/right.txt"],
           position: { x: 10, y: 10 },
         },
       });
     });
 
-    expect(chooseFile).not.toHaveBeenCalled();
-    expect(invoke.mock.calls.some(([cmd]) => cmd === "validate_path")).toBe(false);
-    expect(invoke.mock.calls.some(([cmd]) => cmd === "open_archive")).toBe(false);
-    expect(screen.getByRole("main", { name: "Free text workspace" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Left free text input")).toHaveValue("contents:/tmp/left.txt"),
+    );
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/right.txt");
+
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "read_text_file" && args?.path === "/tmp/fail.txt") {
+        throw new Error("invalid UTF-8");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await act(async () => {
+      dragDropHandler?.({
+        payload: {
+          type: "drop",
+          paths: ["/tmp/replace-left.txt", "/tmp/fail.txt"],
+          position: { x: 10, y: 10 },
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(
+        "Unable to load dropped text files: Error: /tmp/fail.txt: invalid UTF-8",
+      )).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("Left free text input")).toHaveValue("contents:/tmp/left.txt");
+    expect(screen.getByLabelText("Right free text input")).toHaveValue("contents:/tmp/right.txt");
   });
 
   it("opens OS-launched files through the View workspace", async () => {
@@ -869,6 +1740,81 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "File/Folder" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Right File/Folder" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the Compare workspace when an OS-open activates View", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/alpha.jar"] } });
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /alpha\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent('"v": 1');
+  });
+
+  it("invalidates a pending Compare preview before OS-open validation resolves", async () => {
+    let resolveLeftPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    let resolveOsValidation: ((path: string) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_entry" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftPreview = resolve;
+        });
+      }
+      if (cmd === "validate_path" && args?.raw === "/tmp/from-finder.jar") {
+        return new Promise((resolve) => {
+          resolveOsValidation = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } });
+    });
+    await waitFor(() => expect(resolveOsValidation).toBeDefined());
+    await act(async () => {
+      resolveLeftPreview?.({
+        ...entryPreview("left"),
+        content: "late Compare preview during OS validation",
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOsValidation?.("/tmp/from-finder.jar");
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /from-finder\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("late Compare preview during OS validation"))
+      .not.toBeInTheDocument();
   });
 
   it("ignores OS-launched files while Free text is active", async () => {
@@ -984,6 +1930,254 @@ describe("App file-merge wiring", () => {
     expect(screen.getByRole("group", { name: "Save changes" })).toBeInTheDocument();
   });
 
+  it("does not stage a View write when Monaco flushes the old model during a source switch", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const lateOnChange = viewEditorProps.onChange;
+    const unchangedContent = viewEditorProps.value;
+
+    await browseViewSource(user);
+    await user.click(await screen.findByText("beta.json"));
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    invoke.mockClear();
+
+    await act(async () => {
+      lateOnChange?.(unchangedContent, { isFlush: true });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late unchanged View callback after its source is no longer active", async () => {
+    const user = userEvent.setup();
+    chooseFile
+      .mockResolvedValueOnce("/tmp/alpha.jar")
+      .mockResolvedValueOnce("/tmp/beta.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const lateOnChange = viewEditorProps.onChange;
+    const unchangedContent = viewEditorProps.value;
+
+    await browseViewSource(user);
+    await user.click(await screen.findByText("beta.json"));
+    expect(screen.getByRole("tab", { name: /beta\.jar/ })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByTestId("editor")).toHaveValue("view:/tmp/beta.jar:beta.json");
+    invoke.mockClear();
+
+    await act(async () => {
+      lateOnChange?.(unchangedContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor")).toHaveValue("view:/tmp/beta.jar:beta.json");
+  });
+
+  it("does not stage a stale View edit callback for another entry in the active source", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const staleOnChange = viewEditorProps.onChange;
+    const staleContent = viewEditorProps.value;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    expect(await screen.findByTestId("editor"))
+      .toHaveValue("view:/tmp/alpha.jar:alpha-two.json");
+    invoke.mockClear();
+
+    await act(async () => {
+      staleOnChange?.(staleContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("editor"))
+      .toHaveValue("view:/tmp/alpha.jar:alpha-two.json");
+  });
+
+  it("does not let a stale callback unstage legitimate work from another View entry", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    fireEvent.change(await screen.findByTestId("editor"), {
+      target: { value: "legitimate alpha edit" },
+    });
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    const staleOnChange = viewEditorProps.onChange;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    const currentContent = viewEditorProps.value;
+    expect(currentContent).toBe("view:/tmp/alpha.jar:alpha-two.json");
+    invoke.mockClear();
+
+    await act(async () => {
+      staleOnChange?.(currentContent, { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "unstage_view_write")).toBe(false);
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+  });
+
+  it("does not edit or stage the old View model while a new entry preview is loading", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    let resolveNextPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "read_view_entry" && args?.entryPath === "alpha-two.json") {
+        return new Promise((resolve) => {
+          resolveNextPreview = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const installedContent = viewEditorProps.value;
+
+    await user.click(await screen.findByText("alpha-two.json"));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("read_view_entry", {
+        sourceId: "view:/tmp/alpha.jar",
+        entryPath: "alpha-two.json",
+      }),
+    );
+    const transitionOnChange = viewEditorProps.onChange;
+    invoke.mockClear();
+
+    await act(async () => {
+      transitionOnChange?.("stale transitional edit", { isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId("editor")).toHaveValue(installedContent);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_view_write")).toBe(false);
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveNextPreview?.({
+        path: "alpha-two.json",
+        kind: "text",
+        language: "json",
+        details: null,
+        content: "loaded alpha-two",
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("editor")).toHaveValue("loaded alpha-two");
+  });
+
+  it("does not stage the previous Compare model into a newly selected entry while its preview loads", async () => {
+    const user = userEvent.setup();
+    let resolveNextPreview:
+      | ((preview: ReturnType<typeof entryPreview>) => void)
+      | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "second.json",
+              status: "different" as const,
+              left: { ...FILE_ENTRY, path: "second.json" },
+              right: { ...FILE_ENTRY, path: "second.json" },
+            },
+          ],
+        });
+      }
+      if (
+        cmd === "read_entry" &&
+        args?.entryPath === "second.json" &&
+        args?.side === "left"
+      ) {
+        return new Promise((resolve) => {
+          resolveNextPreview = resolve;
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "second.json") {
+        return Promise.resolve({
+          path: "second.json",
+          kind: "text" as const,
+          language: "json",
+          details: null,
+          content: "loaded second right",
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(diffModelChangeHandlers.left).toBeDefined());
+
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    await user.click(
+      (await screen.findAllByText("second.json"))
+        .find((cell) => cell.closest("button.tree-file"))!,
+    );
+    await waitFor(() => expect(resolveNextPreview).toBeDefined());
+    await waitFor(() =>
+      expect(diffEditorProps.options).toMatchObject({
+        originalEditable: false,
+        readOnly: true,
+      }),
+    );
+    expect(screen.getByTestId("diff-original")).toBeEmptyDOMElement();
+    invoke.mockClear();
+
+    buffers.left = "stale config edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(invoke).not.toHaveBeenCalledWith("stage_write", {
+      side: "left",
+      entryPath: "second.json",
+      content: "stale config edit",
+    });
+    expect(screen.queryByText("1 pending")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveNextPreview?.({
+        path: "second.json",
+        kind: "text",
+        language: "json",
+        details: null,
+        content: "loaded second left",
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByTestId("diff-original"))
+      .toHaveTextContent("loaded second left");
+  });
+
   it("ignores stale stage_view_write failure after a newer edit succeeds", async () => {
     const user = userEvent.setup();
     chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
@@ -1012,6 +2206,96 @@ describe("App file-merge wiring", () => {
 
     await waitFor(() => expect(screen.getByText("1 pending")).toBeInTheDocument());
     expect(screen.queryByText("Error: stale view stage failure")).not.toBeInTheDocument();
+  });
+
+  it("keeps the prior View pending projection when a replacement write fails", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    let writeCount = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "stage_view_write") {
+        writeCount += 1;
+        if (writeCount === 2) throw new Error("replacement view write failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const editor = await screen.findByTestId("editor");
+
+    fireEvent.change(editor, { target: { value: "first staged view edit" } });
+    expect(await screen.findByText("Edited alpha.json (unsaved)")).toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: "failed replacement view edit" } });
+
+    expect(await screen.findByText("Error: replacement view write failed"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getByLabelText("Save to archive (1)")).toBeEnabled();
+  });
+
+  it("keeps the prior Compare pending projection when a replacement write fails", async () => {
+    const user = userEvent.setup();
+    let writeCount = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "stage_write") {
+        writeCount += 1;
+        if (writeCount === 2) throw new Error("replacement compare write failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await driveIntoFileCompare(user);
+    await waitFor(() => expect(diffModelChangeHandlers.left).toBeDefined());
+
+    buffers.left = "first staged compare edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Edited config.json on left (unsaved)"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+
+    buffers.left = "failed replacement compare edit";
+    await act(async () => {
+      diffModelChangeHandlers.left?.({ isFlush: false });
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText("Error: replacement compare write failed"))
+      .toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getByLabelText("Save to archive (1)")).toBeEnabled();
+  });
+
+  it("surfaces a failed View unstage while retaining the pending edit", async () => {
+    const user = userEvent.setup();
+    chooseFile.mockResolvedValueOnce("/tmp/alpha.jar");
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Open View mode" }));
+    await browseViewSource(user);
+    await user.click(await screen.findByText("alpha.json"));
+    const editor = await screen.findByTestId("editor");
+    fireEvent.change(editor, { target: { value: "staged before failed unstage" } });
+    expect(await screen.findByText("Edited alpha.json (unsaved)")).toBeInTheDocument();
+
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "unstage_view_write") {
+        throw new Error("view unstage failed");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    fireEvent.change(editor, {
+      target: { value: "view:/tmp/alpha.jar:alpha.json" },
+    });
+
+    expect(await screen.findByText("Error: view unstage failed")).toBeInTheDocument();
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
   });
 
   it("unstages View edits with a bare entry path", async () => {
@@ -1092,6 +2376,29 @@ describe("App file-merge wiring", () => {
     expect(screen.getAllByText("config.json").length).toBeGreaterThan(0);
   });
 
+  it("allows editing the existing text pane in a one-sided Compare preview", async () => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [{
+            path: "config.json",
+            status: "onlyLeft" as const,
+            left: FILE_ENTRY,
+          }],
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+
+    await driveIntoFileCompare(user);
+
+    expect(diffEditorProps.options).toMatchObject({
+      originalEditable: true,
+      readOnly: true,
+    });
+  });
+
   it("ignores a stale View entry read after switching sources", async () => {
     const user = userEvent.setup();
     chooseFile
@@ -1133,7 +2440,7 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByText("stale alpha")).not.toBeInTheDocument();
   });
 
-  it("hides compare-only controls in multi-source View mode", async () => {
+  it("keeps tree expansion controls while hiding compare-only controls in multi-source View mode", async () => {
     const user = userEvent.setup();
     chooseFile
       .mockResolvedValueOnce("/tmp/alpha.jar")
@@ -1146,7 +2453,7 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByRole("main", { name: "Source workspace" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Tree filter" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Tree expansion" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Tree expansion" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into left pane" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Copy file to left")).not.toBeInTheDocument();
@@ -1361,6 +2668,139 @@ describe("App file-merge wiring", () => {
       .toHaveAttribute("aria-pressed", "true");
   });
 
+  it("ignores pending Compare disassembly after switching to View", async () => {
+    let resolveLeftBytecode: ((content: string) => void) | undefined;
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "App.class",
+              status: "different" as const,
+              left: { path: "App.class", kind: "class" as const },
+              right: { path: "App.class", kind: "class" as const },
+            },
+          ],
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "App.class") {
+        return Promise.resolve({
+          path: "App.class",
+          kind: "class" as const,
+          language: "java",
+          content: `${args?.side}: source`,
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftBytecode = resolve;
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "right") {
+        return Promise.resolve("right: bytecode");
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    const classCells = await screen.findAllByText("App.class");
+    await user.click(classCells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Show bytecode" }));
+    await waitFor(() => expect(resolveLeftBytecode).toBeDefined());
+
+    await switchMode("View");
+    await act(async () => {
+      resolveLeftBytecode?.("left: late bytecode");
+      await Promise.resolve();
+    });
+    await switchMode("Compare");
+
+    expect(screen.getByRole("button", { name: "Show source" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("left: source");
+    expect(screen.queryByText("left: late bytecode")).not.toBeInTheDocument();
+  });
+
+  it("invalidates pending Compare disassembly before OS-open validation resolves", async () => {
+    let resolveLeftBytecode: ((content: string) => void) | undefined;
+    let resolveOsValidation: ((path: string) => void) | undefined;
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "compute_diff") {
+        return Promise.resolve({
+          pairs: [
+            ...onePairDiff.pairs,
+            {
+              path: "App.class",
+              status: "different" as const,
+              left: { path: "App.class", kind: "class" as const },
+              right: { path: "App.class", kind: "class" as const },
+            },
+          ],
+        });
+      }
+      if (cmd === "read_entry" && args?.entryPath === "App.class") {
+        return Promise.resolve({
+          path: "App.class",
+          kind: "class" as const,
+          language: "java",
+          content: `${args?.side}: source`,
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "left") {
+        return new Promise((resolve) => {
+          resolveLeftBytecode = resolve;
+        });
+      }
+      if (cmd === "disassemble" && args?.side === "right") {
+        return Promise.resolve("right: bytecode");
+      }
+      if (cmd === "validate_path" && args?.raw === "/tmp/from-finder.jar") {
+        return new Promise((resolve) => {
+          resolveOsValidation = resolve;
+        });
+      }
+      return defaultInvoke(cmd, args);
+    });
+    const user = userEvent.setup();
+    await driveIntoFileCompare(user);
+    await user.click(screen.getByRole("tab", { name: /files/i }));
+    const classCells = await screen.findAllByText("App.class");
+    await user.click(classCells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Show bytecode" }));
+    await waitFor(() => expect(resolveLeftBytecode).toBeDefined());
+    await waitFor(() => expect(osOpenPathsHandler).toBeDefined());
+
+    act(() => {
+      osOpenPathsHandler?.({ payload: { paths: ["/tmp/from-finder.jar"] } });
+    });
+    await waitFor(() => expect(resolveOsValidation).toBeDefined());
+    await act(async () => {
+      resolveLeftBytecode?.("left: late bytecode during OS validation");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      resolveOsValidation?.("/tmp/from-finder.jar");
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /from-finder\.jar/ })).toBeInTheDocument(),
+    );
+
+    await switchMode("Compare");
+
+    expect(screen.getByRole("button", { name: "Show source" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("diff-original")).toHaveTextContent("left: source");
+    expect(screen.queryByText("left: late bytecode during OS validation"))
+      .not.toBeInTheDocument();
+  });
+
   it("shows the content line filter only on an active Compare diff tab", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
@@ -1410,7 +2850,7 @@ describe("App file-merge wiring", () => {
     expect(screen.queryByRole("group", { name: "Actions into right pane" })).not.toBeInTheDocument();
   });
 
-  it("clears stale Compare tabs when switching to View mode", async () => {
+  it("hides retained Compare tabs while View is active", async () => {
     const user = userEvent.setup();
     await driveIntoFileCompare(user);
 
@@ -1420,6 +2860,10 @@ describe("App file-merge wiring", () => {
 
     expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: /config\.json/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Compare mode" }));
+    expect(screen.getByRole("tab", { name: /config\.json/ }))
+      .toHaveAttribute("aria-selected", "true");
   });
 
   it("wires diff navigator state from Monaco line changes and reveals the next block", async () => {
@@ -2197,5 +3641,784 @@ describe("App file-merge wiring", () => {
       expect(committedSides).toContain("left");
       expect(committedSides).toContain("right");
     });
+  });
+
+  it("creates a right copy-current target, stages Merge all, applies, and replaces only the left source", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    expect(await screen.findByRole("dialog", { name: "Resolve merge conflicts" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Overwrite all" }));
+    await user.click(screen.getByRole("button", { name: "Stage merge decisions" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_temp_merge_all", {
+      sourceSide: "left",
+      decisions: [{ entryPath: "config.json", action: "overwrite" }],
+    }));
+    await user.click(await screen.findByRole("button", { name: "Apply to temp (2)" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+    expect(await screen.findByText(/1 sources applied/)).toBeInTheDocument();
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Apply to temp (0)" }),
+    ).toBeDisabled());
+
+    chooseFile.mockResolvedValueOnce("/tmp/second.jar");
+    await clickBrowseFileForSide(user, "left");
+    expect(chooseFile).toHaveBeenCalledTimes(2);
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/second.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/second.jar", side: "right" },
+    );
+  });
+
+  it("dismisses conflict review without ending the temp session and can preview again", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    const review = await screen.findByRole("dialog", { name: "Resolve merge conflicts" });
+    await user.click(within(review).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(
+      screen.queryByRole("dialog", { name: "Resolve merge conflicts" }),
+    ).not.toBeInTheDocument());
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    expect(await screen.findByRole("dialog", { name: "Resolve merge conflicts" })).toBeInTheDocument();
+  });
+
+  it("offers Apply, Discard staged, and Cancel before replacing a source with target work", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    chooseFile.mockResolvedValue("/tmp/replacement.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    expect(within(prompt).getByRole("button", { name: "Apply" })).toBeInTheDocument();
+    expect(within(prompt).getByRole("button", { name: "Discard staged" })).toBeInTheDocument();
+    await user.click(within(prompt).getByRole("button", { name: "Cancel" }));
+    expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/replacement.jar", side: "left" },
+    );
+
+    await clickBrowseFileForSide(user, "left");
+    const retryPrompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(retryPrompt).getByRole("button", { name: "Discard staged" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("unstage", {
+      entryPath: "config.json",
+      side: "right",
+    }));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/replacement.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("applies staged target work before continuing a source replacement", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    chooseFile.mockResolvedValueOnce("/tmp/applied-source.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(prompt).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/applied-source.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it.each([
+    { targetSide: "right" as const, sourceSide: "left" as const },
+    { targetSide: "left" as const, sourceSide: "right" as const },
+  ])("keeps the $targetSide temporary target while rendering three distinct $sourceSide replacements", async ({ targetSide, sourceSide }) => {
+    const user = userEvent.setup();
+    installSourceAwareTempFixture(targetSide);
+    await openCompareWorkspace(user);
+    await clickBrowseFileForSide(user, sourceSide);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: sourceSide },
+    ));
+
+    await user.click(screen.getByLabelText(`Change ${targetSide} source`));
+    await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+    await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+    await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+    await user.click(screen.getByRole("button", { name: "Create temp target" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "create_temp_target",
+      { sourceSide, creation: { kind: "copyCurrent" } },
+    ));
+
+    for (const path of ["/tmp/second.zip", "/tmp/third.jar", "/tmp/fourth.zip"]) {
+      chooseFile.mockResolvedValueOnce(path);
+      await clickBrowseFileForSide(user, sourceSide);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+        "open_archive",
+        { path, side: sourceSide },
+      ));
+      expect((await screen.findAllByText(sourceMarker(path))).length).toBeGreaterThan(0);
+      expect(screen.getByLabelText(`Change ${targetSide} source`)).toHaveTextContent("lcdiff-working.jar");
+    }
+
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd, args]) => (
+      cmd === "open_archive" && (args as { side?: "left" | "right" })?.side === targetSide
+    ))).toBe(false);
+  });
+
+  it.each(["success", "error"] as const)(
+    "does not let a delayed Apply diff %s overwrite a newer source replacement",
+    async (settlement) => {
+      const user = userEvent.setup();
+      const fixture = installSourceAwareTempFixture("right");
+      await openLeftAndCreateRightTemp(user);
+
+      const initialMarker = sourceMarker("/tmp/config.json");
+      const rows = await screen.findAllByText(initialMarker);
+      await user.click(rows.find((element) => element.closest("button.tree-file"))!);
+      await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+        from: "left",
+        to: "right",
+        entryPath: initialMarker,
+      }));
+
+      const staleDiff = deferred<typeof onePairDiff>();
+      fixture.deferNextDiff(staleDiff.promise);
+      const computeCountBeforeApply = fixture.computeCount();
+      await user.click(await screen.findByRole("button", { name: "Apply to temp (1)" }));
+      await waitFor(() => expect(fixture.computeCount()).toBe(computeCountBeforeApply + 1));
+
+      const replacementPath = `/tmp/newer-${settlement}.jar`;
+      chooseFile.mockResolvedValueOnce(replacementPath);
+      await clickBrowseFileForSide(user, "left");
+      await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+      const replacementMarker = sourceMarker(replacementPath);
+      expect((await screen.findAllByText(replacementMarker)).length).toBeGreaterThan(0);
+
+      await act(async () => {
+        if (settlement === "success") staleDiff.resolve(sourceAwareDiff("/tmp/stale-apply.jar"));
+        else staleDiff.reject(new Error("stale Apply diff failed"));
+        await staleDiff.promise.catch(() => undefined);
+      });
+
+      await waitFor(() => expect(screen.getAllByText(replacementMarker).length).toBeGreaterThan(0));
+      expect(screen.queryByText(sourceMarker("/tmp/stale-apply.jar"))).not.toBeInTheDocument();
+    },
+  );
+
+  it("never records the app-owned working target in recent Compare history", async () => {
+    const seededHistory = [{
+      id: JSON.stringify(["compare", ["/tmp/seed-left.jar", "/tmp/seed-right.jar"]]),
+      mode: "compare",
+      paths: ["/tmp/seed-left.jar", "/tmp/seed-right.jar"],
+      openedAt: 1,
+    }];
+    localStorage.setItem("lcdiff.history", JSON.stringify(seededHistory));
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    await waitFor(() => expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument());
+    const history = JSON.parse(localStorage.getItem("lcdiff.history") ?? "[]") as Array<{
+      mode: string;
+      paths: string[];
+    }>;
+    expect(history.some((entry) => entry.paths.includes(tempSession.workingName))).toBe(false);
+    expect(history).toEqual(seededHistory);
+  });
+
+  it("blocks legacy Move hunk UI and native actions for the entire temp-owned workspace", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    installSourceAwareTempFixture("right");
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+
+    const marker = sourceMarker("/tmp/config.json");
+    const rows = await screen.findAllByText(marker);
+    await user.click(rows.find((element) => element.closest("button.tree-file"))!);
+    expect(screen.queryByRole("button", { name: "Move hunk into right" })).not.toBeInTheDocument();
+
+    const before = { ...buffers };
+    invoke.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "merge.moveHunkToRight" } });
+      await Promise.resolve();
+    });
+    expect(buffers).toEqual(before);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "stage_write")).toBe(false);
+  });
+
+  it("routes native file.save to Apply while a temporary target owns the staged side", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+    const rows = await screen.findAllByText("config.json");
+    await user.click(rows.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    invoke.mockClear();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.save" } });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "commit_merge")).toBe(false);
+  });
+
+  it("does not create a false Apply intent when native file.save races an active Save As", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    const saveResult = deferred<typeof tempSession>();
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "save_temp_target_as") return saveResult.promise;
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/tmp/in-flight-save.jar");
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+    const rows = await screen.findAllByText("config.json");
+    await user.click(rows.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "save_temp_target_as",
+      { path: "/tmp/in-flight-save.jar" },
+    ));
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.save" } });
+      await Promise.resolve();
+    });
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "apply_temp_merge")).toBe(false);
+    expect(screen.getByRole("status")).toHaveTextContent(/wait for the temporary merge operation/i);
+
+    await act(async () => {
+      saveResult.resolve({ ...tempSession, exportedPath: "/tmp/in-flight-save.jar" });
+      await saveResult.promise;
+    });
+    expect(await screen.findByRole("button", { name: "Apply to temp (1)" })).toBeEnabled();
+  });
+
+  it("ignores a stale target-side failure after temp creation takes ownership", async () => {
+    const user = userEvent.setup();
+    summarySourceKind = "archive";
+    let rejectLateValidation!: (error: Error) => void;
+    const lateValidation = new Promise<string>((_resolve, reject) => { rejectLateValidation = reject; });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "validate_path" && args?.raw === "/tmp/late-right.jar") {
+        return lateValidation;
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openCompareWorkspace(user);
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "left" },
+    ));
+
+    chooseFile.mockResolvedValueOnce("/tmp/late-right.jar");
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "validate_path",
+      { raw: "/tmp/late-right.jar" },
+    ));
+
+    await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+    await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+    await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+    await user.click(screen.getByRole("button", { name: "Create temp target" }));
+    expect(await screen.findByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    rejectLateValidation(new Error("late target validation failed"));
+    await act(async () => { await lateValidation.catch(() => undefined); });
+    await waitFor(() => expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/late-right.jar", side: "right" },
+    ));
+    expect(screen.queryByText("Error: late target validation failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("keeps Apply recovery retry-only across the same repeated failure and then continues source replacement", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    let applyAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "apply_temp_merge") {
+        applyAttempts += 1;
+        if (applyAttempts <= 2) {
+          throw new Error("temporary merge Apply recovery is pending; retry Apply");
+        }
+        return { ...tempSession, appliedSourceCount: 1 };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(appActionHandler).toBeDefined());
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+
+    chooseFile.mockResolvedValueOnce("/tmp/after-apply-recovery.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(prompt).getByRole("button", { name: "Apply" }));
+
+    const firstRetry = await screen.findByRole("button", { name: "Retry Apply" });
+    expect(screen.queryByRole("button", { name: "Save temp as" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard temp" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    await act(async () => {
+      appActionHandler?.({ payload: { actionId: "file.save" } });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(applyAttempts).toBe(2));
+
+    await user.click(firstRetry);
+    await waitFor(() => expect(applyAttempts).toBe(3));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/after-apply-recovery.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("reuses the selected Save As path across two identical recovery failures", async () => {
+    const user = userEvent.setup();
+    let saveAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        saveAttempts += 1;
+        if (saveAttempts <= 2) {
+          throw new Error("temporary merge export recovery is pending; retry Save As");
+        }
+        return { ...tempSession, exportedPath: "/backend/canonical-output.jar" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/dialog/chosen-output.jar");
+    await openLeftAndCreateRightTemp(user);
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByRole("button", { name: "Retry Save As" })).toBeEnabled();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry Save As" }));
+    await waitFor(() => expect(saveAttempts).toBe(2));
+    await user.click(screen.getByRole("button", { name: "Retry Save As" }));
+
+    await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toEqual([
+      ["save_temp_target_as", { path: "/dialog/chosen-output.jar" }],
+      ["save_temp_target_as", { path: "/dialog/chosen-output.jar" }],
+      ["save_temp_target_as", { path: "/dialog/chosen-output.jar" }],
+    ]));
+    expect(chooseSave).toHaveBeenCalledOnce();
+    expect(await screen.findByLabelText("Temporary merge status")).toHaveTextContent(
+      "Exported: /backend/canonical-output.jar",
+    );
+  });
+
+  it("reserves a single Save As picker while the first picker is unresolved", async () => {
+    const user = userEvent.setup();
+    const selection = deferred<string | null>();
+    chooseSave.mockImplementation(() => selection.promise);
+    await openLeftAndCreateRightTemp(user);
+
+    const saveButton = screen.getByRole("button", { name: "Save temp as" });
+    await user.click(saveButton);
+    await user.click(saveButton);
+    expect(chooseSave).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      selection.resolve(null);
+      await selection.promise;
+    });
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toHaveLength(0);
+  });
+
+  it.each(["apply", "discard"] as const)(
+    "does not publish a stale Save As picker rejection after %s starts",
+    async (operation) => {
+      const user = userEvent.setup();
+      const picker = deferred<string | null>();
+      const operationResult = deferred<unknown>();
+      chooseSave.mockImplementation(() => picker.promise);
+      invoke.mockImplementation((cmd, args) => {
+        if (operation === "apply" && cmd === "apply_temp_merge") {
+          return operationResult.promise;
+        }
+        if (operation === "discard" && cmd === "discard_temp_target") {
+          return operationResult.promise;
+        }
+        return defaultInvoke(cmd, args);
+      });
+      await openLeftAndCreateRightTemp(user);
+
+      if (operation === "apply") {
+        const rows = await screen.findAllByText("config.json");
+        await user.click(rows.find((element) => element.closest("button.tree-file"))!);
+        await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+        await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+          from: "left",
+          to: "right",
+          entryPath: "config.json",
+        }));
+      }
+
+      const statusBefore = screen.getByRole("status").textContent;
+      await user.click(screen.getByRole("button", { name: "Save temp as" }));
+      expect(chooseSave).toHaveBeenCalledOnce();
+
+      if (operation === "apply") {
+        await user.click(screen.getByRole("button", { name: "Apply to temp (1)" }));
+        await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+      } else {
+        await user.click(screen.getByRole("button", { name: "Discard temp" }));
+        await user.click(await screen.findByRole("button", { name: "Confirm discard temp" }));
+        await waitFor(() => expect(invoke).toHaveBeenCalledWith("discard_temp_target"));
+      }
+
+      await act(async () => {
+        picker.reject(new Error(`stale ${operation} picker failure`));
+        await picker.promise.catch(() => undefined);
+      });
+
+      expect(screen.getByRole("status")).toHaveTextContent(statusBefore ?? "");
+      expect(screen.getByRole("status")).not.toHaveTextContent("Save As picker failed");
+
+      await act(async () => {
+        operationResult.resolve(
+          operation === "apply"
+            ? { ...tempSession, entryCount: 2, appliedSourceCount: 1 }
+            : { kind: "discarded" },
+        );
+        await operationResult.promise;
+      });
+    },
+  );
+
+  it("ignores an old Save As picker that resolves after a new temp session picker", async () => {
+    const user = userEvent.setup();
+    const oldSelection = deferred<string | null>();
+    const newSelection = deferred<string | null>();
+    chooseSave
+      .mockImplementationOnce(() => oldSelection.promise)
+      .mockImplementationOnce(() => newSelection.promise);
+    await openLeftAndCreateRightTemp(user);
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    await user.click(screen.getByRole("button", { name: "Discard temp" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm discard temp" }));
+    await waitFor(() => expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument());
+
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+    await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+    await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+    await user.click(screen.getByRole("button", { name: "Create temp target" }));
+    expect(await screen.findByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    await act(async () => {
+      newSelection.resolve("/tmp/new-session.jar");
+      await newSelection.promise;
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "save_temp_target_as",
+      { path: "/tmp/new-session.jar" },
+    ));
+
+    await act(async () => {
+      oldSelection.resolve("/tmp/stale-session.jar");
+      await oldSelection.promise;
+    });
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toEqual([
+      ["save_temp_target_as", { path: "/tmp/new-session.jar" }],
+    ]);
+  });
+
+  it("cancels Save As without backend mutation and retries an ordinary failure with the session intact", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    chooseSave.mockResolvedValueOnce(null);
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toHaveLength(0);
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    let attempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        attempts += 1;
+        if (attempts === 1) throw new Error("destination unavailable");
+        return { ...tempSession, exportedPath: args?.path as string };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/tmp/retry.jar");
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("destination unavailable");
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByLabelText("Temporary merge status")).toHaveTextContent(
+      "Exported: /tmp/retry.jar",
+    );
+  });
+
+  it("keeps only retry Discard across two identical failures and then converges", async () => {
+    const user = userEvent.setup();
+    let discardAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "discard_temp_target") {
+        discardAttempts += 1;
+        return discardAttempts <= 2
+          ? { kind: "retryDiscardOnly", message: "cleanup recovery is pending" }
+          : { kind: "discarded" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+
+    await user.click(screen.getByRole("button", { name: "Discard temp" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm discard temp" }));
+    expect(await screen.findByRole("button", { name: "Retry Discard" })).toBeEnabled();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save temp as" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry Discard" }));
+    await waitFor(() => expect(discardAttempts).toBe(2));
+    await user.click(screen.getByRole("button", { name: "Retry Discard" }));
+    await waitFor(() => expect(discardAttempts).toBe(3));
+    expect(screen.queryByRole("button", { name: "Retry Discard" })).not.toBeInTheDocument();
+    expect(screen.queryByText("lcdiff-working.jar")).not.toBeInTheDocument();
+  });
+
+  it("blocks temp-owned target drops and navigation before IPC", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+    invoke.mockClear();
+
+    act(() => dragDropHandler?.({
+      payload: { type: "drop", paths: ["/tmp/onto-target.jar"], position: { x: window.innerWidth, y: 20 } },
+    }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/temporary target/i));
+    expect(invoke).not.toHaveBeenCalledWith("validate_path", { raw: "/tmp/onto-target.jar" });
+    expect(invoke).not.toHaveBeenCalledWith("open_archive", expect.objectContaining({ side: "right" }));
+
+    await user.click(screen.getByRole("button", { name: "View mode" }));
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("keeps close recovery modal with the matching Save As retry and reuses the same path", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    let attempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("temporary merge export recovery is pending; retry Save As");
+        }
+        return { ...tempSession, exportedPath: args?.path as string };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/tmp/close-recovery.jar");
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(closeRequestHandler).toBeDefined());
+
+    act(() => closeRequestHandler?.({ preventDefault: vi.fn() }));
+    const closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(within(closePrompt).getByRole("button", { name: "Save As" }));
+    const recoveryPrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(await within(recoveryPrompt).findByRole("button", { name: "Retry Save As" }));
+
+    await waitFor(() => expect(destroyWindow).toHaveBeenCalledOnce());
+    expect(chooseSave).toHaveBeenCalledOnce();
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toEqual([
+      ["save_temp_target_as", { path: "/tmp/close-recovery.jar" }],
+      ["save_temp_target_as", { path: "/tmp/close-recovery.jar" }],
+    ]);
+  });
+
+  it("does not retain close-after-success when closing is cancelled while the Save As picker is pending", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    const selection = deferred<string | null>();
+    chooseSave.mockImplementation(() => selection.promise);
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(closeRequestHandler).toBeDefined());
+
+    act(() => closeRequestHandler?.({ preventDefault: vi.fn() }));
+    const closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(within(closePrompt).getByRole("button", { name: "Save As" }));
+    await user.click(within(closePrompt).getByRole("button", { name: "Cancel" }));
+
+    await act(async () => {
+      selection.resolve("/tmp/pending-picker.jar");
+      await selection.promise;
+    });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "save_temp_target_as",
+      { path: "/tmp/pending-picker.jar" },
+    ));
+    expect(destroyWindow).not.toHaveBeenCalled();
+  });
+
+  it("cancels only the close intent during Save As recovery and keeps matching retry available", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    let attempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("temporary merge export recovery is pending; retry Save As");
+        }
+        return { ...tempSession, exportedPath: args?.path as string };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/tmp/cancel-close.jar");
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(closeRequestHandler).toBeDefined());
+
+    act(() => closeRequestHandler?.({ preventDefault: vi.fn() }));
+    let closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(within(closePrompt).getByRole("button", { name: "Save As" }));
+    closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(await within(closePrompt).findByRole("button", { name: "Cancel closing" }));
+    await waitFor(() => expect(
+      screen.queryByRole("dialog", { name: "Save temporary target before closing?" }),
+    ).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Retry Save As" }));
+    await waitFor(() => expect(attempts).toBe(2));
+    expect(destroyWindow).not.toHaveBeenCalled();
+    expect(chooseSave).toHaveBeenCalledOnce();
+  });
+
+  it("guards window close with Save As, Discard, and Cancel and does not bypass discard recovery", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    let discardAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "discard_temp_target") {
+        discardAttempts += 1;
+        return discardAttempts === 1
+          ? { kind: "retryDiscardOnly", message: "cleanup recovery is pending" }
+          : { kind: "discarded" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(closeRequestHandler).toBeDefined());
+    const preventDefault = vi.fn();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    const closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(within(closePrompt).getByRole("button", { name: "Save As" })).toBeInTheDocument();
+    expect(within(closePrompt).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    await user.click(within(closePrompt).getByRole("button", { name: "Cancel" }));
+    expect(destroyWindow).not.toHaveBeenCalled();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    const retryClosePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(within(retryClosePrompt).getByRole("button", { name: "Discard" }));
+    expect(await screen.findByRole("button", { name: "Retry Discard" })).toBeEnabled();
+    expect(destroyWindow).not.toHaveBeenCalled();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    const discardRecoveryPrompt = await screen.findByRole("dialog", {
+      name: "Save temporary target before closing?",
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(/retry Discard before closing/i);
+    await user.click(within(discardRecoveryPrompt).getByRole("button", { name: "Retry Discard" }));
+    await waitFor(() => expect(destroyWindow).toHaveBeenCalledOnce());
   });
 });

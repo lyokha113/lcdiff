@@ -11,6 +11,7 @@ const tauri = vi.hoisted(() => {
     currentWindow,
     getCurrentWindow: vi.fn(() => currentWindow),
     open: vi.fn(),
+    save: vi.fn(),
   };
 });
 
@@ -24,6 +25,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: tauri.open,
+  save: tauri.save,
 }));
 
 import {
@@ -31,6 +33,7 @@ import {
   destroyCurrentWindow,
   isTauriRuntime,
   openPathDialog,
+  savePathDialog,
   subscribeWindowCloseRequested,
   subscribeWindowDragDrop,
 } from "@/ipc/platform";
@@ -44,6 +47,7 @@ describe("platform adapter", () => {
     tauri.currentWindow.onCloseRequested.mockResolvedValue(vi.fn());
     tauri.currentWindow.destroy.mockResolvedValue(undefined);
     tauri.open.mockResolvedValue("/tmp/a.jar");
+    tauri.save.mockResolvedValue("/tmp/merged.jar");
   });
 
   it("forwards exact dialog options and returns the selected path", async () => {
@@ -54,6 +58,16 @@ describe("platform adapter", () => {
 
     await expect(openPathDialog(options)).resolves.toBe("/tmp/a.jar");
     expect(tauri.open).toHaveBeenCalledWith(options);
+  });
+
+  it("forwards exact Save As options and returns the backend destination", async () => {
+    const options = {
+      defaultPath: "working.jar",
+      filters: [{ name: "Archives", extensions: ["jar", "zip", "war", "ear"] }],
+    };
+
+    await expect(savePathDialog(options)).resolves.toBe("/tmp/merged.jar");
+    expect(tauri.save).toHaveBeenCalledWith(options);
   });
 
   it("keeps asset paths unchanged in a browser and converts them in Tauri", () => {

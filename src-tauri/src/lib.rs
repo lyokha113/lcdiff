@@ -19,17 +19,20 @@ use archive_access::{
     resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
 };
 use commands::{
-    cancel_deep_search, clear_staged, close_view_source, commit_merge, commit_view, compute_diff,
-    compute_nested_diff, compute_view_nested_entries, deep_search, deep_search_view_source,
-    disassemble, disassemble_view_entry, list_system_fonts, list_view_sources, open_archive,
-    open_view_source, pending_open_paths, platform_hints, prefetch_siblings, read_entry,
-    read_view_entry, search, search_view_source, set_engine, stage_copy, stage_view_write,
+    apply_temp_merge, cancel_deep_search, clear_staged, close_view_source, commit_merge,
+    commit_view, compute_diff, compute_nested_diff, compute_view_nested_entries,
+    create_temp_target, deep_search, deep_search_view_source, disassemble, disassemble_view_entry,
+    discard_temp_target, list_system_fonts, list_view_sources, open_archive, open_compare_sources,
+    open_view_source, pending_open_paths, platform_hints, prefetch_siblings,
+    preview_merge_all_conflicts, read_entry, read_text_file, read_view_entry, save_temp_target_as,
+    search, search_view_source, set_engine, stage_copy, stage_temp_merge_all, stage_view_write,
     stage_write, unstage, unstage_view_write, validate_path,
 };
 #[cfg(test)]
 use commands::{
     class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
-    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview, search_archive,
+    language_for_path, one_sided_diff, platform_hints_from, read_entry_preview,
+    read_text_file_from_path, search_archive,
 };
 use menu::{
     handle_menu_event, handle_run_event, install_app_menu, open_paths_from_args, path_strings,
@@ -160,11 +163,13 @@ pub fn run() {
             platform_hints,
             list_system_fonts,
             open_archive,
+            open_compare_sources,
             compute_diff,
             compute_nested_diff,
             open_view_source,
             list_view_sources,
             read_entry,
+            read_text_file,
             read_view_entry,
             compute_view_nested_entries,
             close_view_source,
@@ -185,7 +190,13 @@ pub fn run() {
             deep_search_view_source,
             cancel_deep_search,
             prefetch_siblings,
-            pending_open_paths
+            pending_open_paths,
+            create_temp_target,
+            preview_merge_all_conflicts,
+            stage_temp_merge_all,
+            apply_temp_merge,
+            save_temp_target_as,
+            discard_temp_target
         ])
         .build(tauri::generate_context!())
         .expect("error while building LCDiff")
@@ -199,24 +210,61 @@ mod tests {
         fs::File,
         io::Write,
         path::{Path, PathBuf},
-        sync::{Arc, mpsc},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
     };
 
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
     use zip::{ZipWriter, write::SimpleFileOptions};
 
-    use super::archive_access::{open_archive_from_path, open_view_archive_from_path};
+    use super::archive_access::{
+        open_archive_from_path, open_compare_archives_from_paths, open_view_archive_from_path,
+    };
     use super::events::AppActionPayload;
     use super::menu::{MENU_ACTIONS, close_window_placement, store_and_emit_open_paths};
     #[cfg(not(target_os = "macos"))]
     use super::menu::{build_app_menu, install_app_menu};
     use super::sidecar_process::sidecar_clients_share_cache;
+    use super::state::{
+        TempMergeApplyFailurePoint, TempMergeConflictAction, TempMergeDecision,
+        TempMergePlanMutation, TempTargetCreation, TempTargetDiscardOutcome, apply_temp_merge,
+        apply_temp_merge_with_failure_point, apply_temp_merge_with_plan_mutation,
+        apply_temp_merge_with_stale_reservation, create_temp_target, discard_temp_target,
+        discard_temp_target_with_cleanup, discard_temp_target_with_cleanup_and_write,
+        discard_temp_target_with_cleanup_and_write_outcome, discard_temp_target_with_outcome,
+        fail_next_temp_target_export_recovery_cleanup, install_prepared_compare_archives,
+        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
+        prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
+        replace_temp_target_export_destination_for_test, save_temp_target_as,
+        save_temp_target_as_with_after_reserve, save_temp_target_as_with_backup_removal_failure,
+        save_temp_target_as_with_cleanup_failure, save_temp_target_as_with_hooks,
+        save_temp_target_as_with_parent_swap,
+        save_temp_target_as_with_partial_snapshot_capture_failure,
+        save_temp_target_as_with_partial_write_failure,
+        save_temp_target_as_with_post_cleanup_parent_swap,
+        save_temp_target_as_with_post_cleanup_replacement,
+        save_temp_target_as_with_post_rename_durability_failure,
+        save_temp_target_as_with_post_replace_failure,
+        save_temp_target_as_with_pre_capture_destination_creation,
+        save_temp_target_as_with_rollback_failure,
+        save_temp_target_as_with_snapshot_durability_failure,
+        save_temp_target_as_with_stale_reservation, set_prepared_temp_target_drop_probe,
+        stage_temp_merge_all_shared, stage_temp_merge_all_with_after_reserve,
+        stage_temp_merge_all_with_pre_final_check,
+    };
+    #[cfg(unix)]
+    use super::state::{
+        fail_next_unix_export_quarantine_finish, set_unix_export_remove_race_hooks,
+    };
     use super::{
         AppState, SearchHit, SearchHitKind, SearchOptions, Side, SidecarClient, ViewSourceSummary,
         class_source_path, compute_nested_diff_from_archives, deep_search_hit, is_prefetch_sibling,
         language_for_path, one_sided_diff, platform_hints_from, read_entry_preview,
-        resolve_optional_side_nested_archive, resolve_view_entry, resolve_view_nested_archive,
-        search_archive, side_snapshot, validate_path,
+        read_text_file_from_path, resolve_optional_side_nested_archive, resolve_view_entry,
+        resolve_view_nested_archive, search_archive, side_snapshot, validate_path,
     };
     use lcdiff_core::{Archive, ArchiveSourceKind, DecompileEngine};
     #[cfg(not(target_os = "macos"))]
@@ -1016,7 +1064,7 @@ mod tests {
         load_archive_through_production(&mut state, right.to_str().unwrap(), Side::Right).unwrap();
         state.stage_copy(Side::Left, Side::Right, "a.txt").unwrap();
 
-        state.clear_staged();
+        state.clear_staged().unwrap();
 
         assert!(!state.any_pending());
         load_archive_through_production(&mut state, left.to_str().unwrap(), Side::Left).unwrap();
@@ -1398,6 +1446,3109 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn temp_session_with_source_and_target(
+        source_entries: &[(&str, &[u8])],
+        target_entries: &[(&str, &[u8])],
+    ) -> (TempDir, AppState) {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let target_seed = dir.path().join("target-seed.jar");
+        create_zip(&source, source_entries);
+        create_zip(&target_seed, target_entries);
+
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, target_seed.to_str().unwrap(), Side::Left)
+            .unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        state
+            .install_archive(Archive::open(source.to_string_lossy()).unwrap(), Side::Left)
+            .unwrap();
+
+        (dir, state)
+    }
+
+    #[test]
+    fn temp_merge_all_previews_and_stages_files_in_deterministic_order() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[
+                ("z-new.txt", b"z-source"),
+                ("c-conflict.txt", b"c-source"),
+                ("folder/", b""),
+                ("a-new.txt", b"a-source"),
+                ("b-conflict.txt", b"b-source"),
+            ],
+            &[
+                ("c-conflict.txt", b"c-target"),
+                ("b-conflict.txt", b"b-target"),
+            ],
+        );
+
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["a-new.txt", "z-new.txt"]);
+        assert_eq!(preview.conflicts, ["b-conflict.txt", "c-conflict.txt"]);
+
+        state
+            .stage_temp_merge_all(
+                Side::Left,
+                vec![
+                    TempMergeDecision {
+                        entry_path: "c-conflict.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "b-conflict.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+            )
+            .unwrap();
+
+        let staged_paths = state
+            .right_plan
+            .staged()
+            .iter()
+            .map(|op| op.target_entry_path())
+            .collect::<Vec<_>>();
+        assert_eq!(staged_paths, ["a-new.txt", "b-conflict.txt", "z-new.txt"]);
+
+        let shared_state = Arc::new(Mutex::new(state));
+        apply_temp_merge(&shared_state).unwrap();
+        let state = shared_state.lock().unwrap();
+        let target = state.right.as_ref().unwrap();
+        assert_eq!(target.read_entry("a-new.txt").unwrap(), b"a-source");
+        assert_eq!(target.read_entry("z-new.txt").unwrap(), b"z-source");
+        assert_eq!(target.read_entry("b-conflict.txt").unwrap(), b"b-source");
+        assert_eq!(target.read_entry("c-conflict.txt").unwrap(), b"c-target");
+        assert!(target.entry("folder/").is_none());
+    }
+
+    #[test]
+    fn temp_merge_three_source_smoke_preserves_selected_and_skipped_target_bytes() {
+        let dir = tempdir().unwrap();
+        let seed = dir.path().join("seed.jar");
+        let source_two = dir.path().join("source-two.jar");
+        let source_three = dir.path().join("source-three.jar");
+        let output = dir.path().join("output.jar");
+        create_zip(
+            &seed,
+            &[
+                ("base.txt", b"A"),
+                ("conflict.txt", b"seed"),
+                ("skipped.txt", b"seed"),
+            ],
+        );
+        create_zip(&source_two, &[("selected.txt", b"B")]);
+        create_zip(
+            &source_three,
+            &[("conflict.txt", b"third"), ("skipped.txt", b"third")],
+        );
+
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, seed.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .install_archive(
+                    Archive::open(source_two.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            preview_merge_all_conflicts(&shared_state, Side::Left)
+                .unwrap()
+                .new_entries,
+            ["selected.txt"]
+        );
+        stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap();
+        apply_temp_merge(&shared_state).unwrap();
+
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .install_archive(
+                    Archive::open(source_three.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            preview_merge_all_conflicts(&shared_state, Side::Left)
+                .unwrap()
+                .conflicts,
+            ["conflict.txt", "skipped.txt"]
+        );
+        stage_temp_merge_all_shared(
+            &shared_state,
+            Side::Left,
+            vec![
+                TempMergeDecision {
+                    entry_path: "conflict.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                },
+                TempMergeDecision {
+                    entry_path: "skipped.txt".to_owned(),
+                    action: TempMergeConflictAction::Skip,
+                },
+            ],
+        )
+        .unwrap();
+        apply_temp_merge(&shared_state).unwrap();
+        save_temp_target_as(&shared_state, output.clone()).unwrap();
+
+        let output = Archive::open(output.to_string_lossy()).unwrap();
+        assert_eq!(output.read_entry("base.txt").unwrap(), b"A");
+        assert_eq!(output.read_entry("selected.txt").unwrap(), b"B");
+        assert_eq!(output.read_entry("conflict.txt").unwrap(), b"third");
+        assert_eq!(output.read_entry("skipped.txt").unwrap(), b"seed");
+    }
+
+    #[test]
+    fn temp_merge_all_requires_exactly_one_known_decision_per_conflict() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        state.preview_temp_merge_all(Side::Left).unwrap();
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let invalid_decisions = [
+            (
+                vec![],
+                "every temporary merge conflict requires exactly one decision",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                ],
+                "duplicate temporary merge conflict decision: same.txt",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "unknown.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+                "temporary merge decision is not for a conflict: unknown.txt",
+            ),
+            (
+                vec![
+                    TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    },
+                    TempMergeDecision {
+                        entry_path: "new.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    },
+                ],
+                "temporary merge decision is not for a conflict: new.txt",
+            ),
+        ];
+
+        for (decisions, expected_error) in invalid_decisions {
+            assert_eq!(
+                state
+                    .stage_temp_merge_all(Side::Left, decisions)
+                    .unwrap_err(),
+                expected_error
+            );
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_stale_conflict_decisions_without_mutating_the_plan() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.conflicts, ["same.txt"]);
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let changed_source = dir.path().join("changed-source.jar");
+        create_zip(&changed_source, &[("new.txt", b"changed")]);
+        state.left = Some(Archive::open(changed_source.to_string_lossy()).unwrap());
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_recomputes_conflicts_after_the_target_changes() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.conflicts, ["same.txt"]);
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        let changed_target = dir.path().join("changed-target.jar");
+        create_zip(&changed_target, &[("target-only.txt", b"target")]);
+        state.right = Some(Archive::open(changed_target.to_string_lossy()).unwrap());
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_a_replacement_source_with_the_same_partition() {
+        let (dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"source-a-new"), ("same.txt", b"source-a")],
+            &[("same.txt", b"target")],
+        );
+        let preview = state.preview_temp_merge_all(Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["new.txt"]);
+        assert_eq!(preview.conflicts, ["same.txt"]);
+
+        let source_b = dir.path().join("source-b.jar");
+        create_zip(
+            &source_b,
+            &[("new.txt", b"source-b-new"), ("same.txt", b"source-b")],
+        );
+        state
+            .install_archive(
+                Archive::open(source_b.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+        state
+            .right_plan
+            .stage_write("preserved.txt", b"preserved".to_vec())
+            .unwrap();
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path())
+                .collect::<Vec<_>>(),
+            ["preserved.txt"]
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_same_path_source_or_target_disk_changes() {
+        for changed_side in [Side::Left, Side::Right] {
+            let (_dir, mut state) = temp_session_with_source_and_target(
+                &[("new.txt", b"new"), ("same.txt", b"source")],
+                &[("same.txt", b"target")],
+            );
+            state.preview_temp_merge_all(Side::Left).unwrap();
+            state
+                .right_plan
+                .stage_write("preserved.txt", b"preserved".to_vec())
+                .unwrap();
+
+            let changed_path = match changed_side {
+                Side::Left => state.left.as_ref().unwrap().path(),
+                Side::Right => state.right.as_ref().unwrap().path(),
+            }
+            .to_owned();
+            let changed_entries: &[(&str, &[u8])] = match changed_side {
+                Side::Left => &[
+                    ("new.txt", b"new bytes changed on disk"),
+                    ("same.txt", b"source bytes changed on disk"),
+                ],
+                Side::Right => &[("same.txt", b"target bytes changed on disk")],
+            };
+            create_zip(&changed_path, changed_entries);
+
+            assert!(
+                state
+                    .stage_temp_merge_all(
+                        Side::Left,
+                        vec![TempMergeDecision {
+                            entry_path: "same.txt".to_owned(),
+                            action: TempMergeConflictAction::Overwrite,
+                        }],
+                    )
+                    .is_err()
+            );
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_rechecks_disk_freshness_after_preflight() {
+        for changed_side in [Side::Left, Side::Right] {
+            let (_dir, mut state) = temp_session_with_source_and_target(
+                &[("new.txt", b"new"), ("same.txt", b"source")],
+                &[("same.txt", b"target")],
+            );
+            state.preview_temp_merge_all(Side::Left).unwrap();
+            state
+                .right_plan
+                .stage_write("preserved.txt", b"preserved".to_vec())
+                .unwrap();
+
+            let changed_path = match changed_side {
+                Side::Left => state.left.as_ref().unwrap().path(),
+                Side::Right => state.right.as_ref().unwrap().path(),
+            }
+            .to_owned();
+            let changed_entries: &[(&str, &[u8])] = match changed_side {
+                Side::Left => &[
+                    ("new.txt", b"new bytes changed after preflight"),
+                    ("same.txt", b"source bytes changed after preflight"),
+                ],
+                Side::Right => &[("same.txt", b"target bytes changed after preflight")],
+            };
+
+            let error = stage_temp_merge_all_with_pre_final_check(
+                &mut state,
+                Side::Left,
+                vec![TempMergeDecision {
+                    entry_path: "same.txt".to_owned(),
+                    action: TempMergeConflictAction::Overwrite,
+                }],
+                || create_zip(&changed_path, changed_entries),
+            )
+            .unwrap_err();
+
+            assert_eq!(error, "temporary merge conflict preview is stale");
+            assert_eq!(
+                state
+                    .right_plan
+                    .staged()
+                    .iter()
+                    .map(|op| op.target_entry_path())
+                    .collect::<Vec<_>>(),
+                ["preserved.txt"]
+            );
+            assert_eq!(
+                state
+                    .stage_temp_merge_all(
+                        Side::Left,
+                        vec![TempMergeDecision {
+                            entry_path: "same.txt".to_owned(),
+                            action: TempMergeConflictAction::Overwrite,
+                        }],
+                    )
+                    .unwrap_err(),
+                "preview temporary merge conflicts before staging"
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_all_requires_preview_before_staging() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+
+        assert!(
+            state
+                .stage_temp_merge_all(
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "same.txt".to_owned(),
+                        action: TempMergeConflictAction::Overwrite,
+                    }],
+                )
+                .is_err()
+        );
+        assert!(state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn temp_merge_all_success_consumes_the_preview() {
+        let (_dir, mut state) = temp_session_with_source_and_target(
+            &[("new.txt", b"new"), ("same.txt", b"source")],
+            &[("same.txt", b"target")],
+        );
+        state.preview_temp_merge_all(Side::Left).unwrap();
+        let decisions = || {
+            vec![TempMergeDecision {
+                entry_path: "same.txt".to_owned(),
+                action: TempMergeConflictAction::Overwrite,
+            }]
+        };
+
+        state.stage_temp_merge_all(Side::Left, decisions()).unwrap();
+        let staged_paths = state
+            .right_plan
+            .staged()
+            .iter()
+            .map(|op| op.target_entry_path().to_owned())
+            .collect::<Vec<_>>();
+        assert!(state.stage_temp_merge_all(Side::Left, decisions()).is_err());
+        assert_eq!(
+            state
+                .right_plan
+                .staged()
+                .iter()
+                .map(|op| op.target_entry_path().to_owned())
+                .collect::<Vec<_>>(),
+            staged_paths
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_dtos_use_camel_case_wire_values() {
+        let preview = super::state::TempMergeConflictPreview {
+            new_entries: vec!["new.txt".to_owned()],
+            conflicts: vec!["same.txt".to_owned()],
+        };
+        assert_eq!(
+            serde_json::to_value(preview).unwrap(),
+            serde_json::json!({
+                "newEntries": ["new.txt"],
+                "conflicts": ["same.txt"],
+            })
+        );
+
+        let decision: TempMergeDecision = serde_json::from_value(serde_json::json!({
+            "entryPath": "same.txt",
+            "action": "overwrite",
+        }))
+        .unwrap();
+        assert_eq!(decision.entry_path, "same.txt");
+        assert_eq!(decision.action, TempMergeConflictAction::Overwrite);
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_using_the_target_as_the_source() {
+        let (_dir, mut state) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+
+        assert!(state.preview_temp_merge_all(Side::Right).is_err());
+        assert!(state.stage_temp_merge_all(Side::Right, Vec::new()).is_err());
+        assert!(state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn temp_merge_all_requires_an_active_session_with_both_archives() {
+        let mut inactive = AppState::default();
+        assert!(inactive.preview_temp_merge_all(Side::Left).is_err());
+        assert!(
+            inactive
+                .stage_temp_merge_all(Side::Left, Vec::new())
+                .is_err()
+        );
+
+        let (_source_dir, mut missing_source) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        missing_source.left = None;
+        assert!(missing_source.preview_temp_merge_all(Side::Left).is_err());
+
+        let (_target_dir, mut missing_target) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        missing_target.right = None;
+        assert!(
+            missing_target
+                .stage_temp_merge_all(Side::Left, Vec::new())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_the_reserved_discard_state() {
+        let (_dir, mut state) =
+            temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        state.preview_temp_merge_all(Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |_| {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.preview_temp_merge_all(Side::Left).is_err());
+            assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        let mut state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
+        assert!(state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn temp_merge_all_rejects_the_retry_only_pending_discard_state() {
+        let (_dir, state) = temp_session_with_source_and_target(&[("source.txt", b"source")], &[]);
+        let shared_state = Arc::new(Mutex::new(state));
+        let target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+
+        discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive cleanup failure"))
+                } else {
+                    Err(std::io::Error::other("recovery cleanup failure"))
+                }
+            },
+            |_, _| Err(std::io::Error::other("snapshot write failure")),
+        )
+        .unwrap_err();
+
+        let mut state = shared_state.lock().unwrap();
+        assert!(state.pending_temp_target_recovery_bytes().is_some());
+        assert!(state.preview_temp_merge_all(Side::Left).is_err());
+        assert!(state.stage_temp_merge_all(Side::Left, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn empty_temp_target_creates_opposite_archive_and_session_summary() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+
+        let summary = create_temp_target_in_state(
+            &mut state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert!(summary.working_name.ends_with(".jar"));
+        assert_eq!(summary.entry_count, 0);
+        assert_eq!(summary.applied_source_count, 0);
+        assert_eq!(summary.exported_path, None);
+        assert!(state.right.as_ref().unwrap().path().is_file());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn copy_current_temp_target_creates_opposite_copy_without_mutating_source() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let source_before = std::fs::read(state.left.as_ref().unwrap().path()).unwrap();
+
+        let summary =
+            create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(
+            std::fs::read(state.left.as_ref().unwrap().path()).unwrap(),
+            source_before
+        );
+        assert_ne!(
+            state.right.as_ref().unwrap().path(),
+            state.left.as_ref().unwrap().path()
+        );
+        assert_eq!(
+            std::fs::read(state.right.as_ref().unwrap().path()).unwrap(),
+            source_before
+        );
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_uses_left_when_declared_source_is_right() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+
+        let summary =
+            create_temp_target_in_state(&mut state, Side::Right, TempTargetCreation::CopyCurrent)
+                .unwrap();
+
+        assert_eq!(summary.target_side, Side::Left);
+        assert!(state.left.is_some());
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+    }
+
+    #[test]
+    fn temp_target_preparation_releases_shared_state_lock_before_filesystem_work() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let prepared = prepare_temp_target_with_lock_probe(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::CopyCurrent,
+            || assert!(shared_state.try_lock().is_ok()),
+        )
+        .unwrap();
+        let summary = install_prepared_temp_target(&shared_state, prepared).unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+    }
+
+    #[test]
+    fn prepared_temp_target_rechecks_source_before_publish() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement = dir.path().join("replacement.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        let prepared =
+            prepare_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap();
+        shared_state
+            .lock()
+            .unwrap()
+            .install_archive(
+                Archive::open(replacement.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+
+        let error = install_prepared_temp_target(&shared_state, prepared).unwrap_err();
+
+        assert!(error.contains("changed"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), replacement);
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_rejects_file_and_directory_sources_before_creation() {
+        let dir = tempdir().unwrap();
+        let text = dir.path().join("source.txt");
+        let folder = dir.path().join("source-folder");
+        std::fs::write(&text, "text").unwrap();
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("entry.txt"), "entry").unwrap();
+
+        for source in [&text, &folder] {
+            let mut state = AppState::default();
+            load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left)
+                .unwrap();
+            let shared_state = Arc::new(Mutex::new(state));
+            let mut entered_filesystem_phase = false;
+
+            let result = prepare_temp_target_with_lock_probe(
+                &shared_state,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+                || entered_filesystem_phase = true,
+            );
+            let error = match result {
+                Ok(_) => panic!("non-archive source entered temporary target preparation"),
+                Err(error) => error,
+            };
+
+            assert!(error.contains("archive source"));
+            assert!(!entered_filesystem_phase);
+            let state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+        }
+    }
+
+    #[test]
+    fn temp_target_creation_requires_declared_source_empty_target_and_no_pending_plan() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let other = dir.path().join("other.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&other, &[("other.txt", b"other")]);
+
+        let mut wrong_source = AppState::default();
+        load_archive_through_production(&mut wrong_source, other.to_str().unwrap(), Side::Right)
+            .unwrap();
+        assert!(
+            create_temp_target_in_state(
+                &mut wrong_source,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+            )
+            .unwrap_err()
+            .contains("source")
+        );
+
+        let mut occupied_target = AppState::default();
+        load_archive_through_production(&mut occupied_target, source.to_str().unwrap(), Side::Left)
+            .unwrap();
+        load_archive_through_production(&mut occupied_target, other.to_str().unwrap(), Side::Right)
+            .unwrap();
+        assert!(
+            create_temp_target_in_state(
+                &mut occupied_target,
+                Side::Left,
+                TempTargetCreation::CopyCurrent,
+            )
+            .unwrap_err()
+            .contains("target")
+        );
+
+        let mut pending = AppState::default();
+        load_archive_through_production(&mut pending, source.to_str().unwrap(), Side::Left)
+            .unwrap();
+        pending
+            .stage_write(Side::Left, "source.txt", "changed")
+            .unwrap();
+        assert!(
+            create_temp_target_in_state(&mut pending, Side::Left, TempTargetCreation::CopyCurrent,)
+                .unwrap_err()
+                .contains("pending")
+        );
+        assert!(pending.right.is_none());
+        assert!(pending.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn failed_temp_target_creation_preserves_compare_state() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let source_path = state.left.as_ref().unwrap().path().to_owned();
+        let source_cache = Arc::clone(&state.left_nested);
+
+        let error = create_temp_target_in_state(
+            &mut state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "txt".to_owned(),
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary archive"));
+        assert_eq!(state.left.as_ref().unwrap().path(), source_path);
+        assert!(Arc::ptr_eq(&state.left_nested, &source_cache));
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_allows_source_replacement_but_rejects_target_replacement_and_second_session() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement = dir.path().join("replacement.jar");
+        let forbidden_target = dir.path().join("forbidden.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement, &[("replacement.txt", b"replacement")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+
+        let second_error =
+            create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap_err();
+        assert!(second_error.contains("already"));
+
+        state
+            .install_archive(
+                Archive::open(replacement.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), replacement);
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+
+        let target_error = state
+            .install_archive(
+                Archive::open(forbidden_target.to_string_lossy()).unwrap(),
+                Side::Right,
+            )
+            .unwrap_err();
+        assert!(target_error.contains("temporary merge target"));
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+    }
+
+    #[test]
+    fn temp_target_rejects_atomic_compare_pair_replacement() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_left = dir.path().join("replacement-left.jar");
+        let replacement_right = dir.path().join("replacement-right.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_left, &[("left.txt", b"left")]);
+        create_zip(&replacement_right, &[("right.txt", b"right")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+        let shared_state = Arc::new(Mutex::new(state));
+
+        let error = open_compare_sources_through_production(
+            &shared_state,
+            replacement_left.display().to_string(),
+            replacement_right.display().to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge target"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), source);
+        assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_staging_can_modify_only_fixed_target_side() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+
+        let source_error = state
+            .stage_copy(Side::Right, Side::Left, "source.txt")
+            .unwrap_err();
+        assert!(source_error.contains("temporary merge source"));
+        assert!(state.left_plan.is_empty());
+
+        state
+            .stage_copy(Side::Left, Side::Right, "source.txt")
+            .unwrap();
+        assert!(!state.right_plan.is_empty());
+    }
+
+    #[test]
+    fn discard_temp_target_clears_target_and_only_removes_owned_temp_directory() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let source_before = std::fs::read(&source).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        create_temp_target_in_state(&mut state, Side::Left, TempTargetCreation::CopyCurrent)
+            .unwrap();
+        state
+            .stage_copy(Side::Left, Side::Right, "source.txt")
+            .unwrap();
+        let target_path = state.right.as_ref().unwrap().path().to_owned();
+        let owned_temp_dir = target_path.parent().unwrap().to_owned();
+
+        discard_temp_target_in_state(&mut state).unwrap();
+
+        assert!(source.is_file());
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        assert!(!target_path.exists());
+        assert!(!owned_temp_dir.exists());
+        assert!(state.left.is_some());
+        assert!(state.right.is_none());
+        assert!(state.right_plan.is_empty());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn discard_temp_target_without_session_preserves_loaded_archives() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+
+        assert!(
+            discard_temp_target_in_state(&mut state)
+                .unwrap_err()
+                .contains("not active")
+        );
+        assert_eq!(state.left.as_ref().unwrap().path(), source);
+        assert!(source.is_file());
+    }
+
+    #[test]
+    fn temp_target_cleanup_failure_restores_left_session_and_plan() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let forbidden_target = dir.path().join("forbidden-target.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Right, Side::Left, "source.txt")
+                .unwrap();
+        }
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_before = std::fs::read(&target_path).unwrap();
+        let mut forbidden_target = Some(Archive::open(forbidden_target.to_string_lossy()).unwrap());
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            let target_error = shared_state
+                .lock()
+                .unwrap()
+                .install_archive(
+                    forbidden_target
+                        .take()
+                        .expect("cleanup probe runs only until its first failure"),
+                    Side::Left,
+                )
+                .unwrap_err();
+            assert!(target_error.contains("temporary merge target"));
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        let state = shared_state.lock().unwrap();
+        let restored_target = state.left.as_ref().unwrap().path();
+        assert!(restored_target.is_file());
+        assert_eq!(std::fs::read(restored_target).unwrap(), target_before);
+        assert!(!state.left_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_discard_blocks_source_replacement_while_plan_is_detached() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        shared_state
+            .lock()
+            .unwrap()
+            .stage_copy(Side::Right, Side::Left, "source.txt")
+            .unwrap();
+        let mut replacement_source =
+            Some(Archive::open(replacement_source.to_string_lossy()).unwrap());
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |_| {
+            let replacement_error = shared_state
+                .lock()
+                .unwrap()
+                .install_archive(
+                    replacement_source
+                        .take()
+                        .expect("cleanup probe runs only until its first failure"),
+                    Side::Right,
+                )
+                .unwrap_err();
+            assert!(replacement_error.contains("discarded"));
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+        assert!(!state.left_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_target_cleanup_disarms_owner_and_retries_recreated_path_once() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let recreated_marker = original_target_dir.join("recreated-after-delete.txt");
+        let mut attempts = Vec::new();
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            std::fs::write(&recreated_marker, "still-owned").unwrap();
+            Err(std::io::Error::other("injected cleanup failure"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("injected cleanup failure"));
+        assert_eq!(
+            attempts.as_slice(),
+            std::slice::from_ref(&original_target_dir)
+        );
+        assert!(recreated_marker.is_file());
+        let recovery_target_dir = {
+            let state = shared_state.lock().unwrap();
+            assert!(state.temp_merge_session.is_some());
+            let recovery_target = state.right.as_ref().unwrap().path();
+            assert!(recovery_target.is_file());
+            recovery_target.parent().unwrap().to_owned()
+        };
+        assert_ne!(recovery_target_dir, original_target_dir);
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            match std::fs::remove_dir_all(owned_dir) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(retry_attempts.len(), 2);
+        assert_eq!(retry_attempts[0], original_target_dir);
+        assert_eq!(retry_attempts[1], recovery_target_dir);
+        assert!(!recreated_marker.exists());
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_pending_cleanup_failure_does_not_create_more_recoveries() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            Err(std::io::Error::other("seed pending cleanup"))
+        })
+        .unwrap_err();
+        let recovery_target = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        for _ in 0..2 {
+            let mut attempts = Vec::new();
+            let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+                attempts.push(owned_dir.to_owned());
+                Err(std::io::Error::other("persistent pending cleanup failure"))
+            })
+            .unwrap_err();
+
+            assert!(error.contains("persistent pending cleanup failure"));
+            assert_eq!(
+                attempts.as_slice(),
+                std::slice::from_ref(&original_target_dir)
+            );
+            let state = shared_state.lock().unwrap();
+            assert_eq!(state.right.as_ref().unwrap().path(), recovery_target);
+            assert!(recovery_target.is_file());
+            assert!(state.temp_merge_session.is_some());
+        }
+    }
+
+    #[test]
+    fn temp_target_final_working_cleanup_failure_retains_same_usable_session() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let original_target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            std::fs::remove_dir_all(owned_dir).unwrap();
+            std::fs::create_dir(owned_dir).unwrap();
+            Err(std::io::Error::other("seed pending cleanup"))
+        })
+        .unwrap_err();
+        let recovery_target = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let recovery_bytes = std::fs::read(&recovery_target).unwrap();
+        let recovery_dir = recovery_target.parent().unwrap().to_owned();
+        let mut attempts = Vec::new();
+
+        let error = discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            attempts.push(owned_dir.to_owned());
+            if owned_dir == original_target_dir {
+                std::fs::remove_dir_all(owned_dir)
+            } else {
+                Err(std::io::Error::other("final working cleanup failure"))
+            }
+        })
+        .unwrap_err();
+
+        assert!(error.contains("final working cleanup failure"));
+        assert_eq!(attempts, [original_target_dir, recovery_dir.clone()]);
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.right.as_ref().unwrap().path(), recovery_target);
+        assert_eq!(std::fs::read(&recovery_target).unwrap(), recovery_bytes);
+        assert!(state.temp_merge_session.is_some());
+        drop(state);
+
+        let mut final_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            final_attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir)
+        })
+        .unwrap();
+        assert_eq!(final_attempts, [recovery_dir]);
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    #[test]
+    fn temp_target_compound_recovery_failure_retains_owned_snapshot_for_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        create_zip(&source, &[("source.txt", b"last-good")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_dir = target_path.parent().unwrap().to_owned();
+        let last_good_bytes = std::fs::read(&target_path).unwrap();
+        let mut cleanup_attempts = Vec::new();
+        let mut incomplete_recovery_dir = None;
+        let mut write_attempts = 0;
+
+        let error = discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                cleanup_attempts.push(owned_dir.to_owned());
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive working cleanup failure"))
+                } else {
+                    incomplete_recovery_dir = Some(owned_dir.to_owned());
+                    Err(std::io::Error::other("incomplete recovery cleanup failure"))
+                }
+            },
+            |_, _| {
+                write_attempts += 1;
+                let message = match write_attempts {
+                    1 => "fresh recovery materialization failure",
+                    2 => "original snapshot restore failure",
+                    _ => panic!("compound recovery performs exactly two snapshot writes"),
+                };
+                Err(std::io::Error::other(message))
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("destructive working cleanup failure"));
+        assert!(error.contains("fresh recovery materialization failure"));
+        assert!(error.contains("incomplete recovery cleanup failure"));
+        assert!(error.contains("original snapshot restore failure"));
+        assert_eq!(cleanup_attempts.len(), 2);
+        let incomplete_recovery_dir =
+            incomplete_recovery_dir.expect("failed recovery path remains known");
+        assert!(incomplete_recovery_dir.is_dir());
+        {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+            assert_eq!(
+                state.pending_temp_target_recovery_bytes(),
+                Some(last_good_bytes.as_slice())
+            );
+            let replacement_error = state
+                .install_archive(
+                    Archive::open(replacement_source.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap_err();
+            assert!(replacement_error.contains("discarded"));
+        }
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            match std::fs::remove_dir_all(owned_dir) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .unwrap();
+
+        retry_attempts.sort();
+        let mut expected_attempts = vec![target_dir, incomplete_recovery_dir];
+        expected_attempts.sort();
+        assert_eq!(retry_attempts, expected_attempts);
+        let state = shared_state.lock().unwrap();
+        assert!(state.right.is_none());
+        assert!(state.temp_merge_session.is_none());
+        assert_eq!(state.pending_temp_target_recovery_bytes(), None);
+    }
+
+    #[test]
+    fn temp_target_incomplete_recovery_cleanup_failure_retains_path_for_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let target_dir = target_path.parent().unwrap().to_owned();
+        let target_bytes = std::fs::read(&target_path).unwrap();
+        let mut incomplete_recovery_dir = None;
+        let mut write_attempts = 0;
+
+        let error = discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive working cleanup failure"))
+                } else {
+                    incomplete_recovery_dir = Some(owned_dir.to_owned());
+                    Err(std::io::Error::other("incomplete recovery cleanup failure"))
+                }
+            },
+            |working_path, bytes| {
+                write_attempts += 1;
+                if write_attempts == 1 {
+                    Err(std::io::Error::other(
+                        "fresh recovery materialization failure",
+                    ))
+                } else {
+                    std::fs::write(working_path, bytes)
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("fresh recovery materialization failure"));
+        assert!(error.contains("incomplete recovery cleanup failure"));
+        let incomplete_recovery_dir =
+            incomplete_recovery_dir.expect("failed recovery path remains known");
+        assert!(incomplete_recovery_dir.is_dir());
+        {
+            let state = shared_state.lock().unwrap();
+            assert_eq!(state.right.as_ref().unwrap().path(), target_path);
+            assert_eq!(std::fs::read(&target_path).unwrap(), target_bytes);
+            assert!(state.temp_merge_session.is_some());
+        }
+
+        let mut retry_attempts = Vec::new();
+        discard_temp_target_with_cleanup(&shared_state, |owned_dir| {
+            retry_attempts.push(owned_dir.to_owned());
+            std::fs::remove_dir_all(owned_dir)
+        })
+        .unwrap();
+
+        assert_eq!(retry_attempts, [incomplete_recovery_dir, target_dir]);
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_none());
+    }
+
+    fn staged_temp_merge_for_apply() -> (TempDir, super::state::SharedState, PathBuf) {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source"), ("new.txt", b"new")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap();
+        }
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        (dir, shared_state, working_path)
+    }
+
+    #[test]
+    fn temp_merge_apply_commits_only_the_temporary_target_and_refreshes_its_summary() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap();
+        }
+        let nested_before = Arc::clone(&shared_state.lock().unwrap().right_nested);
+
+        let summary = apply_temp_merge(&shared_state).unwrap();
+
+        assert_eq!(summary.target_side, Side::Right);
+        assert_eq!(summary.entry_count, 1);
+        assert_eq!(summary.applied_source_count, 1);
+        assert_eq!(summary.exported_path, None);
+        let state = shared_state.lock().unwrap();
+        assert_eq!(
+            state
+                .right
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+        assert!(state.right_plan.is_empty());
+        assert!(state.temp_merge_session.is_some());
+        assert!(!Arc::ptr_eq(&nested_before, &state.right_nested));
+        assert_eq!(
+            state
+                .left
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+    }
+
+    #[test]
+    fn temp_merge_command_state_apis_require_and_consume_a_fresh_preview() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(
+            &shared_state,
+            Side::Left,
+            TempTargetCreation::Empty {
+                extension: "jar".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let preview = preview_merge_all_conflicts(&shared_state, Side::Left).unwrap();
+        assert_eq!(preview.new_entries, ["source.txt"]);
+        assert!(preview.conflicts.is_empty());
+        stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap();
+
+        assert!(!shared_state.lock().unwrap().right_plan.is_empty());
+        let error = stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).unwrap_err();
+        assert!(error.contains("preview temporary merge conflicts before staging"));
+    }
+
+    #[test]
+    fn temp_merge_stage_reservation_rejects_concurrent_decisions_and_restores_failed_review() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        preview_merge_all_conflicts(&shared_state, Side::Left).unwrap();
+
+        stage_temp_merge_all_with_after_reserve(
+            &shared_state,
+            Side::Left,
+            vec![TempMergeDecision {
+                entry_path: "source.txt".to_owned(),
+                action: TempMergeConflictAction::Overwrite,
+            }],
+            || {
+                let error = stage_temp_merge_all_shared(
+                    &shared_state,
+                    Side::Left,
+                    vec![TempMergeDecision {
+                        entry_path: "source.txt".to_owned(),
+                        action: TempMergeConflictAction::Skip,
+                    }],
+                )
+                .unwrap_err();
+                assert!(error.contains("temporary merge staging is already active"));
+            },
+        )
+        .unwrap();
+        assert!(!shared_state.lock().unwrap().right_plan.is_empty());
+
+        preview_merge_all_conflicts(&shared_state, Side::Left).unwrap();
+        assert!(
+            stage_temp_merge_all_shared(&shared_state, Side::Left, Vec::new()).is_err(),
+            "invalid decisions fail without consuming the reserved review"
+        );
+        stage_temp_merge_all_shared(
+            &shared_state,
+            Side::Left,
+            vec![TempMergeDecision {
+                entry_path: "source.txt".to_owned(),
+                action: TempMergeConflictAction::Skip,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn temp_merge_apply_failure_keeps_session_plan_and_last_good_working_archive() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap();
+        }
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let working_before = std::fs::read(&working_path).unwrap();
+        std::fs::remove_file(&source).unwrap();
+
+        assert!(apply_temp_merge(&shared_state).is_err());
+
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(!state.right_plan.is_empty());
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+    }
+
+    #[test]
+    fn temp_merge_apply_post_commit_failures_restore_bytes_plan_cache_and_reservation() {
+        for failure_point in [
+            TempMergeApplyFailurePoint::Reopen,
+            TempMergeApplyFailurePoint::Cache,
+            TempMergeApplyFailurePoint::Publish,
+            TempMergeApplyFailurePoint::WorkingExportPostReplace,
+        ] {
+            let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
+            let working_before = std::fs::read(&working_path).unwrap();
+            let nested_before = Arc::clone(&shared_state.lock().unwrap().right_nested);
+
+            let error =
+                apply_temp_merge_with_failure_point(&shared_state, failure_point).unwrap_err();
+
+            assert!(error.contains("injected post-commit"));
+            {
+                let state = shared_state.lock().unwrap();
+                assert!(state.temp_merge_session.is_some());
+                assert!(!state.right_plan.is_empty());
+                assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+                assert!(!state.right.as_ref().unwrap().changed_on_disk().unwrap());
+                assert!(Arc::ptr_eq(&nested_before, &state.right_nested));
+            }
+            let summary = apply_temp_merge(&shared_state).unwrap();
+            assert_eq!(summary.applied_source_count, 1);
+            assert_eq!(
+                shared_state
+                    .lock()
+                    .unwrap()
+                    .right
+                    .as_ref()
+                    .unwrap()
+                    .read_entry("source.txt")
+                    .unwrap(),
+                b"source"
+            );
+        }
+    }
+
+    #[test]
+    fn temp_merge_apply_compound_rollback_failure_enters_retry_only_recovery() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let retry_export = dir.path().join("blocked-export.jar");
+
+        let error = apply_temp_merge_with_failure_point(
+            &shared_state,
+            TempMergeApplyFailurePoint::WorkingExportRollbackFailure,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("failed to restore prior temporary target"));
+        {
+            let mut state = shared_state.lock().unwrap();
+            assert!(state.temp_merge_apply_recovery_is_pending());
+            assert!(state.temp_merge_session.is_none());
+            assert!(state.right.is_none());
+            assert!(state.right_plan.is_empty());
+            assert!(state.clear_staged().unwrap_err().contains("busy"));
+            assert!(
+                state
+                    .unstage("source.txt", Some(Side::Right))
+                    .unwrap_err()
+                    .contains("busy")
+            );
+        }
+        assert!(
+            discard_temp_target(&shared_state)
+                .unwrap_err()
+                .contains("busy")
+        );
+        assert!(
+            save_temp_target_as(&shared_state, retry_export)
+                .unwrap_err()
+                .contains("recovery")
+        );
+
+        let summary = apply_temp_merge(&shared_state).unwrap();
+
+        assert_eq!(summary.applied_source_count, 1);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .right
+                .as_ref()
+                .unwrap()
+                .read_entry("source.txt")
+                .unwrap(),
+            b"source"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_merge_apply_recovery_is_pending()
+        );
+        assert!(working_path.is_file());
+    }
+
+    #[test]
+    fn temp_merge_apply_rejects_reentrant_clear_and_unstage_without_losing_original_plan() {
+        for mutation in [TempMergePlanMutation::Clear, TempMergePlanMutation::Unstage] {
+            let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
+            let working_before = std::fs::read(&working_path).unwrap();
+
+            let error = apply_temp_merge_with_plan_mutation(&shared_state, mutation).unwrap_err();
+
+            assert!(error.contains("temporary merge target is busy"));
+            {
+                let state = shared_state.lock().unwrap();
+                assert_eq!(state.right_plan.staged().len(), 1);
+                assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+            }
+            apply_temp_merge(&shared_state).unwrap();
+        }
+    }
+
+    #[test]
+    fn temp_merge_stale_apply_cancellation_cannot_clear_a_newer_reservation() {
+        let (_dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let working_before = std::fs::read(&working_path).unwrap();
+
+        let error = apply_temp_merge_with_stale_reservation(&shared_state).unwrap_err();
+
+        assert!(error.contains("temporary merge apply reservation changed"));
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+        assert!(!shared_state.lock().unwrap().right_plan.is_empty());
+        assert!(
+            apply_temp_merge(&shared_state)
+                .unwrap_err()
+                .contains("temporary merge target is busy")
+        );
+    }
+
+    #[test]
+    fn temp_merge_generic_commit_cannot_bypass_apply_for_active_or_pending_target() {
+        let (_dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        for backup in [false, true] {
+            for confirm_signed in [false, true] {
+                let error = shared_state
+                    .lock()
+                    .unwrap()
+                    .commit_merge(Side::Right, backup, confirm_signed)
+                    .unwrap_err();
+                assert!(error.contains("Apply temporary merge"));
+            }
+        }
+
+        let target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        discard_temp_target_with_cleanup_and_write(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive cleanup failure"))
+                } else {
+                    std::fs::remove_dir_all(owned_dir)
+                }
+            },
+            |_, _| Err(std::io::Error::other("snapshot restore failure")),
+        )
+        .unwrap_err();
+        let error = shared_state
+            .lock()
+            .unwrap()
+            .commit_merge(Side::Right, true, true)
+            .unwrap_err();
+        assert!(error.contains("Apply temporary merge"));
+    }
+
+    #[test]
+    fn temp_merge_apply_save_as_is_atomic_and_keeps_the_session_active() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let destination = dir.path().join("exports").join("merged.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        std::fs::create_dir(destination.parent().unwrap()).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        let summary = save_temp_target_as(&shared_state, destination.clone()).unwrap();
+
+        assert_eq!(
+            summary.exported_path,
+            Some(
+                std::fs::canonicalize(&destination)
+                    .unwrap()
+                    .display()
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            std::fs::read(&working_path).unwrap()
+        );
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert!(state.right.is_some());
+    }
+
+    #[test]
+    fn temp_merge_apply_failed_save_as_keeps_session_and_last_good_working_archive() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let successful_destination = dir.path().join("saved.jar");
+        let invalid_destination = dir.path().join("missing").join("saved.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        save_temp_target_as(&shared_state, successful_destination.clone()).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let working_before = std::fs::read(&working_path).unwrap();
+
+        assert!(save_temp_target_as(&shared_state, invalid_destination).is_err());
+
+        let state = shared_state.lock().unwrap();
+        assert!(state.temp_merge_session.is_some());
+        assert_eq!(std::fs::read(&working_path).unwrap(), working_before);
+        assert!(successful_destination.is_file());
+    }
+
+    #[test]
+    fn temp_merge_save_as_post_replace_failure_restores_existing_destination_identity_and_bytes() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("existing-export.jar");
+        let destination_alias = dir.path().join("existing-export-alias.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+        std::fs::hard_link(&destination, &destination_alias).unwrap();
+
+        let error =
+            save_temp_target_as_with_post_replace_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("injected post-replace parent sync failure"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(same_file::is_same_file(&destination, &destination_alias).unwrap());
+        save_temp_target_as(&shared_state, dir.path().join("retry-existing.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_post_replace_failure_removes_new_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("new-export.jar");
+
+        let error =
+            save_temp_target_as_with_post_replace_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("injected post-replace parent sync failure"));
+        assert!(!destination.exists());
+        save_temp_target_as(&shared_state, dir.path().join("retry-new.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_failed_rollback_is_owned_until_retry_restores_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("existing-export.jar");
+        let retry_destination = dir.path().join("retry-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_rollback_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert!(error.contains("export recovery is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert_ne!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            discard_temp_target(&shared_state)
+                .unwrap_err()
+                .contains("busy")
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(retry_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_retries_quarantined_rollback_before_ambient_validation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("quarantined-rollback-export.jar");
+        let retry_destination = dir.path().join("quarantined-rollback-retry.jar");
+        let original_destination = b"caller-owned-before-export";
+        std::fs::write(&destination, original_destination).unwrap();
+
+        fail_next_unix_export_quarantine_finish();
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge export recovery is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            !destination.exists(),
+            "the owned file moved into quarantine"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert_eq!(std::fs::read(&destination).unwrap(), original_destination);
+        assert!(retry_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[test]
+    fn temp_merge_save_as_cleanup_sync_failure_retries_after_backup_was_removed() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let first_destination = dir.path().join("first-export.jar");
+        let second_destination = dir.path().join("second-export.jar");
+        std::fs::write(&first_destination, b"caller-owned-before-export").unwrap();
+
+        let error =
+            save_temp_target_as_with_cleanup_failure(&shared_state, first_destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("export cleanup is pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert_eq!(
+            std::fs::read(&first_destination).unwrap(),
+            std::fs::read(&working_path).unwrap()
+        );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            }),
+            "the injected failure happens after backup removal"
+        );
+
+        save_temp_target_as(&shared_state, second_destination.clone()).unwrap();
+
+        assert!(second_destination.is_file());
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_retains_recovery_after_a_second_cleanup_failure() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let first_destination = dir.path().join("first-export.jar");
+        let final_destination = dir.path().join("final-export.jar");
+        std::fs::write(&first_destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_cleanup_failure(&shared_state, first_destination.clone())
+            .unwrap_err();
+        fail_next_temp_target_export_recovery_cleanup();
+
+        let second_error =
+            save_temp_target_as(&shared_state, dir.path().join("blocked.jar")).unwrap_err();
+        assert!(second_error.contains("temporary merge export recovery is still pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending(),
+            "the second failure must retain recovery ownership",
+        );
+        assert_eq!(
+            std::fs::read(&first_destination).unwrap(),
+            std::fs::read(&working_path).unwrap(),
+        );
+
+        let summary = save_temp_target_as(&shared_state, final_destination.clone()).unwrap();
+        let expected_export = std::fs::canonicalize(&final_destination)
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(
+            summary.exported_path.as_deref(),
+            Some(expected_export.as_str())
+        );
+        assert_eq!(
+            std::fs::read(&final_destination).unwrap(),
+            std::fs::read(&working_path).unwrap(),
+        );
+        let state = shared_state.lock().unwrap();
+        assert!(!state.temp_target_export_recovery_is_pending());
+        assert_eq!(
+            state.temp_target_exported_path_for_test(),
+            Some(std::fs::canonicalize(&final_destination).unwrap()),
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_state_drop_recovers_pending_save_as_rollback() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("drop-rollback-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_rollback_failure(&shared_state, destination.clone()).unwrap_err();
+
+        assert_ne!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+
+        drop(shared_state);
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_state_drop_cleans_pending_save_as_backup() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("drop-cleanup-export.jar");
+        let working_bytes = std::fs::read(&working_path).unwrap();
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_backup_removal_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            working_bytes.as_slice()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+
+        drop(shared_state);
+
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            working_bytes.as_slice()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_partial_snapshot_before_capture_finishes() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("partial-snapshot-export.jar");
+        let retry_destination = dir.path().join("partial-snapshot-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_partial_snapshot_capture_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("snapshot capture"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            }),
+            "partial backup must remain named by the pending recovery owner"
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_partial_write_when_failure_cleanup_cannot_remove_it() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("partial-write-export.jar");
+        let retry_destination = dir.path().join("partial-write-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error =
+            save_temp_target_as_with_partial_write_failure(&shared_state, destination.clone())
+                .unwrap_err();
+
+        assert!(error.contains("temporary write cleanup"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-write-")
+            }),
+            "partial write must remain named by the pending recovery owner"
+        );
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_rolls_back_when_post_rename_durability_fails() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("durability-failure-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("injected renamed file durability failure"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        save_temp_target_as(&shared_state, dir.path().join("durability-retry.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_owns_backup_when_post_capture_durability_fails() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("capture-durability-export.jar");
+        let retry_destination = dir.path().join("capture-durability-retry.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_snapshot_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("injected snapshot durability failure"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-rollback-")
+        }));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_cleans_a_read_only_snapshot_without_sticking_busy() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("read-only-snapshot-export.jar");
+        let retry_destination = dir.path().join("read-only-snapshot-retry.jar");
+        std::fs::write(&destination, b"caller-owned-read-only").unwrap();
+        let original_permissions = std::fs::metadata(&destination).unwrap().permissions();
+        let mut read_only_permissions = original_permissions.clone();
+        read_only_permissions.set_readonly(true);
+        std::fs::set_permissions(&destination, read_only_permissions).unwrap();
+
+        save_temp_target_as_with_snapshot_durability_failure(&shared_state, destination.clone())
+            .unwrap_err();
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-read-only"
+        );
+        assert!(
+            !shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+        std::fs::set_permissions(&destination, original_permissions).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_save_as_never_publishes_or_rolls_back_a_replaced_destination() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("externally-replaced-export.jar");
+        let replacement = b"third-party-replacement";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_hooks(
+            &shared_state,
+            destination.clone(),
+            |_| {},
+            |_| {
+                replace_temp_target_export_destination_for_test(&destination, replacement).unwrap();
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_unix_rollback_preserves_both_racing_replacements() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("unix-raced-rollback-export.jar");
+        let first_replacement = b"third-party-between-check-and-remove";
+        let second_replacement = b"third-party-before-no-clobber-restore";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let first_destination = destination.clone();
+        let second_destination = destination.clone();
+        set_unix_export_remove_race_hooks(
+            move || {
+                std::fs::remove_file(&first_destination).unwrap();
+                std::fs::write(&first_destination, first_replacement).unwrap();
+            },
+            move || {
+                std::fs::write(&second_destination, second_replacement).unwrap();
+            },
+        );
+
+        let error = save_temp_target_as_with_post_rename_durability_failure(
+            &shared_state,
+            destination.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert!(error.contains(".lcdiff-save-as-preserved-"));
+        assert_eq!(std::fs::read(&destination).unwrap(), second_replacement);
+        let preserved = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-preserved-")
+            })
+            .expect("the first replacement must remain at a stable recovery path")
+            .path()
+            .join("file");
+        assert_eq!(std::fs::read(&preserved).unwrap(), first_replacement);
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), second_replacement);
+        assert_eq!(std::fs::read(&preserved).unwrap(), first_replacement);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_unix_artifact_cleanup_never_unlinks_a_racing_replacement() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("unix-raced-artifact-export.jar");
+        let retry_destination = dir.path().join("unix-raced-artifact-retry.jar");
+        let artifact_replacement = b"third-party-artifact-replacement";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let parent = dir.path().to_owned();
+        set_unix_export_remove_race_hooks(
+            move || {
+                let artifact = std::fs::read_dir(&parent)
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .find(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(".lcdiff-save-as-rollback-")
+                    })
+                    .expect("Save As rollback artifact must exist before cleanup")
+                    .path();
+                std::fs::remove_file(&artifact).unwrap();
+                std::fs::write(&artifact, artifact_replacement).unwrap();
+            },
+            || {},
+        );
+
+        let error = save_temp_target_as(&shared_state, destination).unwrap_err();
+
+        assert!(error.contains("export cleanup is pending"));
+        let artifact = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-rollback-")
+            })
+            .expect("the raced artifact replacement must remain named")
+            .path();
+        assert_eq!(std::fs::read(&artifact).unwrap(), artifact_replacement);
+        let preserved = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".lcdiff-save-as-preserved-")
+            })
+            .expect("the raced artifact must also retain a stable recovery path")
+            .path()
+            .join("file");
+        assert_eq!(std::fs::read(&preserved).unwrap(), artifact_replacement);
+
+        save_temp_target_as(&shared_state, retry_destination.clone()).unwrap();
+
+        assert!(retry_destination.is_file());
+        assert_eq!(std::fs::read(&artifact).unwrap(), artifact_replacement);
+        assert_eq!(std::fs::read(&preserved).unwrap(), artifact_replacement);
+    }
+
+    #[test]
+    fn temp_merge_save_as_revalidates_the_exact_inode_before_delayed_publication() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("delayed-publication-export.jar");
+        let retry_destination = dir.path().join("delayed-publication-retry.jar");
+        let replacement = b"third-party-after-cleanup-failure";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_cleanup_failure(&shared_state, destination.clone()).unwrap_err();
+        replace_temp_target_export_destination_for_test(&destination, replacement).unwrap();
+
+        let error = save_temp_target_as(&shared_state, retry_destination).unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+
+        drop(shared_state);
+
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+    }
+
+    #[test]
+    fn temp_merge_save_as_does_not_publish_a_destination_replaced_after_cleanup() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("post-cleanup-replacement-export.jar");
+        let replacement = b"third-party-after-successful-cleanup";
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_cleanup_replacement(
+            &shared_state,
+            destination.clone(),
+            replacement,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("automatic rollback refused"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None,
+            "a third-party replacement must not become the published Save As path"
+        );
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending()
+        );
+    }
+
+    #[test]
+    fn temp_merge_save_as_does_not_overwrite_a_destination_created_after_reservation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("late-created-export.jar");
+        let replacement = b"third-party-created-after-reservation";
+
+        let error = save_temp_target_as_with_pre_capture_destination_creation(
+            &shared_state,
+            destination.clone(),
+            replacement,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("changed before snapshot capture"));
+        assert_eq!(std::fs::read(&destination).unwrap(), replacement);
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None
+        );
+        save_temp_target_as(&shared_state, dir.path().join("late-created-retry.jar")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_recovers_the_pinned_parent_after_post_cleanup_rename() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("post-cleanup-parent");
+        let moved_parent = dir.path().join("post-cleanup-parent-moved");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_post_cleanup_parent_swap(
+            &shared_state,
+            destination.clone(),
+            parent.clone(),
+            moved_parent.clone(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("changed before publication"));
+        assert!(!destination.exists());
+        assert_eq!(
+            std::fs::read(moved_parent.join("saved.jar")).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_exported_path_for_test(),
+            None
+        );
+        save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
+    }
+
+    #[test]
+    fn temp_merge_stale_save_publication_preserves_destination_and_newer_reservation() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let destination = dir.path().join("stale-export.jar");
+        std::fs::write(&destination, b"caller-owned-before-export").unwrap();
+
+        let error = save_temp_target_as_with_stale_reservation(&shared_state, destination.clone())
+            .unwrap_err();
+
+        assert!(error.contains("temporary merge export reservation changed"));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"caller-owned-before-export"
+        );
+        assert!(
+            save_temp_target_as(&shared_state, dir.path().join("retry.jar"))
+                .unwrap_err()
+                .contains("temporary merge target is busy")
+        );
+    }
+
+    #[test]
+    fn temp_merge_save_as_rejects_working_source_owned_and_hard_link_aliases() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let owned_child = working_path.parent().unwrap().join("export.jar");
+        let source_hard_link = dir.path().join("source-hard-link.jar");
+        let working_hard_link = dir.path().join("working-hard-link.jar");
+        std::fs::hard_link(&source, &source_hard_link).unwrap();
+        std::fs::hard_link(&working_path, &working_hard_link).unwrap();
+
+        for destination in [
+            &source,
+            &working_path,
+            &owned_child,
+            &source_hard_link,
+            &working_hard_link,
+        ] {
+            let error = save_temp_target_as(&shared_state, destination.to_path_buf()).unwrap_err();
+            assert!(error.contains("temporary merge export destination"));
+        }
+        assert!(shared_state.lock().unwrap().temp_merge_session.is_some());
+    }
+
+    #[test]
+    fn temp_merge_failed_install_drops_prepared_ownership_after_unlock() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement = dir.path().join("replacement.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement, &[("replacement.txt", b"replacement")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        let mut prepared =
+            prepare_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent)
+                .unwrap();
+        let lock_available_during_drop = Arc::new(AtomicBool::new(false));
+        set_prepared_temp_target_drop_probe(
+            &mut prepared,
+            Arc::clone(&shared_state),
+            Arc::clone(&lock_available_during_drop),
+        );
+        shared_state
+            .lock()
+            .unwrap()
+            .install_archive(
+                Archive::open(replacement.to_string_lossy()).unwrap(),
+                Side::Left,
+            )
+            .unwrap();
+
+        assert!(install_prepared_temp_target(&shared_state, prepared).is_err());
+        assert!(lock_available_during_drop.load(Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_rejects_symlink_aliases_to_source_and_working_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let working_path = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let source_alias = dir.path().join("source-alias.jar");
+        let working_alias = dir.path().join("working-alias.jar");
+        symlink(&source, &source_alias).unwrap();
+        symlink(&working_path, &working_alias).unwrap();
+
+        assert!(save_temp_target_as(&shared_state, source_alias).is_err());
+        assert!(save_temp_target_as(&shared_state, working_alias).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_uses_prevalidated_destination_and_poison_safe_publication() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let safe_dir = dir.path().join("safe");
+        let link_dir = dir.path().join("destination-link");
+        create_zip(&source, &[("source.txt", b"source")]);
+        std::fs::create_dir(&safe_dir).unwrap();
+        symlink(&safe_dir, &link_dir).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let working_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let requested_destination = link_dir.join("saved.jar");
+        let expected_destination = safe_dir.join("saved.jar");
+
+        let summary = save_temp_target_as_with_hooks(
+            &shared_state,
+            requested_destination,
+            |_| {
+                std::fs::remove_file(&link_dir).unwrap();
+                symlink(&working_dir, &link_dir).unwrap();
+            },
+            |state| {
+                let state = Arc::clone(state);
+                let _ = std::panic::catch_unwind(move || {
+                    let _guard = state.lock().unwrap();
+                    panic!("inject state poison after successful export");
+                });
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            summary.exported_path,
+            Some(
+                std::fs::canonicalize(&expected_destination)
+                    .unwrap()
+                    .display()
+                    .to_string()
+            )
+        );
+        assert!(expected_destination.is_file());
+        assert!(!working_dir.join("saved.jar").exists());
+        discard_temp_target_with_outcome(&shared_state).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_rejects_publication_after_reserved_parent_is_replaced() {
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("export-parent");
+        let moved_parent = dir.path().join("export-parent-moved");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+
+        let error =
+            save_temp_target_as_with_after_reserve(&shared_state, destination.clone(), || {
+                std::fs::rename(&parent, &moved_parent).unwrap();
+                std::fs::create_dir(&parent).unwrap();
+            })
+            .unwrap_err();
+
+        assert!(error.contains("temporary merge export destination parent changed"));
+        assert!(!destination.exists());
+        assert!(!moved_parent.join("saved.jar").exists());
+        assert_eq!(
+            apply_temp_merge(&shared_state).unwrap().exported_path,
+            None,
+            "failed Save As must not publish a stale last export path"
+        );
+        save_temp_target_as(&shared_state, parent.join("retry.jar")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_merge_save_as_rejects_publication_after_reserved_parent_is_symlink_swapped() {
+        use std::os::unix::fs::symlink;
+
+        let (dir, shared_state, _working_path) = staged_temp_merge_for_apply();
+        let parent = dir.path().join("export-parent");
+        let moved_parent = dir.path().join("export-parent-moved");
+        let escape_parent = dir.path().join("escape-parent");
+        let destination = parent.join("saved.jar");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::create_dir(&escape_parent).unwrap();
+
+        let error =
+            save_temp_target_as_with_parent_swap(&shared_state, destination.clone(), || {
+                std::fs::rename(&parent, &moved_parent).unwrap();
+                symlink(&escape_parent, &parent).unwrap();
+            })
+            .unwrap_err();
+
+        assert!(error.contains("temporary merge export destination parent changed"));
+        assert!(!moved_parent.join("saved.jar").exists());
+        assert!(!escape_parent.join("saved.jar").exists());
+        assert_eq!(
+            apply_temp_merge(&shared_state).unwrap().exported_path,
+            None,
+            "failed Save As must not publish a stale last export path"
+        );
+    }
+
+    #[test]
+    fn temp_merge_discard_reports_retry_only_state_then_safely_finishes_retry() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Left).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Left, TempTargetCreation::CopyCurrent).unwrap();
+        let target_dir = shared_state
+            .lock()
+            .unwrap()
+            .right
+            .as_ref()
+            .unwrap()
+            .path()
+            .parent()
+            .unwrap()
+            .to_owned();
+        let mut concurrent_attempted = false;
+        let outcome = discard_temp_target_with_cleanup_and_write_outcome(
+            &shared_state,
+            |owned_dir| {
+                if owned_dir == target_dir {
+                    concurrent_attempted = true;
+                    assert!(discard_temp_target_with_outcome(&shared_state).is_err());
+                    std::fs::remove_dir_all(owned_dir).unwrap();
+                    Err(std::io::Error::other("destructive cleanup failure"))
+                } else {
+                    std::fs::remove_dir_all(owned_dir)
+                }
+            },
+            |_, _| Err(std::io::Error::other("snapshot restore failure")),
+        )
+        .unwrap();
+
+        assert!(concurrent_attempted);
+        assert_eq!(
+            outcome,
+            TempTargetDiscardOutcome::RetryDiscardOnly {
+                message: "failed to discard temporary merge target: destructive cleanup failure; \
+                          recovery failed: snapshot restore failure; original session restore failed: \
+                          snapshot restore failure"
+                    .to_owned(),
+            }
+        );
+        {
+            let state = shared_state.lock().unwrap();
+            assert!(state.right.is_none());
+            assert!(state.temp_merge_session.is_none());
+            assert!(state.pending_temp_target_recovery_bytes().is_some());
+        }
+        assert_eq!(
+            discard_temp_target_with_outcome(&shared_state).unwrap(),
+            TempTargetDiscardOutcome::Discarded
+        );
+        assert_eq!(
+            shared_state
+                .lock()
+                .unwrap()
+                .pending_temp_target_recovery_bytes(),
+            None
+        );
+    }
+
+    #[test]
+    fn right_source_temp_target_guards_left_target_and_right_source() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_source = dir.path().join("replacement-source.jar");
+        let forbidden_target = dir.path().join("forbidden-target.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_source, &[("replacement.txt", b"replacement")]);
+        create_zip(&forbidden_target, &[("forbidden.txt", b"forbidden")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        let mut state = shared_state.lock().unwrap();
+        let target_path = state.left.as_ref().unwrap().path().to_owned();
+
+        assert!(
+            state
+                .stage_copy(Side::Left, Side::Right, "source.txt")
+                .unwrap_err()
+                .contains("temporary merge source")
+        );
+        state
+            .install_archive(
+                Archive::open(replacement_source.to_string_lossy()).unwrap(),
+                Side::Right,
+            )
+            .unwrap();
+        state
+            .stage_copy(Side::Right, Side::Left, "replacement.txt")
+            .unwrap();
+        assert!(!state.left_plan.is_empty());
+        assert!(
+            state
+                .install_archive(
+                    Archive::open(forbidden_target.to_string_lossy()).unwrap(),
+                    Side::Left,
+                )
+                .unwrap_err()
+                .contains("temporary merge target")
+        );
+        assert_eq!(state.left.as_ref().unwrap().path(), target_path);
+    }
+
+    #[test]
+    fn right_source_temp_target_rejects_atomic_compare_pair_replacement() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let replacement_left = dir.path().join("replacement-left.jar");
+        let replacement_right = dir.path().join("replacement-right.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        create_zip(&replacement_left, &[("left.txt", b"left")]);
+        create_zip(&replacement_right, &[("right.txt", b"right")]);
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+
+        let error = open_compare_sources_through_production(
+            &shared_state,
+            replacement_left.display().to_string(),
+            replacement_right.display().to_string(),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("temporary merge target"));
+        let state = shared_state.lock().unwrap();
+        assert_eq!(state.left.as_ref().unwrap().path(), target_path);
+        assert_eq!(state.right.as_ref().unwrap().path(), source);
+    }
+
+    #[test]
+    fn discard_left_temp_target_preserves_right_source_and_removes_owned_directory() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        create_zip(&source, &[("source.txt", b"source")]);
+        let source_before = std::fs::read(&source).unwrap();
+        let mut state = AppState::default();
+        load_archive_through_production(&mut state, source.to_str().unwrap(), Side::Right).unwrap();
+        let shared_state = Arc::new(Mutex::new(state));
+        create_temp_target(&shared_state, Side::Right, TempTargetCreation::CopyCurrent).unwrap();
+        {
+            let mut state = shared_state.lock().unwrap();
+            state
+                .stage_copy(Side::Right, Side::Left, "source.txt")
+                .unwrap();
+        }
+        let target_path = shared_state
+            .lock()
+            .unwrap()
+            .left
+            .as_ref()
+            .unwrap()
+            .path()
+            .to_owned();
+        let owned_temp_dir = target_path.parent().unwrap().to_owned();
+
+        discard_temp_target(&shared_state).unwrap();
+
+        assert_eq!(std::fs::read(&source).unwrap(), source_before);
+        assert!(!target_path.exists());
+        assert!(!owned_temp_dir.exists());
+        let state = shared_state.lock().unwrap();
+        assert!(state.left.is_none());
+        assert!(state.left_plan.is_empty());
+        assert!(state.right.is_some());
+        assert!(state.temp_merge_session.is_none());
+    }
+
+    fn with_shared_state<R>(
+        state: &mut AppState,
+        action: impl FnOnce(&super::state::SharedState) -> R,
+    ) -> R {
+        let shared_state = Arc::new(Mutex::new(std::mem::take(state)));
+        let result = action(&shared_state);
+        let mutex = match Arc::try_unwrap(shared_state) {
+            Ok(mutex) => mutex,
+            Err(_) => panic!("production state helper retained a shared-state clone"),
+        };
+        *state = mutex.into_inner().unwrap();
+        result
+    }
+
+    fn create_temp_target_in_state(
+        state: &mut AppState,
+        source_side: Side,
+        creation: TempTargetCreation,
+    ) -> Result<super::state::TempMergeSessionSummary, String> {
+        with_shared_state(state, |shared_state| {
+            create_temp_target(shared_state, source_side, creation)
+        })
+    }
+
+    fn discard_temp_target_in_state(state: &mut AppState) -> Result<(), String> {
+        with_shared_state(state, discard_temp_target)
+    }
+
     fn load_archive_through_production(
         state: &mut AppState,
         path: &str,
@@ -1405,6 +4556,178 @@ mod tests {
     ) -> Result<super::state::ArchiveSummary, String> {
         let archive = tauri::async_runtime::block_on(open_archive_from_path(path.to_owned()))?;
         state.install_archive(archive, side)
+    }
+
+    fn open_compare_sources_through_production(
+        state: &super::state::SharedState,
+        left_path: String,
+        right_path: String,
+    ) -> Result<
+        (
+            super::state::ArchiveSummary,
+            super::state::ArchiveSummary,
+            lcdiff_core::ArchiveDiff,
+        ),
+        String,
+    > {
+        let (left, right, diff) = tauri::async_runtime::block_on(
+            open_compare_archives_from_paths(left_path, right_path),
+        )?;
+        let prepared = prepare_compare_archives(left, right)?;
+        let (left_summary, right_summary, displaced) =
+            install_prepared_compare_archives(state, prepared)?;
+        drop(displaced);
+        Ok((left_summary, right_summary, diff))
+    }
+
+    fn read_text_file_through_production(
+        path: String,
+    ) -> Result<super::state::TextFileContent, String> {
+        tauri::async_runtime::block_on(read_text_file_from_path(path))
+    }
+
+    #[test]
+    fn read_text_file_returns_canonical_path_and_valid_utf8_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "hello \u{1f30d}\n").unwrap();
+
+        let content = read_text_file_through_production(path.display().to_string()).unwrap();
+
+        assert_eq!(
+            content.path,
+            std::fs::canonicalize(&path).unwrap().display().to_string()
+        );
+        assert_eq!(content.content, "hello \u{1f30d}\n");
+    }
+
+    #[test]
+    fn read_text_file_rejects_nul_binary_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("binary.txt");
+        std::fs::write(&path, b"before\0after").unwrap();
+
+        let error = read_text_file_through_production(path.display().to_string()).unwrap_err();
+
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("file is not valid UTF-8 text"), "{error}");
+    }
+
+    #[test]
+    fn read_text_file_rejects_invalid_utf8_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("invalid.txt");
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+
+        let error = read_text_file_through_production(path.display().to_string()).unwrap_err();
+
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("file is not valid UTF-8 text"), "{error}");
+    }
+
+    #[test]
+    fn read_text_file_rejects_directories() {
+        let dir = tempdir().unwrap();
+
+        let error =
+            read_text_file_through_production(dir.path().display().to_string()).unwrap_err();
+
+        assert!(error.contains("regular file"), "{error}");
+    }
+
+    #[test]
+    fn compare_pair_install_is_atomic_when_right_open_fails() {
+        let dir = tempdir().unwrap();
+        let old_left = dir.path().join("old-left.jar");
+        let old_right = dir.path().join("old-right.jar");
+        let candidate_left = dir.path().join("candidate-left.jar");
+        create_zip(&old_left, &[("old-left.txt", b"left")]);
+        create_zip(&old_right, &[("old-right.txt", b"right")]);
+        create_zip(&candidate_left, &[("new-left.txt", b"new")]);
+
+        let state = Arc::new(Mutex::new(AppState::new(None)));
+        let (before_left, before_right) = {
+            let mut state = state.lock().unwrap();
+            load_archive_through_production(&mut state, old_left.to_str().unwrap(), Side::Left)
+                .unwrap();
+            load_archive_through_production(&mut state, old_right.to_str().unwrap(), Side::Right)
+                .unwrap();
+            (
+                state.left.as_ref().map(|archive| archive.path().to_owned()),
+                state
+                    .right
+                    .as_ref()
+                    .map(|archive| archive.path().to_owned()),
+            )
+        };
+
+        let result = open_compare_sources_through_production(
+            &state,
+            candidate_left.display().to_string(),
+            dir.path().join("missing-right.jar").display().to_string(),
+        );
+
+        assert!(result.is_err());
+        let state = state.lock().unwrap();
+        assert_eq!(
+            state.left.as_ref().map(|archive| archive.path().to_owned()),
+            before_left
+        );
+        assert_eq!(
+            state
+                .right
+                .as_ref()
+                .map(|archive| archive.path().to_owned()),
+            before_right
+        );
+    }
+
+    #[test]
+    fn compare_pair_install_returns_displaced_resources_after_unlock() {
+        let dir = tempdir().unwrap();
+        let old_left = dir.path().join("old-left.jar");
+        let old_right = dir.path().join("old-right.jar");
+        let new_left = dir.path().join("new-left.jar");
+        let new_right = dir.path().join("new-right.jar");
+        create_zip(&old_left, &[("old-left.txt", b"left")]);
+        create_zip(&old_right, &[("old-right.txt", b"right")]);
+        create_zip(&new_left, &[("new-left.txt", b"new left")]);
+        create_zip(&new_right, &[("new-right.txt", b"new right")]);
+
+        let mut initial = AppState::new(None);
+        load_archive_through_production(&mut initial, old_left.to_str().unwrap(), Side::Left)
+            .unwrap();
+        load_archive_through_production(&mut initial, old_right.to_str().unwrap(), Side::Right)
+            .unwrap();
+        let old_left_cache = Arc::downgrade(&initial.left_nested);
+        let old_right_cache = Arc::downgrade(&initial.right_nested);
+        let state = Arc::new(Mutex::new(initial));
+        let prepared = prepare_compare_archives(
+            Archive::open(new_left.to_string_lossy()).unwrap(),
+            Archive::open(new_right.to_string_lossy()).unwrap(),
+        )
+        .unwrap();
+
+        let (left, right, displaced) = install_prepared_compare_archives(&state, prepared).unwrap();
+
+        assert!(state.try_lock().is_ok(), "state lock must be released");
+        assert_eq!(left.path, new_left.display().to_string());
+        assert_eq!(right.path, new_right.display().to_string());
+        assert_eq!(
+            displaced.0.as_ref().map(Archive::path),
+            Some(old_left.as_path())
+        );
+        assert_eq!(
+            displaced.1.as_ref().map(Archive::path),
+            Some(old_right.as_path())
+        );
+        assert!(old_left_cache.upgrade().is_some());
+        assert!(old_right_cache.upgrade().is_some());
+
+        drop(displaced);
+
+        assert!(old_left_cache.upgrade().is_none());
+        assert!(old_right_cache.upgrade().is_none());
     }
 
     fn open_view_source_through_production(

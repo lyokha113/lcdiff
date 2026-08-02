@@ -811,9 +811,27 @@ main.app-shell {
 .source-slot__name, .source-slot__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .source-slot__name { color: var(--text-0); font-size: 0.78rem; font-weight: 570; }
 .source-slot__path { color: var(--text-2); font-family: var(--font-mono); font-size: 0.61rem; }
+.source-slot__role { display: grid; gap: 0.12rem; color: var(--brass); font-family: var(--font-mono); font-size: 0.56rem; font-weight: 650; letter-spacing: 0.04em; }
+.source-slot__summary { color: var(--text-2); font-size: 0.54rem; font-weight: 450; letter-spacing: 0; text-transform: none; }
 .source-rail__bridge { display: grid; place-items: center; border-inline: 1px solid var(--line); color: var(--text-2); background: color-mix(in oklab, var(--ink-0) 52%, transparent); }
 .source-rail__bridge svg { width: 0.9rem; }
 .source-picker { width: min(27rem, calc(100vw - 2rem)); }
+
+/* ---------- temporary merge dialogs ---------- */
+.temp-merge-dialog { width: min(34rem, calc(100vw - 2rem)); max-width: 34rem; }
+.temp-merge-dialog__fields { display: grid; gap: 0.75rem; }
+.temp-merge-dialog__field { display: grid; gap: 0.35rem; color: var(--text-1); font-size: 0.72rem; font-weight: 600; }
+.temp-merge-conflicts { max-height: min(42rem, calc(100vh - 2rem)); }
+.temp-merge-conflicts--with-new { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+.temp-merge-conflicts--without-new { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.temp-merge-conflicts__new { display: grid; gap: 0.25rem; padding: 0.6rem 0.7rem; border: 1px solid var(--line-soft); border-radius: 0.45rem; background: color-mix(in oklab, var(--ink-2) 78%, transparent); color: var(--text-1); font-size: 0.7rem; }
+.temp-merge-conflicts__new ul { max-height: 5.5rem; margin: 0; padding-left: 1.1rem; overflow: auto; color: var(--text-2); font-family: var(--font-mono); font-size: 0.64rem; }
+.temp-merge-conflicts__bulk { display: flex; gap: 0.35rem; }
+.temp-merge-conflicts__list { display: grid; min-height: 0; overflow: auto; border-block: 1px solid var(--line-soft); }
+.temp-merge-conflicts__item { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 2.35rem; padding: 0.35rem 0; border-bottom: 1px solid color-mix(in oklab, var(--line-soft) 72%, transparent); }
+.temp-merge-conflicts__item:last-child { border-bottom: 0; }
+.temp-merge-conflicts__item code { min-width: 0; overflow: hidden; color: var(--text-0); font-family: var(--font-mono); font-size: 0.67rem; text-overflow: ellipsis; white-space: nowrap; }
+.temp-merge-conflicts__choices { display: inline-flex; flex: 0 0 auto; gap: 0.12rem; }
 
 /* ---------- View source tabs ---------- */
 .view-source-tabs {
@@ -1350,6 +1368,8 @@ h1 {
   scrollbar-width: thin;
 }
 .diff-toolbar-center > * { flex: 0 0 auto; }
+.temp-merge-actions { display: inline-flex; align-items: center; gap: 0.2rem; }
+.temp-merge-actions [data-slot="button"] { height: 1.65rem; padding-inline: 0.45rem; font-size: 0.66rem; }
 .content-line-filter {
   display: inline-flex;
   align-items: center;

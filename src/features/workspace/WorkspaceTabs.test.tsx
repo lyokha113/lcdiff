@@ -100,11 +100,11 @@ describe("WorkspaceTabs", () => {
     expect(props.onExpandTree).toHaveBeenCalledTimes(1);
     expect(props.onCollapseTree).toHaveBeenCalledTimes(1);
   });
-  it("hides the tree filter and expand controls in View mode", () => {
+  it("hides the tree filter but exposes expand controls in View mode", () => {
     setup({ mode: "single" });
     expect(screen.queryByRole("group", { name: "Tree filter" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Expand all folders" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Collapse all folders" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand all folders" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse all folders" })).toBeInTheDocument();
   });
   it("renders one tab per diff with the basename label", () => {
     setup();

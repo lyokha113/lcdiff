@@ -17,23 +17,31 @@ import {
   computeDiff,
   computeNestedDiff,
   computeViewNestedEntries,
+  createTempTarget,
   deepSearch,
   deepSearchViewSource,
+  discardTempTarget,
   disassemble,
   disassembleViewEntry,
   listSystemFonts,
   listViewSources,
   openArchive,
+  openCompareSources,
   openViewSource,
   pendingOpenPaths,
   platformHints,
   prefetchSiblings,
   readEntry,
+  readTextFile,
   readViewEntry,
+  applyTempMerge,
+  previewMergeAllConflicts,
   search,
   searchViewSource,
+  saveTempTargetAs,
   setEngine,
   stageCopy,
+  stageTempMergeAll,
   stageViewWrite,
   stageWrite,
   unstage,
@@ -45,6 +53,7 @@ import type {
   ArchiveEntry,
   ArchiveSourceKind,
   CommitResult,
+  CompareSourcesResult,
   DeepSearchMatch,
   EntryPreview,
   OsOpenPathsPayload,
@@ -52,6 +61,12 @@ import type {
   PlatformHints,
   SearchHit,
   SearchProgress,
+  TempMergeConflictPreview,
+  TempMergeDecision,
+  TempMergeSessionSummary,
+  TempTargetCreation,
+  TempTargetDiscardOutcome,
+  TextFileContent,
   ViewSourceSummary,
 } from "@/ipc/types";
 
@@ -80,6 +95,36 @@ describe("typed IPC command facade", () => {
       call: () => openArchive("/tmp/a.jar", "left"),
       args: { path: "/tmp/a.jar", side: "left" },
     },
+    {
+      name: "create_temp_target",
+      call: () => createTempTarget("left", { kind: "copyCurrent" }),
+      args: { sourceSide: "left", creation: { kind: "copyCurrent" } },
+    },
+    {
+      name: "preview_merge_all_conflicts",
+      call: () => previewMergeAllConflicts("right"),
+      args: { sourceSide: "right" },
+    },
+    {
+      name: "stage_temp_merge_all",
+      call: () => stageTempMergeAll("left", [{ entryPath: "same.txt", action: "overwrite" }]),
+      args: {
+        sourceSide: "left",
+        decisions: [{ entryPath: "same.txt", action: "overwrite" }],
+      },
+    },
+    { name: "apply_temp_merge", call: () => applyTempMerge() },
+    {
+      name: "save_temp_target_as",
+      call: () => saveTempTargetAs("/tmp/merged.jar"),
+      args: { path: "/tmp/merged.jar" },
+    },
+    { name: "discard_temp_target", call: () => discardTempTarget() },
+    {
+      name: "open_compare_sources",
+      call: () => openCompareSources("/tmp/left.jar", "/tmp/right.jar"),
+      args: { leftPath: "/tmp/left.jar", rightPath: "/tmp/right.jar" },
+    },
     { name: "compute_diff", call: () => computeDiff() },
     {
       name: "compute_nested_diff",
@@ -96,6 +141,11 @@ describe("typed IPC command facade", () => {
       name: "read_entry",
       call: () => readEntry("right", "pkg/Main.class"),
       args: { side: "right", entryPath: "pkg/Main.class" },
+    },
+    {
+      name: "read_text_file",
+      call: () => readTextFile("/tmp/notes.txt"),
+      args: { path: "/tmp/notes.txt" },
     },
     {
       name: "read_view_entry",
@@ -254,8 +304,68 @@ describe("wire DTO declarations", () => {
     };
     const paths: OsOpenPathsPayload = { paths: ["/tmp/a.jar"] };
     const action: AppActionPayload = { actionId: "open-left-file" };
+    const textFile: TextFileContent = {
+      path: "/tmp/notes.txt",
+      content: "hello",
+    };
+    const compareSources: CompareSourcesResult = {
+      left: {
+        path: "/tmp/left.jar",
+        metadata: {
+          sourceKind: "archive",
+          signed: false,
+          multiRelease: false,
+          zip64: false,
+        },
+        entries: [],
+      },
+      right: {
+        path: "/tmp/right.jar",
+        metadata: {
+          sourceKind: "archive",
+          signed: false,
+          multiRelease: false,
+          zip64: false,
+        },
+        entries: [],
+      },
+      diff: { pairs: [] },
+    };
+    const creation: TempTargetCreation = { kind: "empty", extension: "jar" };
+    const session: TempMergeSessionSummary = {
+      id: "temp-merge-1",
+      targetSide: "right",
+      workingName: "working.jar",
+      entryCount: 4,
+      appliedSourceCount: 2,
+      exportedPath: null,
+    };
+    const tempPreview: TempMergeConflictPreview = {
+      newEntries: ["new.txt"],
+      conflicts: ["same.txt"],
+    };
+    const decision: TempMergeDecision = { entryPath: "same.txt", action: "skip" };
+    const discard: TempTargetDiscardOutcome = { kind: "retryDiscardOnly", message: "retry" };
 
-    expect({ entry, viewSource, hints, preview, commit, hit, progress, match, paths, action }).toBeDefined();
+    expect({
+      entry,
+      viewSource,
+      hints,
+      preview,
+      commit,
+      hit,
+      progress,
+      match,
+      paths,
+      action,
+      textFile,
+      compareSources,
+      creation,
+      session,
+      tempPreview,
+      decision,
+      discard,
+    }).toBeDefined();
     expectTypeOf<ArchiveSourceKind>().toEqualTypeOf<"archive" | "directory" | "file">();
     expectTypeOf<PairStatus>().toEqualTypeOf<"onlyLeft" | "onlyRight" | "identical" | "different">();
     expectTypeOf<EntryPreview["details"]>().toEqualTypeOf<string | null>();
@@ -265,5 +375,15 @@ describe("wire DTO declarations", () => {
     expectTypeOf<SearchHit["line"]>().toEqualTypeOf<number | undefined>();
     expectTypeOf<SearchHit["preview"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<ViewSourceSummary>().toMatchTypeOf<{ signed: boolean }>();
+    expectTypeOf<TempTargetCreation>().toEqualTypeOf<
+      | { kind: "empty"; extension: string }
+      | { kind: "copyCurrent" }
+    >();
+    expectTypeOf<TempMergeDecision["action"]>().toEqualTypeOf<"overwrite" | "skip">();
+    expectTypeOf<TempMergeSessionSummary["exportedPath"]>().toEqualTypeOf<string | null>();
+    expectTypeOf<TempTargetDiscardOutcome>().toEqualTypeOf<
+      | { kind: "discarded" }
+      | { kind: "retryDiscardOnly"; message: string }
+    >();
   });
 });

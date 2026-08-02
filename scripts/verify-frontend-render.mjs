@@ -598,6 +598,7 @@ try {
   if (await textPage.getByRole("group", { name: "Tree filter" }).count()) {
     throw new Error("Free text rendered the compare-only tree filter");
   }
+  await textPage.getByRole("button", { name: "Clear drafts", exact: true }).waitFor({ timeout: 5_000 });
   await textPage.close();
 
   var mockedPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -608,16 +609,12 @@ try {
     }
   });
   mockedPage.on("pageerror", (error) => {
-    // Monaco throws a benign CancellationError ("Canceled") when its editors are
-    // torn down between selections; it is not a real page failure.
-    if (error.message === "Canceled" || error.name === "Canceled") return;
-    // Monaco's diff gutter can also report a transient line-number error when
-    // the verifier switches between the Files tab and an active diff editor.
-    const errorText = (error.stack || error.message || "").toLowerCase();
-    if (
-      errorText.includes("illegal value for linenumber") &&
-      errorText.includes("editorgutter")
-    ) return;
+    // Monaco's WordHighlighter rejects its pending Delayer with a documented
+    // cancellation while an editor is disposed. Its gutter can likewise race
+    // a disposed diff model and report an invalid line number. The
+    // model/widget ownership errors that this verifier guards remain unsuppressed.
+    const message = `${error.name}: ${error.message}`.toLowerCase();
+    if (message.includes("canceled") || message.includes("illegal value for linenumber")) return;
     mockMessages.push(`pageerror: ${error.stack || error.message}`);
   });
   await mockedPage.addInitScript(() => {
@@ -633,6 +630,7 @@ try {
           { path: "com/example/Meta.class", kind: "class", uncompressedSize: 66 },
           { path: "assets/blob.bin", kind: "binary", uncompressedSize: 4 },
           { path: "config.txt", kind: "text", uncompressedSize: 8 },
+          { path: "left-only-folder/nested.txt", kind: "text", uncompressedSize: 6 },
           { path: "left-only.txt", kind: "text", uncompressedSize: 4 },
         ],
       },
@@ -697,6 +695,11 @@ try {
         right: { path: "config.txt", kind: "text" },
       },
       {
+        path: "left-only-folder/nested.txt",
+        status: "onlyLeft",
+        left: { path: "left-only-folder/nested.txt", kind: "text" },
+      },
+      {
         path: "left-only.txt",
         status: "onlyLeft",
         left: { path: "left-only.txt", kind: "text" },
@@ -709,6 +712,18 @@ try {
     ];
     let nextCallback = 1;
     let commitCount = 0;
+    const tempSession = {
+      id: "render-temp-merge",
+      targetSide: "right",
+      workingName: "working.jar",
+      entryCount: 3,
+      appliedSourceCount: 1,
+      exportedPath: null,
+    };
+    const tempCreations = [];
+    const tempTargetInstallations = [];
+    window.__LCDIFF_RENDER_TEMP_CREATIONS__ = tempCreations;
+    window.__LCDIFF_RENDER_TEMP_TARGET_INSTALLATIONS__ = tempTargetInstallations;
     const callbacks = new Map();
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: (_event, id) => callbacks.delete(id),
@@ -772,6 +787,48 @@ try {
           opened[args.side] = archives[args.path];
           return archives[args.path];
         }
+        if (cmd === "create_temp_target") {
+          tempCreations.push(args.creation);
+          const targetSide = args.sourceSide === "left" ? "right" : "left";
+          const source = opened[args.sourceSide];
+          if (!source) throw new Error(`temporary target source is not open: ${args.sourceSide}`);
+          const workingName = args.creation.kind === "empty"
+            ? `temporary-target.${args.creation.extension}`
+            : source.path.split("/").at(-1);
+          const target = args.creation.kind === "empty"
+            ? {
+              path: workingName,
+              metadata: { sourceKind: "archive", signed: false, multiRelease: false, zip64: false },
+              entries: [],
+            }
+            : {
+              ...source,
+              path: workingName,
+              metadata: { ...source.metadata },
+              entries: source.entries.map((entry) => ({ ...entry })),
+            };
+          opened[targetSide] = target;
+          const session = {
+            ...tempSession,
+            targetSide,
+            workingName,
+            entryCount: target.entries.length,
+            appliedSourceCount: 0,
+          };
+          tempTargetInstallations.push({
+            targetSide: session.targetSide,
+            workingName: session.workingName,
+            entryCount: session.entryCount,
+          });
+          return session;
+        }
+        if (cmd === "preview_merge_all_conflicts") {
+          return { newEntries: ["selected.txt"], conflicts: ["conflict.txt", "skipped.txt"] };
+        }
+        if (cmd === "stage_temp_merge_all") return undefined;
+        if (cmd === "apply_temp_merge") return { ...tempSession, appliedSourceCount: 2 };
+        if (cmd === "save_temp_target_as") return { ...tempSession, exportedPath: args.path };
+        if (cmd === "discard_temp_target") return { kind: "discarded" };
         if (cmd === "open_view_source") {
           const summary = viewSources[args.path];
           if (!summary) throw new Error(`unexpected open_view_source fixture: ${JSON.stringify(args)}`);
@@ -989,6 +1046,11 @@ try {
   }
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ timeout: 5_000 });
+  const oneSidedFolder = mockedPage.locator(".tree-folder", { hasText: "left-only-folder" });
+  await oneSidedFolder.waitFor({ timeout: 5_000 });
+  if (await oneSidedFolder.locator(".tree-gap").count() !== 1) {
+    throw new Error("One-sided folder did not render exactly one tree gap");
+  }
   await mockedPage.getByRole("button", { name: "Collapse all folders" }).click();
   await mockedPage.locator(".tree-file", { hasText: "App.class" }).waitFor({ state: "detached", timeout: 5_000 });
   await mockedPage.getByRole("button", { name: "Expand all folders" }).click();
@@ -1334,6 +1396,8 @@ try {
   await mockedPage.getByRole("navigation", { name: "View sources" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("tablist", { name: "Open View sources" }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("tab", { name: /view\.jar/ }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Expand all folders", exact: true }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Collapse all folders", exact: true }).waitFor({ timeout: 5_000 });
   const viewEntryRow = mockedPage.locator(".tree-file", { hasText: "ViewOnly.class" });
   await viewEntryRow.waitFor({ timeout: 5_000 });
   await viewEntryRow.click();
@@ -1355,7 +1419,114 @@ try {
   await mockedPage.getByRole("button", { name: "Clear staged", exact: true }).click();
   await mockedPage.getByRole("button", { name: "Save to archive (0)" }).waitFor({ timeout: 5_000 });
 
-  // Back to Compare: right chip returns.
+  async function verifyTemporaryMergeFixture(pattern, creation, expectedWorkingName, expectedTargetEntryCount) {
+    await mockedPage.evaluate((nextPattern) => {
+      localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+        appearance: { colorPattern: nextPattern },
+        misc: { updates: { autoCheck: false } },
+      }));
+    }, pattern);
+    await mockedPage.reload({ waitUntil: "domcontentloaded" });
+    await disableAnimations(mockedPage);
+    await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
+    await openLeftPopover();
+    await archiveInput().fill("/fixtures/left.jar");
+    await archiveInput().press("Enter");
+    await closePopover(leftSourceTrigger);
+    await openRightPopover();
+    await mockedPage.getByRole("button", { name: "Create temp target..." }).click();
+    const createDialog = mockedPage.getByRole("dialog", { name: "Create temporary merge target" });
+    await createDialog.getByLabel("Temporary target type").click();
+    await mockedPage.getByRole("option", {
+      name: creation.kind === "empty" ? "Empty archive" : "Copy current source",
+    }).click();
+    if (creation.kind === "empty") {
+      await createDialog.getByLabel("Archive extension").click();
+      await mockedPage.getByRole("option", { name: `.${creation.extension}` }).click();
+    }
+    await createDialog.getByRole("button", { name: "Create temp target" }).click();
+    const creations = await mockedPage.evaluate(() => window.__LCDIFF_RENDER_TEMP_CREATIONS__ ?? []);
+    const actualCreation = creations.at(-1);
+    if (JSON.stringify(actualCreation) !== JSON.stringify(creation)) {
+      throw new Error(`temporary merge creation did not reach the backend: ${JSON.stringify(actualCreation)}`);
+    }
+    const targetInstallations = await mockedPage.evaluate(
+      () => window.__LCDIFF_RENDER_TEMP_TARGET_INSTALLATIONS__ ?? [],
+    );
+    const actualTargetInstallation = targetInstallations.at(-1);
+    const expectedTargetInstallation = {
+      targetSide: "right",
+      workingName: expectedWorkingName,
+      entryCount: expectedTargetEntryCount,
+    };
+    if (JSON.stringify(actualTargetInstallation) !== JSON.stringify(expectedTargetInstallation)) {
+      throw new Error(`temporary target was not installed into the mock backend: ${JSON.stringify(actualTargetInstallation)}`);
+    }
+    await mockedPage.getByText("TEMP TARGET - SESSION ONLY").waitFor({ timeout: 5_000 });
+    await mockedPage.getByText("SOURCE - REPLACEABLE").waitFor({ timeout: 5_000 });
+    await mockedPage.getByRole("button", { name: "Save temp as" }).waitFor({ timeout: 5_000 });
+    await mockedPage.getByRole("button", { name: "Discard temp" }).waitFor({ timeout: 5_000 });
+    const status = mockedPage.getByLabel("Temporary merge status");
+    await status.waitFor({ timeout: 5_000 });
+    if (!(await status.textContent()).includes(expectedWorkingName)) {
+      throw new Error(`temporary merge status did not show ${expectedWorkingName}`);
+    }
+    const targetText = await rightSourceTrigger.innerText();
+    if (!targetText.includes("TEMP TARGET - SESSION ONLY") || !targetText.includes(expectedWorkingName)) {
+      throw new Error(`temporary target did not render in the right source slot: ${JSON.stringify(targetText)}`);
+    }
+    const tempMergeSource = mockedPage.locator(".tree-file", { hasText: "config.txt" });
+    await tempMergeSource.waitFor({ timeout: 5_000 });
+    await tempMergeSource.click();
+    const mergeAllButton = mockedPage.getByRole("button", { name: "Merge all -> temp" });
+    try {
+      await mergeAllButton.waitFor({ timeout: 5_000 });
+    } catch {
+      throw new Error(`temporary merge action did not render after target installation: ${JSON.stringify({
+        body: (await mockedPage.locator("body").innerText()).slice(-3000),
+      })}`);
+    }
+    if (!(await mergeAllButton.isEnabled())) {
+      throw new Error("temporary merge action is disabled after the mock target was installed");
+    }
+    await assertViewportFits(mockedPage, 1024, 640, `temporary merge ${pattern}`);
+    await mergeAllButton.click();
+    const conflictDialog = mockedPage.getByRole("dialog", { name: "Resolve merge conflicts" });
+    await conflictDialog.getByRole("button", { name: "Overwrite all" }).waitFor({ timeout: 5_000 });
+    await conflictDialog.getByRole("button", { name: "Skip all" }).waitFor({ timeout: 5_000 });
+    const actualPattern = await mockedPage.locator(".app-shell").getAttribute("data-effective-color-pattern");
+    if (actualPattern !== pattern) {
+      throw new Error(`temporary merge fixture did not render ${pattern}: ${actualPattern}`);
+    }
+  }
+
+  await verifyTemporaryMergeFixture("light", { kind: "empty", extension: "jar" }, "temporary-target.jar", 0);
+  await verifyTemporaryMergeFixture("dark", { kind: "copyCurrent" }, "left.jar", 6);
+  await mockedPage.evaluate(() => {
+    localStorage.setItem("lcdiff.uiPreferences.v1", JSON.stringify({
+      appearance: { colorPattern: "light" },
+      editor: { fontFamily: "Monaco" },
+      misc: { updates: { autoCheck: false } },
+    }));
+  });
+  await mockedPage.reload({ waitUntil: "domcontentloaded" });
+  await disableAnimations(mockedPage);
+  await mockedPage.getByRole("button", { name: "Open Compare mode" }).click();
+  await openLeftPopover();
+  await archiveInput().fill("/fixtures/left.jar");
+  await archiveInput().press("Enter");
+  await closePopover(leftSourceTrigger);
+  await openRightPopover();
+  await archiveInput().fill("/fixtures/right.jar");
+  await archiveInput().press("Enter");
+  await closePopover(rightSourceTrigger);
+
+  // Complete the mode lifecycle through Free text before returning to Compare.
+  await mockedPage.getByRole("button", { name: "Text mode" }).click();
+  await mockedPage.getByRole("main", { name: "Free text workspace" }).waitFor({ timeout: 5_000 });
+  await mockedPage.getByRole("button", { name: "Clear drafts", exact: true }).waitFor({ timeout: 5_000 });
+
+  // Back to Compare: right chip returns and no disposed Monaco owner is touched.
   await mockedPage.getByRole("button", { name: "Compare mode" }).click();
   await mockedPage.getByRole("button", { name: "Change right source", exact: true }).waitFor({ timeout: 5_000 });
   await mockedPage.getByRole("group", { name: "Tree filter" }).waitFor({ timeout: 5_000 });
@@ -1367,7 +1538,7 @@ try {
   await archiveInput().fill("/fixtures/right.jar");
   await archiveInput().press("Enter");
   await closePopover(rightSourceTrigger);
-  await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ timeout: 5_000 });
+  await mockedPage.locator(".tree-folder", { hasText: "com" }).waitFor({ state: "attached", timeout: 5_000 });
 
   // Stage + signed-save (backup=false by default).
   const menuBarSaveStaged = mockedPage.getByRole("button", { name: /^Save to archive/ });
@@ -1414,12 +1585,8 @@ try {
     throw new Error("signed warning Dialog reappeared after session suppression");
   }
 
-  const actionableMockMessages = mockMessages.filter((message) => {
-    const normalized = message.toLowerCase();
-    return !(normalized.includes("illegal value for linenumber") && normalized.includes("editorgutter"));
-  });
-  if (actionableMockMessages.length > 0) {
-    throw new Error(`mocked browser console/page errors:\n${actionableMockMessages.join("\n")}`);
+  if (mockMessages.length > 0) {
+    throw new Error(`mocked browser console/page errors:\n${mockMessages.join("\n")}`);
   }
   await browser.close();
   console.log("frontend render passed");

@@ -5,8 +5,14 @@ import * as architecture from './verify-architecture.mjs';
 
 const { verifyPhaseOneArchitecture } = architecture;
 
-const cleanMain = 'fn main() {\n    lcdiff_desktop::run();\n}\n';
+const cleanMain = `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+fn main() {
+  lcdiff_desktop::run();
+}
+`;
 const cleanCoreCargoToml = '[dependencies]\nserde = "1"\n';
+const desktopEntrypointMessage =
+  'src-tauri/src/main.rs must be the Windows GUI attribute plus the thin lcdiff_desktop::run() entrypoint';
 
 test('accepts a Phase-1 compliant source pair', () => {
   assert.deepEqual(
@@ -22,6 +28,7 @@ test('allows comments and formatting around the exact desktop entrypoint', () =>
   assert.deepEqual(
     verifyPhaseOneArchitecture({
       mainSource: `
+        #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
         // The binary delegates all composition to the library crate.
         fn main ( ) {
           lcdiff_desktop :: run ( ) ;
@@ -31,6 +38,17 @@ test('allows comments and formatting around the exact desktop entrypoint', () =>
     }),
     [],
   );
+});
+
+test('rejects any extra crate attribute on the desktop entrypoint', () => {
+  const errors = verifyPhaseOneArchitecture({
+    mainSource:
+      '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]\n' +
+      '#![allow(dead_code)]\n' +
+      'fn main() { lcdiff_desktop::run(); }\n',
+    coreCargoToml: cleanCoreCargoToml,
+  });
+  assert.deepEqual(errors, [desktopEntrypointMessage]);
 });
 
 test('rejects every non-composition desktop entrypoint shape', () => {
@@ -49,7 +67,7 @@ test('rejects every non-composition desktop entrypoint shape', () => {
         coreCargoToml: cleanCoreCargoToml,
       }),
       [
-        'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+        desktopEntrypointMessage,
       ],
     );
   }
@@ -62,7 +80,7 @@ test('rejects AppState ownership in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define struct AppState',
     ],
   );
@@ -75,7 +93,7 @@ test('rejects Tauri commands in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define #[tauri::command] handlers',
     ],
   );
@@ -88,7 +106,7 @@ test('rejects event emission in the desktop entrypoint', () => {
       coreCargoToml: cleanCoreCargoToml,
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not call .emit(',
     ],
   );
@@ -161,7 +179,7 @@ test('reports every independent Phase-1 violation together', () => {
       coreCargoToml: '[dependencies]\ntauri = "2"\n',
     }),
     [
-      'src-tauri/src/main.rs must be exactly the thin lcdiff_desktop::run() entrypoint',
+      desktopEntrypointMessage,
       'src-tauri/src/main.rs must not define struct AppState',
       'src-tauri/src/main.rs must not define #[tauri::command] handlers',
       'src-tauri/src/main.rs must not call .emit(',
@@ -175,11 +193,13 @@ const expectedCommandNames = [
   'platform_hints',
   'list_system_fonts',
   'open_archive',
+  'open_compare_sources',
   'compute_diff',
   'compute_nested_diff',
   'open_view_source',
   'list_view_sources',
   'read_entry',
+  'read_text_file',
   'read_view_entry',
   'compute_view_nested_entries',
   'close_view_source',
@@ -201,7 +221,15 @@ const expectedCommandNames = [
   'cancel_deep_search',
   'prefetch_siblings',
   'pending_open_paths',
+  'create_temp_target',
+  'preview_merge_all_conflicts',
+  'stage_temp_merge_all',
+  'apply_temp_merge',
+  'save_temp_target_as',
+  'discard_temp_target',
 ];
+
+const expectedFrontendCommandNames = [...expectedCommandNames];
 
 const expectedEventNames = [
   'search-progress',
@@ -283,6 +311,37 @@ test('rejects command submodule dependencies on sibling command submodules', () 
       dependency,
     );
   }
+});
+
+test('rejects temporary merge command dependencies on sibling command modules', () => {
+  const sources = structuredClone(cleanPhaseTwoSources);
+  for (const commandName of [
+    'create_temp_target',
+    'preview_merge_all_conflicts',
+    'stage_temp_merge_all',
+    'apply_temp_merge',
+    'save_temp_target_as',
+    'discard_temp_target',
+  ]) {
+    delete sources.commandSources[`src-tauri/src/commands/${commandName}.rs`];
+  }
+  sources.commandSources['src-tauri/src/commands/temp_merge.rs'] = `
+    use super::merge::commit_merge;
+    ${[
+      'create_temp_target',
+      'preview_merge_all_conflicts',
+      'stage_temp_merge_all',
+      'apply_temp_merge',
+      'save_temp_target_as',
+      'discard_temp_target',
+    ]
+      .map((name) => `#[tauri::command]\nfn ${name}() {}`)
+      .join('\n')}
+  `;
+
+  assert.deepEqual(verifyPhaseTwoArchitecture(sources), [
+    'src-tauri/src/commands/temp_merge.rs must not depend on sibling command submodules',
+  ]);
 });
 
 test('rejects command submodule dependencies through commands root reexports', () => {
@@ -609,7 +668,9 @@ const cleanPhaseThreeSources = {
   frontendSources: {
     'src/ipc/commands.ts': [
       'import { invoke } from "@tauri-apps/api/core";',
-      ...expectedCommandNames.map((name) => `const ${name.toUpperCase()} = "${name}";`),
+      ...expectedFrontendCommandNames.map(
+        (name) => `const ${name.toUpperCase()} = "${name}";`,
+      ),
     ].join('\n'),
     'src/ipc/events.ts': [
       'import { listen } from "@tauri-apps/api/event";',
@@ -766,7 +827,20 @@ test('rejects a missing or renamed frontend IPC command literal', () => {
     );
 
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
-    `frontend IPC command literals must be exactly: ${expectedCommandNames.join(', ')}`,
+    `frontend IPC command literals must be exactly: ${expectedFrontendCommandNames.join(', ')}`,
+  ]);
+});
+
+test('rejects a missing or renamed temporary merge IPC command literal', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/ipc/commands.ts'] =
+    sources.frontendSources['src/ipc/commands.ts'].replace(
+      '"create_temp_target"',
+      '"create_temporary_target"',
+    );
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+    `frontend IPC command literals must be exactly: ${expectedFrontendCommandNames.join(', ')}`,
   ]);
 });
 

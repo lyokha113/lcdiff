@@ -4,10 +4,13 @@ use tauri::State;
 use crate::{
     Side,
     archive_access::{
-        open_archive_from_path, open_view_archive_from_path, resolve_optional_side_nested_archive,
-        resolve_view_nested_archive,
+        open_archive_from_path, open_compare_archives_from_paths, open_view_archive_from_path,
+        resolve_optional_side_nested_archive, resolve_view_nested_archive,
     },
-    state::{ArchiveSummary, SharedState, ViewSourceSummary, side_snapshot},
+    state::{
+        ArchiveSummary, CompareSourcesResult, SharedState, ViewSourceSummary,
+        install_prepared_compare_archives, prepare_compare_archives, side_snapshot,
+    },
 };
 
 #[tauri::command]
@@ -31,6 +34,19 @@ pub(crate) async fn open_archive(
         .lock()
         .map_err(|_| "state lock is poisoned".to_owned())?;
     state.install_archive(archive, side)
+}
+
+#[tauri::command]
+pub(crate) async fn open_compare_sources(
+    left_path: String,
+    right_path: String,
+    state: State<'_, SharedState>,
+) -> Result<CompareSourcesResult, String> {
+    let (left, right, diff) = open_compare_archives_from_paths(left_path, right_path).await?;
+    let prepared = prepare_compare_archives(left, right)?;
+    let (left, right, displaced) = install_prepared_compare_archives(state.inner(), prepared)?;
+    drop(displaced);
+    Ok(CompareSourcesResult { left, right, diff })
 }
 
 #[tauri::command]

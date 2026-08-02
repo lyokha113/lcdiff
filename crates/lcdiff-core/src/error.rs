@@ -28,6 +28,8 @@ pub enum Error {
     ArchiveChanged(PathBuf),
     #[error("cannot commit an empty merge plan")]
     EmptyMergePlan,
+    #[error("temporary archive must use .jar, .zip, .war, or .ear: {0}")]
+    UnsupportedTempArchiveExtension(PathBuf),
     #[error("staged copies must target the same archive")]
     MixedTargets,
     #[error("class file is malformed: {0}")]

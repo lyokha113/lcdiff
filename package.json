@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run --exclude \".worktrees/**\" --exclude \"scripts/**/*.test.mjs\"",
+    "test:temp-merge-smoke": "node scripts/test-temp-merge-smoke.mjs",
     "build": "tsc && vite build",
     "tauri": "tauri",
     "verify:architecture": "node scripts/verify-architecture.mjs",

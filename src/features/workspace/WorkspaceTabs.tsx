@@ -68,8 +68,7 @@ export function WorkspaceTabs({
         </button>
       </div>
       {mode === "compare" && (
-        <>
-          <div className="workspace-tree-filter" role="group" aria-label="Tree filter">
+        <div className="workspace-tree-filter" role="group" aria-label="Tree filter">
             {([
               ["all", "All"],
               ["diff", "Differences"],
@@ -85,16 +84,17 @@ export function WorkspaceTabs({
                 {label}
               </Button>
             ))}
-          </div>
-          <div className="workspace-tree-actions" role="group" aria-label="Tree expansion">
-            <Button variant="ghost" size="icon-sm" aria-label="Expand all folders" onClick={onExpandTree}>
-              <ChevronsDown />
-            </Button>
-            <Button variant="ghost" size="icon-sm" aria-label="Collapse all folders" onClick={onCollapseTree}>
-              <ChevronsUp />
-            </Button>
-          </div>
-        </>
+        </div>
+      )}
+      {mode !== "text" && (
+        <div className="workspace-tree-actions" role="group" aria-label="Tree expansion">
+          <Button variant="ghost" size="icon-sm" aria-label="Expand all folders" onClick={onExpandTree}>
+            <ChevronsDown />
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label="Collapse all folders" onClick={onCollapseTree}>
+            <ChevronsUp />
+          </Button>
+        </div>
       )}
       <div className="workspace-tabs-scroll" role="tablist" aria-label="Open diff tabs">
         {tabs.map((tab) => {

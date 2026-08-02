@@ -76,6 +76,9 @@ Invoke-Step "sidecar smoke" {
 Invoke-Step "build Windows bundles ($Bundles)" {
   npm run tauri -- build --bundles $Bundles
 }
+Invoke-Step "verify Windows GUI subsystem" {
+  scripts/verify-windows-gui-subsystem.ps1 -Path "target\release\lcdiff-desktop.exe"
+}
 
 $bundleRoot = "target\release\bundle"
 if (-not (Test-Path -LiteralPath $bundleRoot -PathType Container)) {

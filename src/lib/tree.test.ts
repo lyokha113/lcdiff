@@ -28,6 +28,13 @@ describe("buildTree", () => {
     expect(assets.diffCount).toBe(1);
   });
 
+  it("rolls descendant side presence into folders", () => {
+    const [folder] = buildTree([
+      { path: "pkg/left.txt", status: "onlyLeft", left: { path: "pkg/left.txt", kind: "text" } },
+    ]);
+    expect(folder).toMatchObject({ kind: "folder", hasLeft: true, hasRight: false });
+  });
+
   it("places leaf files with their pair and full path", () => {
     const tree = buildTree(pairs);
     const com = tree.find((n) => n.name === "com") as TreeFolder;

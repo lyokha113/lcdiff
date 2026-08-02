@@ -36,6 +36,7 @@ type RenderDiffViewOverrides = Partial<
   Pick<
     React.ComponentProps<typeof DiffView>,
     | "contentFilter"
+    | "diffEditableSides"
     | "editable"
     | "editValue"
     | "fileMerge"
@@ -43,6 +44,12 @@ type RenderDiffViewOverrides = Partial<
     | "ignoreTrimWhitespace"
     | "diffNavigator"
     | "onContentFilterChange"
+    | "onDiffEditEither"
+    | "preview"
+    | "tempSession"
+    | "tempBusy"
+    | "onCopyToTemp"
+    | "onMergeAllToTemp"
   >
 >;
 
@@ -69,10 +76,15 @@ function renderDiffView(
     onEditChange: vi.fn(),
     onEditBlur: vi.fn(),
     fileMerge: false,
+    diffEditableSides: { left: false, right: false },
     hunkMerge: false,
     onDiffEditEither: vi.fn(),
     onTakeAll: vi.fn(),
     onMoveHunk: vi.fn(),
+    tempSession: undefined,
+    tempBusy: false,
+    onCopyToTemp: vi.fn(),
+    onMergeAllToTemp: vi.fn(),
     diffNavigator: {
       current: 0,
       total: 0,
@@ -91,6 +103,14 @@ function renderDiffView(
   );
 
   return props;
+}
+
+function diffOptions() {
+  return (
+    diffEditorMock.mock.calls.at(-1)?.[0] as
+      | { options?: Record<string, unknown> }
+      | undefined
+  )?.options;
 }
 
 beforeEach(() => {
@@ -250,6 +270,87 @@ describe("DiffView", () => {
     expect(screen.queryByRole("group", { name: "Diff view mode" })).not.toBeInTheDocument();
   });
 
+  it("keeps a missing right pane read-only while allowing the existing left text to be edited", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      preview: {
+        left: {
+          path: "left-only.json",
+          kind: "text",
+          language: "json",
+          content: "{\"left\":true}",
+        },
+      },
+      diffEditableSides: { left: true, right: false },
+    });
+
+    expect(diffOptions()).toMatchObject({
+      originalEditable: true,
+      readOnly: true,
+      renderMarginRevertIcon: false,
+    });
+  });
+
+  it("keeps a missing left pane read-only while allowing the existing right text to be edited", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      preview: {
+        right: {
+          path: "right-only.json",
+          kind: "text",
+          language: "json",
+          content: "{\"right\":true}",
+        },
+      },
+      diffEditableSides: { left: false, right: true },
+    });
+
+    expect(diffOptions()).toMatchObject({
+      originalEditable: false,
+      readOnly: false,
+      renderMarginRevertIcon: false,
+    });
+  });
+
+  it("forwards model edits only from the independently editable diff side", () => {
+    const onDiffEditEither = vi.fn();
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      diffEditableSides: { left: true, right: false },
+      onDiffEditEither,
+    });
+
+    let onLeftChange: ((event: { isFlush: boolean }) => void) | undefined;
+    let onRightChange: ((event: { isFlush: boolean }) => void) | undefined;
+    const originalEditor = {
+      getValue: () => "changed left",
+      onDidChangeModelContent: vi.fn((handler) => {
+        onLeftChange = handler;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const modifiedEditor = {
+      getValue: () => "changed right",
+      onDidChangeModelContent: vi.fn((handler) => {
+        onRightChange = handler;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const onMount = (
+      diffEditorMock.mock.calls.at(-1)?.[0] as
+        | { onMount?: (editor: unknown, monaco: unknown) => void }
+        | undefined
+    )?.onMount;
+
+    onMount?.({
+      getOriginalEditor: () => originalEditor,
+      getModifiedEditor: () => modifiedEditor,
+      onDidDispose: vi.fn(),
+    }, {});
+    onLeftChange?.({ isFlush: false });
+    onRightChange?.({ isFlush: false });
+
+    expect(onDiffEditEither).toHaveBeenCalledTimes(1);
+    expect(onDiffEditEither).toHaveBeenCalledWith("left", "changed left");
+  });
+
   it("renders the compact diff navigator in compare mode", async () => {
     const user = userEvent.setup();
     const onPrevious = vi.fn();
@@ -343,5 +444,69 @@ describe("DiffView", () => {
     expect(props.onCopy.mock.calls).toEqual([["right", "left"], ["left", "right"]]);
     expect(props.onTakeAll.mock.calls).toEqual([["left"], ["right"]]);
     expect(props.onMoveHunk.mock.calls).toEqual([["left"], ["right"]]);
+  });
+
+  it("offers copy-selected and merge-all actions toward an active temp target", async () => {
+    const user = userEvent.setup();
+    const props = renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      tempSession: {
+        id: "temp-1", targetSide: "right", workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy selected -> temp" }));
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+
+    expect(props.onCopyToTemp).toHaveBeenCalledWith("left");
+    expect(props.onMergeAllToTemp).toHaveBeenCalledWith("left");
+  });
+
+  it("disables temporary merge controls while the controller is busy", () => {
+    renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      tempBusy: true,
+      tempSession: {
+        id: "temp-1", targetSide: "left", workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    expect(screen.getByRole("button", { name: "Copy selected -> temp" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Merge all -> temp" })).toBeDisabled();
+  });
+
+  it.each([
+    { targetSide: "left" as const, blockedTarget: "right" as const, allowedTarget: "left" as const },
+    { targetSide: "right" as const, blockedTarget: "left" as const, allowedTarget: "right" as const },
+  ])("blocks every legacy route into the replaceable $blockedTarget source when temp target is $targetSide", async ({ targetSide, blockedTarget, allowedTarget }) => {
+    const user = userEvent.setup();
+    const props = renderDiffView("compare", DEFAULT_UI_PREFERENCES, "dark", {
+      hunkMerge: true,
+      tempSession: {
+        id: "temp-1", targetSide, workingName: "working.jar", entryCount: 1,
+        appliedSourceCount: 0, exportedPath: null,
+      },
+    });
+
+    const blockedCopy = screen.getByRole("button", { name: `Copy file to ${blockedTarget}` });
+    const blockedTakeAll = screen.getByRole("button", { name: `Take all into ${blockedTarget}` });
+    const blockedMoveHunk = screen.getByRole("button", { name: `Move hunk into ${blockedTarget}` });
+    expect(blockedCopy).toBeDisabled();
+    expect(blockedTakeAll).toBeDisabled();
+    expect(blockedMoveHunk).toBeDisabled();
+
+    await user.click(blockedCopy);
+    await user.click(blockedTakeAll);
+    await user.click(blockedMoveHunk);
+    expect(props.onCopy).not.toHaveBeenCalled();
+    expect(props.onTakeAll).not.toHaveBeenCalled();
+    expect(props.onMoveHunk).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: `Copy file to ${allowedTarget}` }));
+    await user.click(screen.getByRole("button", { name: `Take all into ${allowedTarget}` }));
+    await user.click(screen.getByRole("button", { name: `Move hunk into ${allowedTarget}` }));
+    expect(props.onCopy).toHaveBeenCalledTimes(1);
+    expect(props.onTakeAll).toHaveBeenCalledWith(allowedTarget);
+    expect(props.onMoveHunk).toHaveBeenCalledWith(allowedTarget);
   });
 });

@@ -8,11 +8,14 @@ license.workspace = true
 tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
+cap-std.workspace = true
 font-kit = "0.14.3"
 lcdiff-core = { path = "../crates/lcdiff-core" }
 serde.workspace = true
 serde_json.workspace = true
+same-file.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 tauri = { version = "2.11", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2.4"
 tauri-plugin-opener = "2"
@@ -23,5 +26,10 @@ url = "2.5"
 
 [dev-dependencies]
 tauri = { version = "2.11", features = ["test"] }
-tempfile.workspace = true
 zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+] }

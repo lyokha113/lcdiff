@@ -23,12 +23,56 @@ Pass evidence:
 - Built NSIS/MSI artifacts exist under `target/<target>/debug/bundle/` or
   `target/<target>/release/bundle/`.
 
+## Temporary Merge Lifecycle
+
+Run the deterministic backend smoke locally before platform-specific packaging:
+
+```bash
+npm run test:temp-merge-smoke
+```
+
+It creates a copied temporary target with `base.txt=A`, `conflict.txt=seed`,
+and `skipped.txt=seed`; merges a second source that adds `selected.txt=B`; then
+merges a third source with `conflict.txt=third` and `skipped.txt=third`. The
+run chooses **Overwrite** for `conflict.txt` and **Skip** for `skipped.txt`,
+saves the target, and reopens the archive. Pass evidence is exact byte equality:
+`base.txt=A`, `selected.txt=B`, `conflict.txt=third`, and
+`skipped.txt=seed`.
+
+For each packaged desktop target, manually confirm the same lifecycle: create
+an **Empty** and a **Copy current source** target, replace the non-target source
+between merges, preview conflicts, choose the bulk decisions, stage them, then
+choose **Apply**. Repeat that sequence for each source before **Save temp as**
+or **Discard temp**, and verify session-only status. The local render gate
+covers both creation modes and these controls in Light and Dark themes; Windows
+installer launch and MSVC CRT behavior remain separate external Windows
+evidence.
+
 ## Windows Release Builder
 
 Release installers are built by `.github/workflows/windows-release.yml` on
 GitHub-hosted `windows-latest` runners for future `v*` tags. The workflow calls
 `scripts\build-windows.ps1`, uploads `artifacts/windows/*` as a workflow
 artifact, and attaches the installer to the matching GitHub Release.
+
+### Windows GUI subsystem
+
+Run this on the Windows release runner after creating the release bundles:
+
+```powershell
+scripts\build-windows.ps1 -Bundles nsis
+scripts\verify-windows-gui-subsystem.ps1 -Path target\release\lcdiff-desktop.exe
+```
+
+Pass evidence:
+
+- The packaged release app launches without a console window.
+- `scripts\verify-windows-gui-subsystem.ps1` reports PE subsystem `2`
+  (`IMAGE_SUBSYSTEM_WINDOWS_GUI`) for `target\release\lcdiff-desktop.exe`.
+
+This is an external Windows gate. A macOS local run can verify the release-only
+source attribute and its architecture guard, but cannot claim the packaged
+Windows launch or PE result.
 
 ## Linux Release Builder
 

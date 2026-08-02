@@ -47,15 +47,17 @@ source its own entry workspace.
 
 | Area | What LCDiff provides |
 | --- | --- |
-| Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. |
+| Three focused workspaces | **View** for inspection and staged edits to supported text entries, **Compare** for archive diff/merge, and **Free text** for pasted or typed snippets. Each keeps its in-session context when you switch modes. |
 | Broad source support | Open JAR, ZIP, WAR, EAR, directories, and common text files from pickers, drag-and-drop, or the operating system. |
 | Lazy archive browser | Navigate large archives without eagerly extracting everything; nested archives expand only when requested. |
-| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and file-status filters. |
+| Structural comparison | CRC-based added, removed, changed, metadata-only, and identical states with aligned left/right trees and file-status filters. Drop exactly two sources together to open a Compare pair, and stage edits to supported text entries even when the entry exists on only one side. |
+| View source tabs | Drop multiple sources into **View** to open them as independent source tabs; use **Expand all folders** and **Collapse all folders** in Files to navigate each source quickly. |
+| Free-text inputs | Paste or type drafts, drop one or two UTF-8 text files into the left/right drafts, and use **Clear drafts** to start over without clearing temporary result history. |
 | Java decompilation | Read-only Java through Vineflower, CFR, JD-Core, or JD-Core v0, with ASM Textifier bytecode as a separate view. |
 | Monaco diff workspace | Source, bytecode, and text diffs with tabs, line navigation, **All / Differences** line display, whitespace controls, font settings, and compact layouts. Differences keeps local context and lets Monaco reveal collapsed unchanged regions on demand. |
 | Binary inspection | Size, CRC, SHA-256, metadata, and hex previews when an entry is not safely renderable as text. |
 | Deep search | Path, text, constant-pool, and optional decompiled-source search with cancellable background work and clickable results. |
-| Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. |
+| Safe staged merge | Copy selected entries or hunks between sides, review pending changes, then save atomically with optional backups. For cumulative work, create a session-only temporary target from an empty archive or a copy of one source, merge replacement sources into it, then explicitly save or discard it. |
 | Signed-JAR guard rails | Warnings before rewriting signed archives or discarding staged work. |
 | Native desktop integration | File associations, Finder/Explorer open-with support, keyboard shortcuts, themes, and installed editor fonts. |
 | In-app updates | Automatic checks plus signed native updater artifacts; GitHub Releases remains the fallback when native update is unavailable. |
@@ -65,6 +67,7 @@ source its own entry workspace.
 - Decompiled Java is a view, never a write path.
 - Archive merges copy original entry bytes.
 - Changes are staged before save.
+- A temporary merge target is session-only until **Save temp as**; **Discard temp** removes only that temporary workspace.
 - Saves are atomic and can preserve a `.bak` backup.
 - Signed archives and destructive transitions require confirmation.
 
@@ -112,7 +115,8 @@ paru -S lcdiff
 
 Download `LCDiff-<version>-windows-x64-setup.exe` on Windows 10 or 11.
 Unsigned builds may display a SmartScreen warning until Authenticode signing is
-configured.
+configured. Release builds use the Windows GUI subsystem, so the packaged app
+launches without a console window.
 
 ## Automatic updates
 
@@ -140,13 +144,20 @@ can install it manually.
 3. Filter the file tree by differences and select an entry.
 4. Use **All** to inspect full content or **Differences** to focus on changed
    blocks with nearby context; expand a collapsed region when you need it.
-5. Inspect the diff, then stage an entry or text hunk in the intended direction.
-6. Review pending changes and save the target.
+5. Inspect the diff, then stage an entry, text hunk, or supported one-sided
+   text edit in the intended direction.
+6. Review pending changes and save the target. For a cumulative merge, choose
+   **Create temp target...** on one side, select **Empty** or **Copy current
+   source**. For each replacement source, preview conflicts, choose overwrite
+   or skip, stage the decisions, then choose **Apply**. Repeat for more
+   sources, then choose **Save temp as** or **Discard temp**.
 
 ### Compare pasted text
 
-Choose **Free text**, edit both drafts, and confirm the comparison. Confirmed
-results are read-only and kept in bounded local temporary history until cleared.
+Choose **Free text**, edit or drop one or two UTF-8 text files into the drafts,
+and confirm the comparison. **Clear drafts** clears both inputs without removing
+the confirmed results, which remain read-only in bounded local temporary history
+until cleared.
 
 ### Search
 

@@ -68,6 +68,7 @@ Run these before shipping changes:
 ```bash
 npm run verify:architecture
 npm run verify:all
+npm run test:temp-merge-smoke
 env -u RUSTC_WRAPPER cargo fmt --all -- --check
 env -u RUSTC_WRAPPER cargo clippy --workspace --all-targets -- -D warnings
 env -u RUSTC_WRAPPER cargo test --workspace
@@ -84,7 +85,12 @@ when assembling resources. The Rust commands explicitly remove
 build, unit tests, browser render check, branding check, and release-doc
 synchronization. `npm run verify:architecture` is also useful as the focused
 boundary check. `npm run verify:frontend-render` boots the shell under
-Playwright and fails on browser page errors.
+Playwright and fails on browser page errors. `npm run test:temp-merge-smoke`
+drives the production Tauri state APIs through a deterministic three-source
+archive merge: a copied target keeps its baseline entry, a second source adds
+an entry, and a third source overwrites one conflict while skipping another.
+It reopens the exported archive and checks the original bytes, so `Skip` is
+proven to preserve the seeded target bytes rather than remove the entry.
 
 `src-tauri/tauri.conf.json` intentionally keeps
 `bundle.createUpdaterArtifacts` enabled. The default command shown in the proof

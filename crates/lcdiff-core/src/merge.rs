@@ -69,7 +69,56 @@ pub struct CommitResult {
     pub copied_entries: usize,
 }
 
-#[derive(Debug, Default)]
+pub fn export_archive_atomic(
+    source: impl AsRef<Path>,
+    destination: impl AsRef<Path>,
+) -> Result<()> {
+    let source = source.as_ref();
+    let destination = destination.as_ref();
+    if paths_refer_to_same_file(source, destination)? {
+        return Ok(());
+    }
+    let temp_path = temp_path_for(destination);
+    export_archive_atomic_with_temp_path(source, destination, &temp_path)
+}
+
+fn export_archive_atomic_with_temp_path(
+    source: &Path,
+    destination: &Path,
+    temp_path: &Path,
+) -> Result<()> {
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(temp_path)
+        .map_err(Error::from)?;
+    let result = (|| {
+        let mut input = File::open(source)?;
+        io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
+        atomic_replace(temp_path, destination)
+    })();
+    if result.is_err() {
+        fs::remove_file(temp_path).ok();
+    }
+    result
+}
+
+fn paths_refer_to_same_file(source: &Path, destination: &Path) -> Result<bool> {
+    let source = fs::canonicalize(source)?;
+    let destination = match fs::canonicalize(destination) {
+        Ok(destination) => destination,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if source == destination {
+        return Ok(true);
+    }
+    same_file::is_same_file(source, destination).map_err(Error::from)
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct MergePlan {
     ops: Vec<StagedOp>,
 }
@@ -585,6 +634,21 @@ mod stage_write_tests {
         }
         zip.finish().unwrap();
         path
+    }
+
+    #[test]
+    fn export_temp_collision_keeps_the_existing_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.jar");
+        let destination = dir.path().join("destination.jar");
+        let collision = dir.path().join("collision.tmp");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::write(&collision, b"another export").unwrap();
+
+        export_archive_atomic_with_temp_path(&source, &destination, &collision).unwrap_err();
+
+        assert_eq!(std::fs::read(&collision).unwrap(), b"another export");
+        assert!(!destination.exists());
     }
 
     #[test]

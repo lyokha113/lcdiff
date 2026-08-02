@@ -68,6 +68,24 @@ export interface EntryPreview {
   content: string;
 }
 
+export interface DiffTab {
+  path: string;
+  pair: ComparePair;
+  preview: Partial<Record<Side, EntryPreview>>;
+  viewMode: ViewMode;
+  lastFocus: number;
+}
+
+export interface CompareWorkspaceState {
+  selected?: ComparePair;
+  preview: Partial<Record<Side, EntryPreview>>;
+  openTabs: DiffTab[];
+  activeTab: "files" | string;
+  editBuffer: string;
+  viewMode: ViewMode;
+  expandedPaths: Set<string>;
+}
+
 export interface CommitResult {
   rewrittenPath: string;
   backupPath?: string;

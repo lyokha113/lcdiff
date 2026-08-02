@@ -23,9 +23,11 @@ import {
   deepSearchViewSource,
   listSystemFonts,
   openArchive,
+  openCompareSources,
   openViewSource as openViewSourceCommand,
   pendingOpenPaths,
   platformHints,
+  readTextFile,
   search as searchArchive,
   searchViewSource,
   setEngine,
@@ -39,8 +41,11 @@ import {
 } from "@/ipc/events";
 import {
   assetUrl,
+  destroyCurrentWindow,
   isTauriRuntime,
   openPathDialog,
+  savePathDialog,
+  subscribeWindowCloseRequested,
   subscribeWindowDragDrop,
 } from "@/ipc/platform";
 import { Button } from "@/components/ui/button";
@@ -63,6 +68,7 @@ import { SearchBar } from "@/features/search/SearchBar";
 import { SearchResultsPanel } from "@/features/search/SearchResultsPanel";
 import { DiffView, pairHasClass } from "@/features/workspace/DiffView";
 import { FreeTextWorkspace } from "@/features/free-text/FreeTextWorkspace";
+import { useFreeTextController } from "@/features/free-text/useFreeTextController";
 import { KeyboardShortcutsDialog } from "@/features/shell/KeyboardShortcutsDialog";
 import { useWorkspaceController } from "@/features/workspace/useWorkspaceController";
 import {
@@ -84,6 +90,9 @@ import {
   type MergeControllerContext,
   useMergeController,
 } from "@/features/merge/useMergeController";
+import { useTempMergeController } from "@/features/merge/useTempMergeController";
+import { CreateTempTargetDialog } from "@/features/merge/CreateTempTargetDialog";
+import { MergeConflictDialog } from "@/features/merge/MergeConflictDialog";
 import { WorkspaceTabs } from "@/features/workspace/WorkspaceTabs";
 import { ViewSourceTabs } from "@/features/sources/ViewSourceTabs";
 import { FileTree } from "@/features/sources/FileTree";
@@ -122,6 +131,44 @@ const emptyPaths: Record<Side, string> = { left: "", right: "" };
 
 const VIEW_ROOT_KEY = "";
 
+type OpenViewPathOutcome =
+  | { path: string; status: "opened" }
+  | { path: string; status: "failed"; error: string }
+  | { path: string; status: "blocked"; error: string }
+  | { path: string; status: "cancelled" };
+
+interface PendingTempSourceChange {
+  side: Side;
+  path: string;
+  openTabsConfirmed: boolean;
+}
+
+interface TempOperationIntent {
+  attemptId: number;
+  settled: boolean;
+}
+
+interface TempStageIntent extends TempOperationIntent {
+  targetSide: Side;
+  paths: string[];
+}
+
+interface TempApplyIntent extends TempOperationIntent {
+  pendingSourceChange?: PendingTempSourceChange;
+}
+
+interface TempSaveIntent extends TempOperationIntent {
+  closeAfterSuccess: boolean;
+}
+
+interface TempDiscardIntent extends TempOperationIntent {
+  closeAfterSuccess: boolean;
+}
+
+function tempRecoveryLabel(operation: "apply" | "saveAs" | "discard") {
+  return operation === "saveAs" ? "Save As" : operation === "apply" ? "Apply" : "Discard";
+}
+
 // Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
 
@@ -146,9 +193,26 @@ function summaryAsArchive(source: ViewSource | undefined): ArchiveSummary | unde
   };
 }
 
+function tempSummaryAsArchive(workingName: string): ArchiveSummary {
+  return {
+    path: workingName,
+    metadata: { sourceKind: "archive", signed: false, multiRelease: false, zip64: false },
+    entries: [],
+  };
+}
+
 function dropSideForPosition(mode: Mode, x: number, width: number): Side {
   if (mode === "single") return "left";
   return x < width / 2 ? "left" : "right";
+}
+
+async function readDroppedTextFile(path: string) {
+  try {
+    return await readTextFile(path);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${path}: ${detail}`);
+  }
 }
 
 export function App() {
@@ -186,6 +250,15 @@ export function App() {
     hasSeenOnboarding("compare") ? null : 0,
   );
   const [pendingOpen, setPendingOpen] = useState<{ side: Side; path: string }>();
+  const [pendingComparePair, setPendingComparePair] = useState<{
+    leftPath: string;
+    rightPath: string;
+  }>();
+  const [pendingTempSourceChange, setPendingTempSourceChange] = useState<PendingTempSourceChange>();
+  const [discardTempOpen, setDiscardTempOpen] = useState(false);
+  const [tempCloseOpen, setTempCloseOpen] = useState(false);
+  const [tempConflictReviewDismissed, setTempConflictReviewDismissed] = useState(false);
+  const [tempCompletionVersion, setTempCompletionVersion] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutDialogOpen, setShortcutDialogOpen] = useState(false);
@@ -201,9 +274,28 @@ export function App() {
   const modeRef = useRef(mode);
   const activeViewSourceIdRef = useRef<string | undefined>(undefined);
   const viewRequestGenerationRef = useRef(0);
+  const viewDropGenerationRef = useRef(0);
+  const compareOpenGenerationRef = useRef<Record<Side, number>>({ left: 0, right: 0 });
+  const compareDiffGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const appliedEngineRef = useRef(engine);
   const mergeContextRef = useRef<MergeControllerContext | undefined>(undefined);
+  const tempTargetSideRef = useRef<Side | undefined>(undefined);
+  const tempCreateSourceSideRef = useRef<Side | undefined>(undefined);
+  const tempSavePathRef = useRef<string | undefined>(undefined);
+  const tempSavePickerGenerationRef = useRef(0);
+  const tempSavePickerPendingRef = useRef(false);
+  const tempSavePickerIdentityRef = useRef("none");
+  const tempStageIntentRef = useRef<TempStageIntent | undefined>(undefined);
+  const tempApplyIntentRef = useRef<TempApplyIntent | undefined>(undefined);
+  const tempSaveIntentRef = useRef<TempSaveIntent | undefined>(undefined);
+  const tempDiscardIntentRef = useRef<TempDiscardIntent | undefined>(undefined);
+  const tempAttemptIdRef = useRef(0);
+  const tempControllerCallPendingRef = useRef(false);
+  const tempCloseRequestGenerationRef = useRef(0);
+  const projectedTempSessionIdRef = useRef<string | undefined>(undefined);
+  const freeText = useFreeTextController(setMessage);
+  const tempMerge = useTempMergeController();
   const workspace = useWorkspaceController({
     mode,
     setPairs,
@@ -226,10 +318,12 @@ export function App() {
     activeTab,
     openTabs,
     activeViewSource,
+    expandedPaths,
   } = workspace.state;
   const {
     selectPair,
     setContentFilter,
+    setExpandedPaths,
     updateEditBuffer,
     focusFiles,
     focusTab,
@@ -269,12 +363,51 @@ export function App() {
     save,
     confirmSignedSave,
     clearStaged,
+    clearStagedForSide,
+    projectTempStaged,
+    resetStagedProjection,
     unstage,
     stageEdit,
     stageFileSide,
     takeAllTo,
     moveHunkTo,
   } = merge.actions;
+  const stagedEntriesRef = useRef(stagedEntries);
+  const tempStateRef = useRef({
+    session: tempMerge.session,
+    retryOperation: tempMerge.retryOperation,
+    busy: tempMerge.busy,
+  });
+  const pendingTempSourceChangeRef = useRef(pendingTempSourceChange);
+  stagedEntriesRef.current = stagedEntries;
+  tempStateRef.current = {
+    session: tempMerge.session,
+    retryOperation: tempMerge.retryOperation,
+    busy: tempMerge.busy,
+  };
+  pendingTempSourceChangeRef.current = pendingTempSourceChange;
+  if (tempMerge.session) tempTargetSideRef.current = tempMerge.session.targetSide;
+  const tempSavePickerIdentity = tempMerge.session
+    ? [
+        "session",
+        tempMerge.session.id,
+        tempMerge.session.targetSide,
+        tempMerge.session.workingName,
+        tempMerge.session.entryCount,
+        tempMerge.session.appliedSourceCount,
+        tempMerge.session.exportedPath ?? "",
+      ].join(":")
+    : tempMerge.retryOperation
+      ? `recovery:${tempMerge.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+      : "none";
+  if (tempSavePickerIdentityRef.current !== tempSavePickerIdentity) {
+    tempSavePickerIdentityRef.current = tempSavePickerIdentity;
+    tempSavePickerGenerationRef.current += 1;
+    tempSavePickerPendingRef.current = false;
+    if (tempMerge.session || tempSavePickerIdentity === "none") {
+      tempSavePathRef.current = undefined;
+    }
+  }
   const selectedRef = useRef<ComparePair | undefined>(selected);
   const inspectRef = useRef(inspect);
   const availableFontFamilies = useMemo(
@@ -475,11 +608,34 @@ export function App() {
   }
 
   const refreshDiff = useCallback(async () => {
+    const generation = compareDiffGenerationRef.current + 1;
+    compareDiffGenerationRef.current = generation;
+    const sourceGenerations = { ...compareOpenGenerationRef.current };
+    const tempState = tempStateRef.current;
+    const ownership = tempState.retryOperation
+      ? `recovery:${tempState.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+      : tempState.session
+        ? `session:${tempState.session.id}:${tempState.session.targetSide}`
+        : "none";
+    const isCurrent = () => {
+      const currentTempState = tempStateRef.current;
+      const currentOwnership = currentTempState.retryOperation
+        ? `recovery:${currentTempState.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+        : currentTempState.session
+          ? `session:${currentTempState.session.id}:${currentTempState.session.targetSide}`
+          : "none";
+      return compareDiffGenerationRef.current === generation
+        && compareOpenGenerationRef.current.left === sourceGenerations.left
+        && compareOpenGenerationRef.current.right === sourceGenerations.right
+        && currentOwnership === ownership;
+    };
     try {
       const diff = await computeDiff();
+      if (!isCurrent()) return;
       setPairs(diff.pairs);
       setNestedPairs({});
     } catch {
+      if (!isCurrent()) return;
       setPairs([]);
       setNestedPairs({});
     }
@@ -513,54 +669,99 @@ export function App() {
     }
   }, [activeViewSource, loadViewPairs, mode]);
 
-  const openViewPath = useCallback(async (path: string) => {
+  const openViewPath = useCallback(async (
+    path: string,
+    dropGeneration?: number,
+  ): Promise<OpenViewPathOutcome> => {
+    if (dropGeneration === undefined) {
+      viewDropGenerationRef.current += 1;
+    }
     if (stagedTarget) {
-      setMessage("Save or clear unsaved changes before opening another View source.");
-      return undefined;
+      const error = "Save or clear unsaved changes before opening another View source.";
+      setMessage(error);
+      return { path, status: "blocked", error };
     }
     const generation = viewRequestGenerationRef.current + 1;
     viewRequestGenerationRef.current = generation;
     try {
       const validatedPath = await validatePath(path);
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       const summary = await openViewSourceCommand(validatedPath);
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       clearViewSearchState(false);
       setPathErrors((current) => ({ ...current, left: undefined }));
-      setPaths((current) => ({ ...current, left: summary.path }));
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
-      resetWorkspace();
+      resetWorkspace({ target: "view" });
       activeViewSourceIdRef.current = summary.id;
       setViewWorkspace((current) => openViewSource(current, createViewSource(summary)));
       await loadViewPairs(summary.id, VIEW_ROOT_KEY, generation);
-      if (!isCurrentViewRequest(generation, summary.id)) return undefined;
+      if (!isCurrentViewRequest(generation, summary.id)) {
+        return { path, status: "cancelled" };
+      }
       setMessage(`Opened ${summary.path}`);
-      return undefined;
+      return { path, status: "opened" };
     } catch (error) {
-      if (!isCurrentViewRequest(generation)) return undefined;
+      if (!isCurrentViewRequest(generation)) return { path, status: "cancelled" };
       const message = String(error);
       setPathErrors((current) => ({ ...current, left: message }));
       setMessage(message);
-      return message;
+      return { path, status: "failed", error: message };
     }
   }, [loadViewPairs, resetWorkspace, stagedTarget]);
 
-  const openPath = useCallback(async (side: Side, path: string, confirmed = false) => {
+  const tempSourceChangeBlockReason = useCallback((side: Side) => {
+    const state = tempStateRef.current;
+    if (state.retryOperation) {
+      return `Retry ${tempRecoveryLabel(state.retryOperation)} before changing sources.`;
+    }
+    if (state.busy) return "Wait for the temporary merge operation to finish before changing sources.";
+    if (state.session?.targetSide === side) {
+      return "The temporary target is session-owned and cannot be replaced.";
+    }
+    return undefined;
+  }, []);
+
+  const openPath = useCallback(async (
+    side: Side,
+    path: string,
+    confirmed = false,
+    tempChangeConfirmed = false,
+  ) => {
+    const generation = compareOpenGenerationRef.current[side] + 1;
+    compareOpenGenerationRef.current[side] = generation;
+    const tempState = tempStateRef.current;
+    const blocked = tempSourceChangeBlockReason(side);
+    if (blocked) {
+      setMessage(blocked);
+      return blocked;
+    }
+    const ownedTargetSide = tempState.session?.targetSide;
+    const hasPendingTargetChanges = ownedTargetSide !== undefined && Object.values(
+      stagedEntriesRef.current,
+    ).some((entry) => entry.side === ownedTargetSide);
+    if (tempState.session && hasPendingTargetChanges && !tempChangeConfirmed) {
+      setPendingTempSourceChange({ side, path, openTabsConfirmed: confirmed });
+      return undefined;
+    }
+    const staleOrProtected = () => (
+      compareOpenGenerationRef.current[side] !== generation
+      || tempSourceChangeBlockReason(side) !== undefined
+    );
     try {
       if (!confirmed && workspace.openTabsCount > 0) {
+        setPendingComparePair(undefined);
         setPendingOpen({ side, path });
         return undefined;
       }
       const validatedPath = await validatePath(path);
+      if (staleOrProtected()) return undefined;
       const archive = await openArchive(validatedPath, side);
+      if (staleOrProtected()) return undefined;
       searchStreamId.current += 1;
       setSearching(false);
       setPaths((current) => ({ ...current, [side]: archive.path }));
       setPathErrors((current) => ({ ...current, [side]: undefined }));
       setArchives((current) => ({ ...current, [side]: archive }));
-      resetWorkspace();
+      resetWorkspace({ target: "compare" });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -568,20 +769,76 @@ export function App() {
       await refreshDiff();
       return undefined;
     } catch (error) {
+      if (staleOrProtected()) return undefined;
       const message = String(error);
       setPathErrors((current) => ({ ...current, [side]: message }));
       setMessage(message);
       return message;
     }
-  }, [refreshDiff, resetWorkspace, workspace.openTabsCount]);
+  }, [refreshDiff, resetWorkspace, tempSourceChangeBlockReason, workspace.openTabsCount]);
+
+  const openDroppedComparePair = useCallback(async (
+    leftPath: string,
+    rightPath: string,
+    confirmed = false,
+  ) => {
+    const generations = {
+      left: compareOpenGenerationRef.current.left + 1,
+      right: compareOpenGenerationRef.current.right + 1,
+    };
+    compareOpenGenerationRef.current = generations;
+    const diffGeneration = compareDiffGenerationRef.current + 1;
+    compareDiffGenerationRef.current = diffGeneration;
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation || tempStateRef.current.busy) {
+      setMessage("Discard the temporary target before replacing both Compare sources.");
+      return;
+    }
+    const staleOrProtected = () => (
+      compareOpenGenerationRef.current.left !== generations.left
+      || compareOpenGenerationRef.current.right !== generations.right
+      || compareDiffGenerationRef.current !== diffGeneration
+      || tempStateRef.current.session !== undefined
+      || tempStateRef.current.retryOperation !== undefined
+      || tempStateRef.current.busy !== undefined
+    );
+    if (!confirmed && workspace.openTabsCount > 0) {
+      setPendingOpen(undefined);
+      setPendingComparePair({ leftPath, rightPath });
+      return;
+    }
+    try {
+      const result = await openCompareSources(leftPath, rightPath);
+      if (staleOrProtected()) return;
+      searchStreamId.current += 1;
+      setSearching(false);
+      setPaths({ left: result.left.path, right: result.right.path });
+      setPathErrors({});
+      setArchives({ left: result.left, right: result.right });
+      setPairs(result.diff.pairs);
+      setNestedPairs({});
+      resetWorkspace({ target: "compare" });
+      setSearchPaths(undefined);
+      setSearchResults([]);
+      setSelectedSearchResult(undefined);
+      setMessage(`Opened ${result.left.path} and ${result.right.path}`);
+    } catch (error) {
+      if (staleOrProtected()) return;
+      setMessage(String(error));
+    }
+  }, [resetWorkspace, workspace.openTabsCount]);
 
   const openTextMode = useCallback(() => {
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation) {
+      setMessage("Discard the temporary target before switching to Free text.");
+      return;
+    }
     if (stagedTarget) {
       setMessage("Save or clear unsaved changes before switching to Free text.");
       return;
     }
     modeRef.current = "text";
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     searchStreamId.current += 1;
     cancelableSearchActiveRef.current = false;
     setSearching(false);
@@ -589,12 +846,7 @@ export function App() {
     setMode("text");
     setTourStep(hasSeenOnboarding("text") ? null : 0);
     setView("workspace");
-    setPaths(emptyPaths);
-    setPathErrors({});
-    setArchives({});
-    setPairs([]);
-    setNestedPairs({});
-    resetWorkspace();
+    resetWorkspace({ preserveState: true });
     setQuery("");
     setSearchPaths(undefined);
     setSearchResults([]);
@@ -605,15 +857,22 @@ export function App() {
 
   const openFromOs = useCallback((path: string) => {
     if (!path) return;
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation) {
+      setMessage("Discard the temporary target before opening another workspace.");
+      return;
+    }
     if (modeRef.current === "text") {
       setMessage("File opens are not available in Free text mode.");
       return;
+    }
+    if (modeRef.current === "compare") {
+      resetWorkspace({ preserveState: true });
     }
     modeRef.current = "single";
     setMode("single");
     setView("workspace");
     void openViewPath(path);
-  }, [openViewPath]);
+  }, [openViewPath, resetWorkspace]);
 
   useEffect(() => {
     if (view !== "workspace") return;
@@ -625,24 +884,98 @@ export function App() {
     }
     const left = archives.left?.path;
     const right = archives.right?.path;
+    if (
+      mode === "compare"
+      && (tempMerge.session || tempMerge.retryOperation || projectedTempSessionIdRef.current)
+    ) return;
     if (mode === "compare" && left && right) {
       setHistory(recordSession("compare", [left, right], Date.now()));
     }
-  }, [view, mode, activeViewSource, archives.left?.path, archives.right?.path]);
+  }, [
+    view,
+    mode,
+    activeViewSource,
+    archives.left?.path,
+    archives.right?.path,
+    tempMerge.retryOperation,
+    tempMerge.session,
+  ]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
     return subscribeWindowDragDrop((event) => {
       if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
-      if (mode === "text") {
-        setMessage("File drops are not available in Free text mode.");
-        return;
-      }
-      const side = dropSideForPosition(mode, event.payload.position.x, window.innerWidth);
-      if (mode === "single") void openViewPath(event.payload.paths[0]);
-      else void openPath(side, event.payload.paths[0]);
+      const { paths: droppedPaths, position } = event.payload;
+      const openDroppedPaths = async () => {
+        if (mode === "compare") {
+          if (droppedPaths.length === 2) {
+            await openDroppedComparePair(droppedPaths[0], droppedPaths[1]);
+            return;
+          }
+          if (droppedPaths.length > 2) {
+            setMessage("Drop one source or exactly two sources to compare.");
+            return;
+          }
+          const side = dropSideForPosition(mode, position.x, window.innerWidth);
+          await openPath(side, droppedPaths[0]);
+          return;
+        }
+
+        if (mode === "single") {
+          const dropGeneration = viewDropGenerationRef.current + 1;
+          viewDropGenerationRef.current = dropGeneration;
+          const outcomes: OpenViewPathOutcome[] = [];
+          for (const path of droppedPaths) {
+            const outcome = await openViewPath(path, dropGeneration);
+            outcomes.push(outcome);
+            if (outcome.status === "cancelled") break;
+          }
+          if (viewDropGenerationRef.current !== dropGeneration) return;
+          const opened = outcomes.filter((outcome) => outcome.status === "opened").length;
+          const failed = outcomes.filter((outcome) => outcome.status === "failed").length;
+          const blocked = outcomes.filter((outcome) => outcome.status === "blocked").length;
+          const summary = [`${opened} opened`, `${failed} failed`];
+          if (blocked > 0) {
+            summary.push(`${blocked} blocked`);
+          }
+          const failures = outcomes.filter(
+            (outcome): outcome is Extract<
+              OpenViewPathOutcome,
+              { status: "failed" | "blocked" }
+            > => outcome.status === "failed" || outcome.status === "blocked",
+          );
+          const details = failures
+            .map((outcome) => `${outcome.path}: ${outcome.error}`)
+            .join("; ");
+          setMessage(`${summary.join(", ")}${details ? ` — ${details}` : ""}`);
+          return;
+        }
+
+        if (droppedPaths.length > 2) {
+          setMessage("Drop one or two text files.");
+          return;
+        }
+
+        try {
+          if (droppedPaths.length === 1) {
+            const file = await readDroppedTextFile(droppedPaths[0]);
+            freeText.setDraft(
+              dropSideForPosition(mode, position.x, window.innerWidth),
+              file.content,
+            );
+          } else {
+            const [left, right] = await Promise.all(
+              droppedPaths.map(readDroppedTextFile),
+            );
+            freeText.setDrafts(left.content, right.content);
+          }
+        } catch (error) {
+          setMessage(`Unable to load dropped text files: ${String(error)}`);
+        }
+      };
+      void openDroppedPaths();
     });
-  }, [mode, openPath, openViewPath]);
+  }, [freeText, mode, openDroppedComparePair, openPath, openViewPath]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -712,6 +1045,11 @@ export function App() {
   }, []);
 
   async function browse(side: Side) {
+    const blocked = tempSourceChangeBlockReason(side);
+    if (blocked) {
+      setMessage(blocked);
+      return;
+    }
     try {
       const path = await openPathDialog({
         multiple: false,
@@ -745,6 +1083,11 @@ export function App() {
   }
 
   async function browseFolder(side: Side) {
+    const blocked = tempSourceChangeBlockReason(side);
+    if (blocked) {
+      setMessage(blocked);
+      return;
+    }
     try {
       const path = await openPathDialog({
         multiple: false,
@@ -760,12 +1103,16 @@ export function App() {
   }
 
   function refreshSources() {
+    if (mode === "text") return;
     if (mode === "single") {
       if (activeViewSource) void openViewPath(activeViewSource.path);
       return;
     }
+    const protectedTarget = tempStateRef.current.session?.targetSide
+      ?? (tempStateRef.current.retryOperation ? tempTargetSideRef.current : undefined);
     const sides: Side[] = mode === "compare" ? ["left", "right"] : ["left"];
     for (const side of sides) {
+      if (side === protectedTarget) continue;
       if (archives[side]?.metadata.sourceKind === "text") continue;
       const current = archives[side]?.path;
       if (current) void openPath(side, current, true);
@@ -778,6 +1125,7 @@ export function App() {
       return;
     }
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     activeViewSourceIdRef.current = sourceId;
     clearViewSearchState(cancelableSearchActiveRef.current);
     selectWorkspaceViewSource(sourceId);
@@ -790,6 +1138,7 @@ export function App() {
       return;
     }
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     void closeViewSourceCommand(sourceId).catch(() => undefined);
     const { closedActive, nextSourceId } = closeWorkspaceViewSourceTab(sourceId);
     activeViewSourceIdRef.current = nextSourceId;
@@ -797,19 +1146,31 @@ export function App() {
   }
 
   function pickMode(next: Mode) {
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation) {
+      setMessage("Discard the temporary target before changing workspaces.");
+      return;
+    }
     if (next === "text") {
       openTextMode();
       return;
     }
     modeRef.current = next;
-    if (next !== "single") viewRequestGenerationRef.current += 1;
+    if (next !== "single") {
+      viewRequestGenerationRef.current += 1;
+      viewDropGenerationRef.current += 1;
+    }
     setMode(next);
     setView("workspace");
   }
 
   function openEntry(entry: HistoryEntry) {
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation) {
+      setMessage("Discard the temporary target before reopening history.");
+      return;
+    }
     modeRef.current = entry.mode;
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     setMode(entry.mode);
     setView("workspace");
     if (entry.mode === "single") {
@@ -827,6 +1188,10 @@ export function App() {
   }
 
   function changeMode(next: Mode) {
+    if (next !== mode && (tempStateRef.current.session || tempStateRef.current.retryOperation)) {
+      setMessage("Discard the temporary target before changing workspaces.");
+      return;
+    }
     if (next === "text") {
       openTextMode();
       return;
@@ -835,39 +1200,24 @@ export function App() {
       setMessage(`Save or clear unsaved changes before switching to ${next === "single" ? "View" : "Compare"} mode.`);
       return;
     }
+    if (mode === "compare" && next !== "compare") {
+      resetWorkspace({ preserveState: true });
+    }
     modeRef.current = next;
     viewRequestGenerationRef.current += 1;
+    viewDropGenerationRef.current += 1;
     if (mode === "single" || next === "single") clearViewSearchState(cancelableSearchActiveRef.current);
     if ((mode === "compare" || mode === "text") && next === "single") {
-      resetWorkspace({
-        clearDiffModel: true,
-        invalidatePreviewRequest: false,
-      });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     if (mode === "single" && next === "compare") {
-      resetWorkspace({
-        clearDiffModel: true,
-        invalidatePreviewRequest: false,
-      });
-      setPaths(emptyPaths);
-      setPathErrors({});
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
     }
     if (mode === "text") {
-      setPaths(emptyPaths);
-      setPathErrors({});
-      setArchives({});
-      setPairs([]);
-      setNestedPairs({});
-      resetWorkspace({ invalidatePreviewRequest: false });
       setSearchPaths(undefined);
       setSearchResults([]);
       setSelectedSearchResult(undefined);
@@ -875,6 +1225,382 @@ export function App() {
     setMode(next);
     setTourStep(hasSeenOnboarding(next) ? null : 0);
   }
+
+  const guardTempTargetMutation = useCallback((target: Side) => {
+    const state = tempStateRef.current;
+    if (state.retryOperation) {
+      setMessage(`Retry ${tempRecoveryLabel(state.retryOperation)} before changing staged work.`);
+      return false;
+    }
+    if (state.busy) {
+      setMessage("Wait for the temporary merge operation to finish before changing staged work.");
+      return false;
+    }
+    if (state.session && state.session.targetSide !== target) {
+      setMessage("The replaceable source is protected during a temporary merge session.");
+      return false;
+    }
+    return true;
+  }, []);
+
+  const guardedCopy = useCallback((from: Side, to: Side, pair?: ComparePair) => {
+    if (!guardTempTargetMutation(to)) return Promise.resolve();
+    return copy(from, to, pair);
+  }, [copy, guardTempTargetMutation]);
+
+  const guardedStageFileSide = useCallback((
+    side: Side,
+    entryPath: string,
+    content: string,
+    model: EntryPreview,
+  ) => {
+    if (!guardTempTargetMutation(side)) return Promise.resolve();
+    return stageFileSide(side, entryPath, content, model);
+  }, [guardTempTargetMutation, stageFileSide]);
+
+  const guardedTakeAllTo = useCallback((target: Side) => {
+    if (!guardTempTargetMutation(target)) return Promise.resolve();
+    return takeAllTo(target);
+  }, [guardTempTargetMutation, takeAllTo]);
+
+  const guardedMoveHunkTo = useCallback((target: Side) => {
+    const state = tempStateRef.current;
+    if (state.session || state.retryOperation) {
+      setMessage("Move hunk is unavailable while a temporary target owns the workspace.");
+      return;
+    }
+    if (!guardTempTargetMutation(target)) return;
+    moveHunkTo(target);
+  }, [guardTempTargetMutation, moveHunkTo]);
+
+  const guardedUnstage = useCallback((key: string) => {
+    const entry = stagedEntriesRef.current[key];
+    if (entry && !guardTempTargetMutation(entry.side)) return Promise.resolve();
+    return unstage(key);
+  }, [guardTempTargetMutation, unstage]);
+
+  function openCreateTempTarget(sourceSide: Side) {
+    if (tempStateRef.current.session || tempStateRef.current.retryOperation || tempStateRef.current.busy) return;
+    tempCreateSourceSideRef.current = sourceSide;
+    tempMerge.setCreateOpen(true);
+  }
+
+  function reserveTempControllerCall() {
+    if (tempControllerCallPendingRef.current) return false;
+    tempControllerCallPendingRef.current = true;
+    tempSavePickerGenerationRef.current += 1;
+    tempSavePickerPendingRef.current = false;
+    return true;
+  }
+
+  function createTempTarget(creation: Parameters<typeof tempMerge.create>[1]) {
+    const sourceSide = tempCreateSourceSideRef.current;
+    if (!sourceSide || !reserveTempControllerCall()) return;
+    const targetSide: Side = sourceSide === "left" ? "right" : "left";
+    compareOpenGenerationRef.current[targetSide] += 1;
+    void tempMerge.create(sourceSide, creation).finally(() => {
+      tempControllerCallPendingRef.current = false;
+    });
+  }
+
+  function previewMergeAllToTemp(sourceSide: Side) {
+    if (
+      !tempStateRef.current.session
+      || tempStateRef.current.retryOperation
+      || !reserveTempControllerCall()
+    ) return;
+    setTempConflictReviewDismissed(false);
+    void tempMerge.previewMergeAll(sourceSide).finally(() => {
+      tempControllerCallPendingRef.current = false;
+    });
+  }
+
+  function runTempOperation<T extends TempOperationIntent>(
+    intentRef: { current: T | undefined },
+    intent: Omit<T, keyof TempOperationIntent>,
+    operation: () => Promise<void>,
+  ) {
+    if (
+      (intentRef.current && !intentRef.current.settled)
+      || !reserveTempControllerCall()
+    ) return;
+    const attemptId = tempAttemptIdRef.current + 1;
+    tempAttemptIdRef.current = attemptId;
+    intentRef.current = { ...intent, attemptId, settled: false } as T;
+    void operation().finally(() => {
+      tempControllerCallPendingRef.current = false;
+      if (intentRef.current?.attemptId !== attemptId) return;
+      intentRef.current.settled = true;
+      setTempCompletionVersion((current) => current + 1);
+    });
+  }
+
+  function stageMergeAllToTemp(decisions: Parameters<typeof tempMerge.stageMergeAll>[1]) {
+    const session = tempStateRef.current.session;
+    const preview = tempMerge.conflictReview;
+    if (!session || !preview) return;
+    const overwritten = decisions
+      .filter((decision) => decision.action === "overwrite")
+      .map((decision) => decision.entryPath);
+    const intent = {
+      targetSide: session.targetSide,
+      paths: [...new Set([...preview.newEntries, ...overwritten])],
+    };
+    const sourceSide: Side = session.targetSide === "left" ? "right" : "left";
+    runTempOperation(tempStageIntentRef, intent, () => tempMerge.stageMergeAll(sourceSide, decisions));
+  }
+
+  function applyTemp(pendingSourceChange?: PendingTempSourceChange) {
+    const priorPending = tempApplyIntentRef.current?.pendingSourceChange;
+    runTempOperation(
+      tempApplyIntentRef,
+      { pendingSourceChange: pendingSourceChange ?? priorPending },
+      tempMerge.apply,
+    );
+  }
+
+  const saveRegisteredAction = useCallback(() => {
+    const state = tempStateRef.current;
+    if (tempControllerCallPendingRef.current) {
+      setMessage("Wait for the temporary merge operation to finish before saving staged work.");
+      return;
+    }
+    if (state.retryOperation === "apply") {
+      applyTemp();
+      return;
+    }
+    if (state.retryOperation) {
+      setMessage(`Retry ${tempRecoveryLabel(state.retryOperation)} before saving staged work.`);
+      return;
+    }
+    if (state.busy) {
+      setMessage("Wait for the temporary merge operation to finish before saving staged work.");
+      return;
+    }
+    if (state.session) {
+      applyTemp();
+      return;
+    }
+    if (stagedTarget) void save(stagedTarget);
+  }, [save, stagedTarget]);
+
+  async function saveTempAs(closeAfterSuccess = false) {
+    const closeRequestGeneration = closeAfterSuccess
+      ? tempCloseRequestGenerationRef.current
+      : undefined;
+    const retrying = tempStateRef.current.retryOperation === "saveAs";
+    let destination: string | null | undefined = retrying ? tempSavePathRef.current : undefined;
+    if (!retrying) {
+      const session = tempStateRef.current.session;
+      if (
+        !session
+        || tempSavePickerPendingRef.current
+        || tempControllerCallPendingRef.current
+        || tempStateRef.current.busy !== undefined
+      ) return;
+      const pickerGeneration = tempSavePickerGenerationRef.current + 1;
+      tempSavePickerGenerationRef.current = pickerGeneration;
+      tempSavePickerPendingRef.current = true;
+      const pickerIdentity = tempSavePickerIdentityRef.current;
+      try {
+        destination = await savePathDialog({
+          defaultPath: session.workingName,
+          filters: [{ name: "Archives", extensions: ["jar", "zip", "war", "ear"] }],
+        });
+      } catch (error) {
+        if (tempSavePickerGenerationRef.current === pickerGeneration) {
+          setMessage(`Save As picker failed: ${String(error)}`);
+        }
+        return;
+      } finally {
+        if (tempSavePickerGenerationRef.current === pickerGeneration) {
+          tempSavePickerPendingRef.current = false;
+        }
+      }
+      const currentSession = tempStateRef.current.session;
+      if (
+        tempSavePickerGenerationRef.current !== pickerGeneration
+        || tempSavePickerIdentityRef.current !== pickerIdentity
+        || !currentSession
+        || currentSession.id !== session.id
+        || currentSession.targetSide !== session.targetSide
+        || tempControllerCallPendingRef.current
+        || tempStateRef.current.busy !== undefined
+        || tempStateRef.current.retryOperation !== undefined
+      ) return;
+    }
+    if (!destination) return;
+    const selectedDestination = destination;
+    tempSavePathRef.current = selectedDestination;
+    const priorCloseAfterSuccess = tempSaveIntentRef.current?.closeAfterSuccess ?? false;
+    const currentCloseRequest = closeRequestGeneration !== undefined
+      && closeRequestGeneration === tempCloseRequestGenerationRef.current;
+    runTempOperation(
+      tempSaveIntentRef,
+      { closeAfterSuccess: currentCloseRequest || priorCloseAfterSuccess },
+      () => tempMerge.saveAs(selectedDestination),
+    );
+  }
+
+  function cancelTempClose() {
+    tempCloseRequestGenerationRef.current += 1;
+    setTempCloseOpen(false);
+    if (tempSaveIntentRef.current?.closeAfterSuccess) {
+      tempSaveIntentRef.current = { ...tempSaveIntentRef.current, closeAfterSuccess: false };
+    }
+    if (tempDiscardIntentRef.current?.closeAfterSuccess) {
+      tempDiscardIntentRef.current = { ...tempDiscardIntentRef.current, closeAfterSuccess: false };
+    }
+  }
+
+  function retryTempCloseOperation() {
+    const operation = tempStateRef.current.retryOperation;
+    if (operation === "saveAs") {
+      void saveTempAs(true);
+    } else if (operation === "discard") {
+      discardTemp(true);
+    } else if (operation === "apply") {
+      applyTemp();
+    }
+  }
+
+  function discardTemp(closeAfterSuccess = false) {
+    const priorCloseAfterSuccess = tempDiscardIntentRef.current?.closeAfterSuccess ?? false;
+    setDiscardTempOpen(false);
+    if (closeAfterSuccess) setTempCloseOpen(false);
+    runTempOperation(
+      tempDiscardIntentRef,
+      { closeAfterSuccess: closeAfterSuccess || priorCloseAfterSuccess },
+      tempMerge.discard,
+    );
+  }
+
+  async function discardStagedForSourceChange() {
+    const pending = pendingTempSourceChangeRef.current;
+    const targetSide = tempTargetSideRef.current;
+    if (!pending || !targetSide) return;
+    const cleared = await clearStagedForSide(targetSide);
+    if (!cleared || pendingTempSourceChangeRef.current !== pending) return;
+    setPendingTempSourceChange(undefined);
+    void openPath(pending.side, pending.path, pending.openTabsConfirmed, true);
+  }
+
+  useEffect(() => {
+    if (tempMerge.error) setMessage(tempMerge.error);
+  }, [tempMerge.error]);
+
+  useEffect(() => {
+    const session = tempMerge.session;
+    if (!session) return;
+    tempTargetSideRef.current = session.targetSide;
+    setPaths((current) => ({ ...current, [session.targetSide]: session.workingName }));
+    setArchives((current) => ({
+      ...current,
+      [session.targetSide]: tempSummaryAsArchive(session.workingName),
+    }));
+    if (projectedTempSessionIdRef.current !== session.id) {
+      projectedTempSessionIdRef.current = session.id;
+      void refreshDiff();
+    }
+  }, [refreshDiff, tempMerge.session]);
+
+  useEffect(() => {
+    const stageIntent = tempStageIntentRef.current;
+    if (stageIntent?.settled) {
+      if (!tempMerge.error && tempMerge.conflictReview === undefined) {
+        projectTempStaged(stageIntent.targetSide, stageIntent.paths);
+        tempStageIntentRef.current = undefined;
+      } else {
+        tempStageIntentRef.current = undefined;
+      }
+    }
+
+    const applyIntent = tempApplyIntentRef.current;
+    if (applyIntent?.settled) {
+      if (tempMerge.retryOperation === "apply") {
+        setPendingTempSourceChange(undefined);
+      } else if (tempMerge.session && !tempMerge.error) {
+        resetStagedProjection();
+        void refreshDiff();
+        const pending = applyIntent.pendingSourceChange;
+        if (pending) {
+          setPendingTempSourceChange(undefined);
+          void openPath(pending.side, pending.path, pending.openTabsConfirmed, true);
+        }
+        tempApplyIntentRef.current = undefined;
+      } else {
+        tempApplyIntentRef.current = undefined;
+      }
+    }
+
+    const saveIntent = tempSaveIntentRef.current;
+    if (saveIntent?.settled) {
+      if (tempMerge.retryOperation !== "saveAs" && tempMerge.session && !tempMerge.error) {
+        if (saveIntent.closeAfterSuccess) void destroyCurrentWindow();
+        tempSaveIntentRef.current = undefined;
+      } else if (tempMerge.retryOperation !== "saveAs") {
+        tempSaveIntentRef.current = undefined;
+      }
+    }
+
+    const discardIntent = tempDiscardIntentRef.current;
+    if (discardIntent?.settled) {
+      if (tempMerge.retryOperation !== "discard" && !tempMerge.session && !tempMerge.error) {
+        const targetSide = tempTargetSideRef.current;
+        if (targetSide) {
+          setArchives((current) => {
+            const next = { ...current };
+            delete next[targetSide];
+            return next;
+          });
+          setPaths((current) => ({ ...current, [targetSide]: "" }));
+        }
+        resetStagedProjection();
+        projectedTempSessionIdRef.current = undefined;
+        tempTargetSideRef.current = undefined;
+        void refreshDiff();
+        if (discardIntent.closeAfterSuccess) void destroyCurrentWindow();
+        tempDiscardIntentRef.current = undefined;
+      } else if (tempMerge.retryOperation !== "discard") {
+        tempDiscardIntentRef.current = undefined;
+      }
+    }
+  }, [
+    openPath,
+    projectTempStaged,
+    refreshDiff,
+    resetStagedProjection,
+    tempCompletionVersion,
+    tempMerge.busy,
+    tempMerge.conflictReview,
+    tempMerge.error,
+    tempMerge.retryOperation,
+    tempMerge.session,
+  ]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    return subscribeWindowCloseRequested((event) => {
+      const tempState = tempStateRef.current;
+      if (tempState.retryOperation) {
+        event.preventDefault();
+        tempCloseRequestGenerationRef.current += 1;
+        setTempCloseOpen(true);
+        setMessage(`Retry ${tempRecoveryLabel(tempState.retryOperation)} before closing LCDiff.`);
+        return;
+      }
+      if (tempState.session) {
+        event.preventDefault();
+        tempCloseRequestGenerationRef.current += 1;
+        setTempCloseOpen(true);
+        return;
+      }
+      if (!stagedTarget) return;
+      event.preventDefault();
+      if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
+      void clearStaged().then(destroyCurrentWindow);
+    });
+  }, [clearStaged, stagedTarget]);
 
   async function runSearch() {
     const searchId = searchStreamId.current + 1;
@@ -1031,6 +1757,15 @@ export function App() {
     mode === "compare" &&
     archives.left?.metadata.sourceKind === "file" &&
     archives.right?.metadata.sourceKind === "file";
+  const activeTempSession = tempMerge.retryOperation ? undefined : tempMerge.session;
+  const tempOwnedTargetSide = activeTempSession?.targetSide
+    ?? (tempMerge.retryOperation ? tempTargetSideRef.current : undefined);
+  const tempTargetPendingOps = tempOwnedTargetSide
+    ? merge.pendingOps.filter((operation) => operation.side === tempOwnedTargetSide)
+    : [];
+  const tempConflictCount = activeTempSession
+    ? (tempMerge.conflictReview?.conflicts.length ?? 0)
+    : 0;
   const ignoreTrimWhitespace = preferences.misc.decompiler.ignoreTrimWhitespace;
   const activeColorPattern = effectiveColorPattern(
     preferences.appearance.colorPattern,
@@ -1041,11 +1776,22 @@ export function App() {
   // where both sides show the same entry as editable text — standalone plain
   // files AND text entries inside jar/zip archives. `isFileMerge` (sourceKind
   // file) only changes the copy-arrow wording now.
-  const isTextMerge =
-    mode === "compare" &&
-    isEditableTextPreview(preview.left) &&
-    isEditableTextPreview(preview.right);
-  const isDiffEditable = isTextMerge;
+  const leftText = isEditableTextPreview(preview.left);
+  const rightText = isEditableTextPreview(preview.right);
+  const oneSided = Boolean(preview.left) !== Boolean(preview.right);
+  const diffEditableSides = {
+    left: mode === "compare"
+      && !tempMerge.retryOperation
+      && (!activeTempSession || activeTempSession.targetSide === "left")
+      && leftText
+      && (rightText || oneSided),
+    right: mode === "compare"
+      && !tempMerge.retryOperation
+      && (!activeTempSession || activeTempSession.targetSide === "right")
+      && rightText
+      && (leftText || oneSided),
+  };
+  const isTextMerge = mode === "compare" && leftText && rightText;
 
   const isEditableEntry =
     mode === "single" &&
@@ -1078,10 +1824,17 @@ export function App() {
   const hunkMerge = isTextMerge;
   const sourceChipArchives = mode === "single"
     ? { left: summaryAsArchive(activeViewSource) }
-    : archives;
-  const loadedSourceCount = mode === "single"
-    ? viewWorkspace.sources.length
-    : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
+    : tempMerge.retryOperation && tempOwnedTargetSide
+      ? Object.fromEntries(
+          Object.entries(archives).filter(([side]) => side !== tempOwnedTargetSide),
+        )
+      : archives;
+  const loadedSourceCount =
+    mode === "text"
+      ? 0
+      : mode === "single"
+        ? viewWorkspace.sources.length
+        : Number(Boolean(archives.left)) + Number(Boolean(archives.right));
   const actionOpenTabs = mode === "single"
     ? (activeViewSource?.entryTabs ?? []).map((tab) => tab.entryPath)
     : openTabs.map((tab) => tab.path);
@@ -1091,15 +1844,23 @@ export function App() {
     activeTab,
     openTabs: actionOpenTabs,
     selectedPath: selected?.path,
-    selectedCanCopyLeft: mode === "compare" && !!selected?.right && selected.right.kind !== "directory",
-    selectedCanCopyRight: mode === "compare" && !!selected?.left && selected.left.kind !== "directory",
+    selectedCanCopyLeft: mode === "compare"
+      && !tempMerge.retryOperation
+      && (!activeTempSession || activeTempSession.targetSide === "left")
+      && !!selected?.right
+      && selected.right.kind !== "directory",
+    selectedCanCopyRight: mode === "compare"
+      && !tempMerge.retryOperation
+      && (!activeTempSession || activeTempSession.targetSide === "right")
+      && !!selected?.left
+      && selected.left.kind !== "directory",
     stagedTarget,
     stagedCount: Object.keys(stagedEntries).length,
     loadedSourceCount,
-    hunkMerge: activeTab !== "files" && hunkMerge,
+    hunkMerge: activeTab !== "files" && hunkMerge && !tempOwnedTargetSide,
     focusKind: classifyFocusTarget(document.activeElement),
     shortcutDialogOpen,
-  }), [actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget]);
+  }), [activeTempSession, actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget, tempMerge.retryOperation, tempOwnedTargetSide]);
 
   const actionHandlers = useMemo<AppActionHandlers>(() => ({
     openLeftFile: () => void browse("left"),
@@ -1107,7 +1868,7 @@ export function App() {
     openRightFile: () => void browse("right"),
     openRightDirectory: () => void browseFolder("right"),
     refresh: refreshSources,
-    save: () => stagedTarget && void save(stagedTarget),
+    save: saveRegisteredAction,
     clearStaged: () => void clearStaged(),
     toggleSearch: () => {
       if (mode === "text") {
@@ -1129,30 +1890,29 @@ export function App() {
     nextTab: () => focusRelativeTab(1),
     previousTab: () => focusRelativeTab(-1),
     closeActiveTab,
-    copyToLeft: () => void copy("right", "left"),
-    copyToRight: () => void copy("left", "right"),
-    takeAllToLeft: () => void takeAllTo("left"),
-    takeAllToRight: () => void takeAllTo("right"),
-    moveHunkToLeft: () => void moveHunkTo("left"),
-    moveHunkToRight: () => void moveHunkTo("right"),
+    copyToLeft: () => void guardedCopy("right", "left"),
+    copyToRight: () => void guardedCopy("left", "right"),
+    takeAllToLeft: () => void guardedTakeAllTo("left"),
+    takeAllToRight: () => void guardedTakeAllTo("right"),
+    moveHunkToLeft: () => guardedMoveHunkTo("left"),
+    moveHunkToRight: () => guardedMoveHunkTo("right"),
     reportBlocked: setMessage,
   }), [
     browse,
     browseFolder,
     clearStaged,
     closeActiveTab,
-    copy,
+    guardedCopy,
+    guardedMoveHunkTo,
+    guardedTakeAllTo,
     findInCurrentDiff,
     focusFiles,
     focusRelativeTab,
-    moveHunkTo,
     mode,
     refreshSources,
     runSearch,
-    save,
+    saveRegisteredAction,
     searchContext,
-    stagedTarget,
-    takeAllTo,
     updateShortcutDialogOpen,
   ]);
 
@@ -1249,6 +2009,37 @@ export function App() {
             }
           : undefined;
 
+  const viewEditSourceId = activeViewSource?.id;
+  const viewEditEntryPath = selected?.path;
+  const viewEditModel = preview.left;
+
+  function handleViewEdit(content: string, updateBuffer: boolean) {
+    if (
+      !viewEditSourceId ||
+      !viewEditEntryPath ||
+      !viewEditModel ||
+      viewEditModel.path !== viewEditEntryPath
+    ) {
+      return;
+    }
+    const current = mergeContextRef.current;
+    if (
+      !current ||
+      current.activeViewSource?.id !== viewEditSourceId ||
+      current.selected?.path !== viewEditEntryPath ||
+      current.preview.left !== viewEditModel
+    ) {
+      return;
+    }
+    if (updateBuffer) updateEditBuffer(content);
+    void stageEdit(
+      viewEditEntryPath,
+      content,
+      viewEditSourceId,
+      viewEditModel,
+    );
+  }
+
   const diffView = (
     <DiffView
       mode={mode}
@@ -1259,24 +2050,36 @@ export function App() {
       ignoreTrimWhitespace={ignoreTrimWhitespace}
       contentFilter={contentFilter}
       onContentFilterChange={setContentFilter}
-      onCopy={(from, to) => void copy(from, to)}
+      onCopy={(from, to) => void guardedCopy(from, to)}
       onEditorMount={handleEditorMount}
       onDiffMount={handleDiffMount}
       editable={isEditableEntry}
       editValue={editBuffer}
       onEditChange={(value) => {
-        const content = value ?? "";
-        updateEditBuffer(content);
-        if (selected) void stageEdit(selected.path, content);
+        handleViewEdit(value ?? "", true);
       }}
-      onEditBlur={(content) => selected && void stageEdit(selected.path, content)}
+      onEditBlur={(content) => {
+        handleViewEdit(content, false);
+      }}
       fileMerge={isFileMerge}
-      entryCopyEnabled={mode === "compare"}
-      diffEditable={isDiffEditable}
-      hunkMerge={mode === "compare" && isTextMerge}
-      onDiffEditEither={(side, content) => void stageFileSide(side, content)}
-      onTakeAll={(t) => void takeAllTo(t)}
-      onMoveHunk={(t) => void moveHunkTo(t)}
+      entryCopyEnabled={mode === "compare" && !tempMerge.retryOperation}
+      diffEditableSides={diffEditableSides}
+      hunkMerge={mode === "compare" && isTextMerge && !tempOwnedTargetSide}
+      onDiffEditEither={(side, content) => {
+        const entryPath = selected?.path;
+        const model = preview[side];
+        if (!entryPath || !model || model.path !== entryPath) return;
+        void guardedStageFileSide(side, entryPath, content, model);
+      }}
+      onTakeAll={(target) => void guardedTakeAllTo(target)}
+      onMoveHunk={guardedMoveHunkTo}
+      tempSession={activeTempSession}
+      tempBusy={tempMerge.busy !== undefined}
+      onCopyToTemp={(sourceSide) => {
+        const targetSide: Side = sourceSide === "left" ? "right" : "left";
+        void guardedCopy(sourceSide, targetSide);
+      }}
+      onMergeAllToTemp={previewMergeAllToTemp}
       diffNavigator={diffNavigator}
     />
   );
@@ -1317,16 +2120,30 @@ export function App() {
         mode={mode}
         stagedTarget={stagedTarget}
         pendingOps={merge.pendingOps}
-        onUnstageOne={(entryPath) => void unstage(entryPath)}
+        onUnstageOne={(entryPath) => void guardedUnstage(entryPath)}
+        tempSession={activeTempSession}
+        tempBusy={tempMerge.busy !== undefined}
+        tempRetryOperation={tempMerge.retryOperation}
+        onApplyTemp={() => applyTemp()}
+        onSaveTempAs={() => void saveTempAs(false)}
+        onDiscardTemp={() => {
+          if (tempMerge.retryOperation === "discard") discardTemp(false);
+          else setDiscardTempOpen(true);
+        }}
         canRefresh={Boolean(
-          mode === "single"
-            ? activeViewSource
-            : (archives.left && archives.left.metadata.sourceKind !== "text") ||
-              (archives.right && archives.right.metadata.sourceKind !== "text"),
+          mode !== "text" && (
+            mode === "single"
+              ? activeViewSource
+              : (archives.left && archives.left.metadata.sourceKind !== "text") ||
+                (archives.right && archives.right.metadata.sourceKind !== "text")
+          ),
         )}
         onSave={(side) => void save(side)}
         onRefresh={refreshSources}
-        onClearStaged={clearStaged}
+        onClearStaged={() => {
+          if (activeTempSession) void clearStagedForSide(activeTempSession.targetSide);
+          else void clearStaged();
+        }}
       />
 
       {mode !== "text" && (
@@ -1339,6 +2156,9 @@ export function App() {
           onOpenPath={(side, path) => void (mode === "single" ? openViewPath(path) : openPath(side, path))}
           onBrowse={(side) => void browse(side)}
           onBrowseFolder={(side) => void browseFolder(side)}
+          tempSession={activeTempSession}
+          tempBusy={tempMerge.busy !== undefined}
+          onCreateTempTarget={openCreateTempTarget}
         />
       )}
 
@@ -1422,7 +2242,15 @@ export function App() {
                   preferences={preferences}
                   effectiveColorPattern={activeColorPattern}
                   ignoreTrimWhitespace={ignoreTrimWhitespace}
-                  onMessage={setMessage}
+                  draftLeft={freeText.draftLeft}
+                  draftRight={freeText.draftRight}
+                  history={freeText.history}
+                  activeResultId={freeText.activeResultId}
+                  onDraftChange={freeText.setDraft}
+                  onClearDrafts={freeText.clearDrafts}
+                  onConfirmDiff={freeText.confirmDiff}
+                  onClearHistory={freeText.clearHistory}
+                  onSelectResult={freeText.selectResult}
                 />
               </div>
             ) : mode === "single" ? (
@@ -1439,10 +2267,12 @@ export function App() {
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                     onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
-                    onCopy={(from, to, pair) => void copy(from, to, pair)}
-                    onUnstage={(entryPath) => void unstage(entryPath)}
+                    onCopy={(from, to, pair) => void guardedCopy(from, to, pair)}
+                    onUnstage={(entryPath) => void guardedUnstage(entryPath)}
                     onExpandArchive={(fullPath) => void expandArchive(fullPath)}
                   />
                 </div>
@@ -1464,10 +2294,12 @@ export function App() {
                     rightLabel={rightLabel}
                     expandAllVersion={treeExpandAllVersion}
                     collapseAllVersion={treeCollapseAllVersion}
+                    expandedPaths={expandedPaths}
+                    onExpandedPathsChange={setExpandedPaths}
                     onInspect={(pair) => { setSelectedSearchResult(undefined); void inspect(pair); }}
                     onSelect={(pair) => { setSelectedSearchResult(undefined); selectPair(pair); }}
-                    onCopy={(from, to, pair) => void copy(from, to, pair)}
-                    onUnstage={(entryPath) => void unstage(entryPath)}
+                    onCopy={(from, to, pair) => void guardedCopy(from, to, pair)}
+                    onUnstage={(entryPath) => void guardedUnstage(entryPath)}
                     onExpandArchive={(fullPath) => void expandArchive(fullPath)}
                   />
                 </div>
@@ -1502,6 +2334,9 @@ export function App() {
         message={message}
         searching={searching}
         pendingCount={Object.keys(stagedEntries).length}
+        tempSession={activeTempSession}
+        tempStagedCount={tempTargetPendingOps.length}
+        tempConflictCount={tempConflictCount}
         updatePrompt={updatePrompt}
       />
       <KeyboardShortcutsDialog
@@ -1509,7 +2344,125 @@ export function App() {
         onOpenChange={updateShortcutDialogOpen}
         platform={currentPlatform()}
       />
-      <Dialog open={pendingOpen !== undefined} onOpenChange={(open) => !open && setPendingOpen(undefined)}>
+      <CreateTempTargetDialog
+        open={tempMerge.createOpen}
+        onOpenChange={tempMerge.setCreateOpen}
+        onSubmit={createTempTarget}
+        busy={tempMerge.busy === "create"}
+      />
+      {activeTempSession && tempMerge.conflictReview && !tempConflictReviewDismissed && (
+        <MergeConflictDialog
+          open
+          preview={tempMerge.conflictReview}
+          onOpenChange={(open) => {
+            if (!open) setTempConflictReviewDismissed(true);
+          }}
+          onSubmit={stageMergeAllToTemp}
+          busy={tempMerge.busy === "stageMergeAll"}
+        />
+      )}
+      <Dialog
+        open={pendingTempSourceChange !== undefined}
+        onOpenChange={(open) => {
+          if (!open && tempMerge.busy !== "apply") setPendingTempSourceChange(undefined);
+        }}
+      >
+        <DialogContent showCloseButton={tempMerge.busy !== "apply"}>
+          <DialogHeader>
+            <DialogTitle>Apply staged changes before changing source?</DialogTitle>
+            <DialogDescription>
+              The temporary target has staged work. Apply it, discard only that target plan, or keep the current source.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={tempMerge.busy !== undefined}
+              onClick={() => setPendingTempSourceChange(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              disabled={tempMerge.busy !== undefined}
+              onClick={() => void discardStagedForSourceChange()}
+            >
+              Discard staged
+            </Button>
+            <Button
+              disabled={tempMerge.busy !== undefined}
+              onClick={() => {
+                const pending = pendingTempSourceChangeRef.current;
+                if (pending) applyTemp(pending);
+              }}
+            >
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={discardTempOpen} onOpenChange={setDiscardTempOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discard temporary target?</DialogTitle>
+            <DialogDescription>
+              This removes the app-owned working target. User-selected Save As exports are not deleted.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscardTempOpen(false)}>Cancel</Button>
+            <Button onClick={() => discardTemp(false)}>Confirm discard temp</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={tempCloseOpen}
+        onOpenChange={(open) => {
+          if (!open && (tempMerge.busy === undefined || tempMerge.retryOperation)) cancelTempClose();
+        }}
+      >
+        <DialogContent showCloseButton={tempMerge.busy === undefined || tempMerge.retryOperation !== undefined}>
+          <DialogHeader>
+            <DialogTitle>Save temporary target before closing?</DialogTitle>
+            <DialogDescription>
+              {tempMerge.retryOperation
+                ? `Retry ${tempRecoveryLabel(tempMerge.retryOperation)} to finish recovery, or cancel only this close request.`
+                : "Save the current working result, discard the app-owned target, or cancel closing."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            {tempMerge.retryOperation ? (
+              <>
+                <Button variant="outline" onClick={cancelTempClose}>Cancel closing</Button>
+                <Button onClick={retryTempCloseOperation}>
+                  Retry {tempRecoveryLabel(tempMerge.retryOperation)}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={cancelTempClose}>
+                  Cancel
+                </Button>
+                <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={() => discardTemp(true)}>
+                  Discard
+                </Button>
+                <Button disabled={tempMerge.busy !== undefined} onClick={() => void saveTempAs(true)}>
+                  Save As
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={pendingOpen !== undefined || pendingComparePair !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingOpen(undefined);
+            setPendingComparePair(undefined);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Close open diffs?</DialogTitle>
@@ -1518,12 +2471,23 @@ export function App() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingOpen(undefined)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPendingOpen(undefined);
+                setPendingComparePair(undefined);
+              }}
+            >
+              Cancel
+            </Button>
             <Button
               onClick={() => {
                 const target = pendingOpen;
+                const pair = pendingComparePair;
                 setPendingOpen(undefined);
-                if (target) void openPath(target.side, target.path, true);
+                setPendingComparePair(undefined);
+                if (pair) void openDroppedComparePair(pair.leftPath, pair.rightPath, true);
+                else if (target) void openPath(target.side, target.path, true);
               }}
             >
               Open anyway

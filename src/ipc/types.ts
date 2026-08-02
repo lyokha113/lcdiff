@@ -37,6 +37,17 @@ export interface ArchiveDiff {
   pairs: ComparePair[];
 }
 
+export interface TextFileContent {
+  path: string;
+  content: string;
+}
+
+export interface CompareSourcesResult {
+  left: ArchiveSummary;
+  right: ArchiveSummary;
+  diff: ArchiveDiff;
+}
+
 export interface ViewSourceSummary {
   id: string;
   path: string;
@@ -108,3 +119,32 @@ export interface OsOpenPathsPayload {
 export interface AppActionPayload {
   actionId: string;
 }
+
+export type TempTargetCreation =
+  | { kind: "empty"; extension: string }
+  | { kind: "copyCurrent" };
+
+export interface TempMergeSessionSummary {
+  id: string;
+  targetSide: Side;
+  workingName: string;
+  entryCount: number;
+  appliedSourceCount: number;
+  exportedPath: string | null;
+}
+
+export interface TempMergeConflictPreview {
+  newEntries: string[];
+  conflicts: string[];
+}
+
+export type TempMergeConflictAction = "overwrite" | "skip";
+
+export interface TempMergeDecision {
+  entryPath: string;
+  action: TempMergeConflictAction;
+}
+
+export type TempTargetDiscardOutcome =
+  | { kind: "discarded" }
+  | { kind: "retryDiscardOnly"; message: string };
