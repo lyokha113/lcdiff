@@ -45,18 +45,7 @@ const backendCommandNames = [
   'discard_temp_target',
 ];
 
-const backendOnlyCommandNames = new Set([
-  'create_temp_target',
-  'preview_merge_all_conflicts',
-  'stage_temp_merge_all',
-  'apply_temp_merge',
-  'save_temp_target_as',
-  'discard_temp_target',
-]);
-
-const frontendCommandNames = backendCommandNames.filter(
-  (name) => !backendOnlyCommandNames.has(name),
-);
+const frontendCommandNames = backendCommandNames;
 
 const backendEventNames = [
   'search-progress',

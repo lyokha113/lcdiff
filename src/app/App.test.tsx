@@ -3961,6 +3961,7 @@ describe("App file-merge wiring", () => {
 
   it("ignores a stale target-side failure after temp creation takes ownership", async () => {
     const user = userEvent.setup();
+    summarySourceKind = "archive";
     let rejectLateValidation!: (error: Error) => void;
     const lateValidation = new Promise<string>((_resolve, reject) => { rejectLateValidation = reject; });
     invoke.mockImplementation((cmd, args) => {

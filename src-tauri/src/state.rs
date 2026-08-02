@@ -25,6 +25,31 @@ pub(crate) type SharedState = Arc<Mutex<AppState>>;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(test)]
+thread_local! {
+    static TEMP_TARGET_EXPORT_RECOVERY_CLEANUP_FAILURES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_temp_target_export_recovery_cleanup() {
+    TEMP_TARGET_EXPORT_RECOVERY_CLEANUP_FAILURES.with(|failures| {
+        failures.set(failures.get().saturating_add(1));
+    });
+}
+
+#[cfg(test)]
+fn take_temp_target_export_recovery_cleanup_failure() -> bool {
+    TEMP_TARGET_EXPORT_RECOVERY_CLEANUP_FAILURES.with(|failures| {
+        let remaining = failures.get();
+        if remaining == 0 {
+            return false;
+        }
+        failures.set(remaining - 1);
+        true
+    })
+}
+
 #[cfg(all(test, unix))]
 struct UnixExportRemoveRaceHooks {
     before_remove: Option<Box<dyn FnOnce()>>,
@@ -390,6 +415,10 @@ impl PendingTempTargetExportRecovery {
     }
 
     fn cleanup(&mut self) -> Result<(), String> {
+        #[cfg(test)]
+        if take_temp_target_export_recovery_cleanup_failure() {
+            return Err("injected pending export recovery cleanup failure".to_owned());
+        }
         self.snapshot
             .cleanup(&self.prepared.destination, &mut self.prepared.artifacts)
     }
@@ -4072,11 +4101,17 @@ fn recover_pending_temp_target_export(shared_state: &SharedState) -> Result<(), 
             if revalidate_temp_target_export_publication(shared_state, &recovery).is_err() {
                 rollback_pending_temp_target_export_recovery(&mut recovery)
             } else {
-                recovery.cleanup()?;
-                if revalidate_temp_target_export_publication(shared_state, &recovery).is_err() {
-                    rollback_pending_temp_target_export_recovery(&mut recovery)
-                } else {
-                    Ok(())
+                match recovery.cleanup() {
+                    Err(error) => Err(error),
+                    Ok(()) => {
+                        if revalidate_temp_target_export_publication(shared_state, &recovery)
+                            .is_err()
+                        {
+                            rollback_pending_temp_target_export_recovery(&mut recovery)
+                        } else {
+                            Ok(())
+                        }
+                    }
                 }
             }
         }

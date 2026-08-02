@@ -235,8 +235,9 @@ mod tests {
         apply_temp_merge_with_stale_reservation, create_temp_target, discard_temp_target,
         discard_temp_target_with_cleanup, discard_temp_target_with_cleanup_and_write,
         discard_temp_target_with_cleanup_and_write_outcome, discard_temp_target_with_outcome,
-        install_prepared_compare_archives, install_prepared_temp_target, prepare_compare_archives,
-        prepare_temp_target, prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
+        fail_next_temp_target_export_recovery_cleanup, install_prepared_compare_archives,
+        install_prepared_temp_target, prepare_compare_archives, prepare_temp_target,
+        prepare_temp_target_with_lock_probe, preview_merge_all_conflicts,
         replace_temp_target_export_destination_for_test, save_temp_target_as,
         save_temp_target_as_with_after_reserve, save_temp_target_as_with_backup_removal_failure,
         save_temp_target_as_with_cleanup_failure, save_temp_target_as_with_hooks,
@@ -3518,6 +3519,60 @@ mod tests {
                 .file_name()
                 .to_string_lossy()
                 .starts_with(".lcdiff-save-as-rollback-")
+        }));
+    }
+
+    #[test]
+    fn temp_merge_save_as_retains_recovery_after_a_second_cleanup_failure() {
+        let (dir, shared_state, working_path) = staged_temp_merge_for_apply();
+        let first_destination = dir.path().join("first-export.jar");
+        let final_destination = dir.path().join("final-export.jar");
+        std::fs::write(&first_destination, b"caller-owned-before-export").unwrap();
+
+        save_temp_target_as_with_cleanup_failure(&shared_state, first_destination.clone())
+            .unwrap_err();
+        fail_next_temp_target_export_recovery_cleanup();
+
+        let second_error =
+            save_temp_target_as(&shared_state, dir.path().join("blocked.jar")).unwrap_err();
+        assert!(second_error.contains("temporary merge export recovery is still pending"));
+        assert!(
+            shared_state
+                .lock()
+                .unwrap()
+                .temp_target_export_recovery_is_pending(),
+            "the second failure must retain recovery ownership",
+        );
+        assert_eq!(
+            std::fs::read(&first_destination).unwrap(),
+            std::fs::read(&working_path).unwrap(),
+        );
+
+        let summary = save_temp_target_as(&shared_state, final_destination.clone()).unwrap();
+        let expected_export = std::fs::canonicalize(&final_destination)
+            .unwrap()
+            .display()
+            .to_string();
+        assert_eq!(
+            summary.exported_path.as_deref(),
+            Some(expected_export.as_str())
+        );
+        assert_eq!(
+            std::fs::read(&final_destination).unwrap(),
+            std::fs::read(&working_path).unwrap(),
+        );
+        let state = shared_state.lock().unwrap();
+        assert!(!state.temp_target_export_recovery_is_pending());
+        assert_eq!(
+            state.temp_target_exported_path_for_test(),
+            Some(std::fs::canonicalize(&final_destination).unwrap()),
+        );
+        assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".lcdiff-save-as-")
         }));
     }
 

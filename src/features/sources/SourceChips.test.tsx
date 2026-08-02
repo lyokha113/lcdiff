@@ -75,6 +75,22 @@ describe("SourceChips", () => {
     expect(props.onCreateTempTarget).toHaveBeenCalledWith("left");
   });
 
+  it.each(["directory", "file", "text"] as const)(
+    "does not offer a temporary target for a loaded %s source",
+    async (sourceKind) => {
+      const user = userEvent.setup();
+      setup({
+        archives: {
+          left: { ...leftArchive, metadata: { ...leftArchive.metadata, sourceKind } },
+        },
+        onCreateTempTarget: vi.fn(),
+      });
+
+      await user.click(screen.getByRole("button", { name: /change right source/i }));
+      expect(screen.queryByRole("button", { name: "Create temp target..." })).not.toBeInTheDocument();
+    },
+  );
+
   it("labels temp roles and blocks target replacement controls", async () => {
     const user = userEvent.setup();
     setup({

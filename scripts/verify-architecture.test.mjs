@@ -229,17 +229,7 @@ const expectedCommandNames = [
   'discard_temp_target',
 ];
 
-const expectedFrontendCommandNames = expectedCommandNames.filter(
-  (name) =>
-    ![
-      'create_temp_target',
-      'preview_merge_all_conflicts',
-      'stage_temp_merge_all',
-      'apply_temp_merge',
-      'save_temp_target_as',
-      'discard_temp_target',
-    ].includes(name),
-);
+const expectedFrontendCommandNames = [...expectedCommandNames];
 
 const expectedEventNames = [
   'search-progress',
@@ -834,6 +824,19 @@ test('rejects a missing or renamed frontend IPC command literal', () => {
     sources.frontendSources['src/ipc/commands.ts'].replace(
       '"validate_path"',
       '"validate_source_path"',
+    );
+
+  assert.deepEqual(verifyPhaseThreeArchitecture(sources), [
+    `frontend IPC command literals must be exactly: ${expectedFrontendCommandNames.join(', ')}`,
+  ]);
+});
+
+test('rejects a missing or renamed temporary merge IPC command literal', () => {
+  const sources = structuredClone(cleanPhaseThreeSources);
+  sources.frontendSources['src/ipc/commands.ts'] =
+    sources.frontendSources['src/ipc/commands.ts'].replace(
+      '"create_temp_target"',
+      '"create_temporary_target"',
     );
 
   assert.deepEqual(verifyPhaseThreeArchitecture(sources), [

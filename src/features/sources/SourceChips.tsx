@@ -48,6 +48,7 @@ export function SourceChips({
       !tempSession &&
       !tempBusy &&
       loadedSourceSide !== undefined &&
+      archives[loadedSourceSide]?.metadata.sourceKind === "archive" &&
       onCreateTempTarget !== undefined;
 
     return (
