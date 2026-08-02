@@ -117,3 +117,101 @@ Result: exit 0 with no whitespace errors.
 - Vitest continues to emit the existing Node `--localstorage-file` warning.
 - Vite continues to emit the existing large-chunk advisory. Neither warning
   fails its gate.
+
+## Fix Round 1 — Integration Race and Recovery Review
+
+### Reviewer findings resolved
+
+- Added one compare-diff generation plus source-generation and temp-ownership
+  snapshots. Both successful and failed stale `compute_diff` completions are
+  ignored, including the Apply-refresh/source-replacement race.
+- Disabled legacy Move hunk UI and native actions for the whole temp-owned
+  workspace. Copy, edit, and bulk routes remain target-scoped; no action can
+  partially stage the protected source.
+- Excluded active, recovering, and not-yet-cleaned temp projections from recent
+  Compare history, so the app-owned `workingName` is never persisted as a
+  reopenable source.
+- Kept the close dialog actionable in recovery with only `Cancel closing` and
+  the matching Retry operation. Cancelling downgrades the retained close intent,
+  so a later menu retry cannot unexpectedly destroy the window.
+- Reserved Save As picker ownership with single-flight and lifecycle generation
+  guards. Stale/out-of-order results cannot publish a path into a newer session;
+  matching recovery still reuses the exact selected path.
+- Routed native and keyboard `file.save` through temp Apply and Retry Apply while
+  temp ownership exists, and blocked legacy save during other recovery states.
+- Added a synchronous App-call reservation around every temp controller entry
+  point. A same-tick native Save or late picker cannot record a false successful
+  intent while another controller operation is already active.
+- Reworked acceptance fixtures so archive summaries preserve requested paths and
+  diff rows depend on the replaceable source. Three distinct replacements are
+  rendered for both target sides.
+
+### TDD evidence
+
+RED:
+
+```bash
+pnpm vitest run src/app/App.test.tsx
+```
+
+Result before production fixes: 131 passed and 9 expected failures. The failures
+covered stale diff success/error, history leakage, Move hunk, native Save,
+picker single-flight/stale resolution, and close Save recovery/cancel behavior.
+
+GREEN:
+
+```bash
+pnpm vitest run src/app/App.test.tsx
+```
+
+Result: 142 passed, 0 failed. New coverage also drives native `file.save` through
+the same-value Apply recovery path and verifies same-path Save As and Discard
+recovery inherited from the original Task 7 suite. Additional review regressions
+cover pending-picker close cancellation and native Save racing an in-flight
+Save As operation.
+
+### Validation
+
+```bash
+pnpm verify:all
+```
+
+Result: exit 0. Architecture, TypeScript/Vite build, frontend render, branding,
+and docs gates passed; the final full frontend suite passed 41 files and 521
+tests.
+
+```bash
+env -u RUSTC_WRAPPER cargo test -p lcdiff-desktop temp_merge --lib
+```
+
+Result: 52 passed, 0 failed.
+
+```bash
+git diff --check
+```
+
+Result: exit 0.
+
+### Fix-round self-review
+
+- Audited every `refreshDiff` caller and the atomic pair publisher. The same
+  generation/ownership predicate guards both success and error publication.
+- Verified picker ownership changes synchronously across active session,
+  recovery, discard, and a newly created session, including reused session IDs.
+- Verified the App call reservation spans controller settlement, rather than
+  only picker settlement, so rejected cross-operation calls create no intent.
+- Verified window-close Save recovery keeps the selected destination and close
+  intent only until the user explicitly cancels closing.
+- Kept controller ownership and IPC DTO/command contracts unchanged; fixes are
+  limited to App composition and integration fixtures.
+- Independent read-only review found no remaining Critical, Important, or Minor
+  issues and returned a Ready verdict after the controller-call race fix.
+- Confirmed `.github/workflows/windows-release.yml` remains the unrelated,
+  pre-existing unstaged modification and is excluded from this fix commit.
+
+### Fix-round concerns
+
+- Native picker/modal interaction remains unit-tested through the platform
+  facade; real OS modal behavior is not exercised in jsdom.
+- The existing Node local-storage warning and Vite large-chunk advisory remain
+  non-failing and unchanged.

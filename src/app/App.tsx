@@ -165,6 +165,10 @@ interface TempDiscardIntent extends TempOperationIntent {
   closeAfterSuccess: boolean;
 }
 
+function tempRecoveryLabel(operation: "apply" | "saveAs" | "discard") {
+  return operation === "saveAs" ? "Save As" : operation === "apply" ? "Apply" : "Discard";
+}
+
 // Keep in sync with EDITABLE_EXTENSIONS in crates/lcdiff-core/src/edit.rs (Rust list is the authority; this list only controls the editor read-only affordance in the UI).
 const EDIT_EXTENSIONS = ["xml", "json", "ini", "txt", "properties", "yaml", "yml", "md", "csv", "cfg", "conf", "sh", "bash"];
 
@@ -272,17 +276,23 @@ export function App() {
   const viewRequestGenerationRef = useRef(0);
   const viewDropGenerationRef = useRef(0);
   const compareOpenGenerationRef = useRef<Record<Side, number>>({ left: 0, right: 0 });
+  const compareDiffGenerationRef = useRef(0);
   const lastFocusKindRef = useRef(classifyFocusTarget(document.activeElement));
   const appliedEngineRef = useRef(engine);
   const mergeContextRef = useRef<MergeControllerContext | undefined>(undefined);
   const tempTargetSideRef = useRef<Side | undefined>(undefined);
   const tempCreateSourceSideRef = useRef<Side | undefined>(undefined);
   const tempSavePathRef = useRef<string | undefined>(undefined);
+  const tempSavePickerGenerationRef = useRef(0);
+  const tempSavePickerPendingRef = useRef(false);
+  const tempSavePickerIdentityRef = useRef("none");
   const tempStageIntentRef = useRef<TempStageIntent | undefined>(undefined);
   const tempApplyIntentRef = useRef<TempApplyIntent | undefined>(undefined);
   const tempSaveIntentRef = useRef<TempSaveIntent | undefined>(undefined);
   const tempDiscardIntentRef = useRef<TempDiscardIntent | undefined>(undefined);
   const tempAttemptIdRef = useRef(0);
+  const tempControllerCallPendingRef = useRef(false);
+  const tempCloseRequestGenerationRef = useRef(0);
   const projectedTempSessionIdRef = useRef<string | undefined>(undefined);
   const freeText = useFreeTextController(setMessage);
   const tempMerge = useTempMergeController();
@@ -377,6 +387,27 @@ export function App() {
   };
   pendingTempSourceChangeRef.current = pendingTempSourceChange;
   if (tempMerge.session) tempTargetSideRef.current = tempMerge.session.targetSide;
+  const tempSavePickerIdentity = tempMerge.session
+    ? [
+        "session",
+        tempMerge.session.id,
+        tempMerge.session.targetSide,
+        tempMerge.session.workingName,
+        tempMerge.session.entryCount,
+        tempMerge.session.appliedSourceCount,
+        tempMerge.session.exportedPath ?? "",
+      ].join(":")
+    : tempMerge.retryOperation
+      ? `recovery:${tempMerge.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+      : "none";
+  if (tempSavePickerIdentityRef.current !== tempSavePickerIdentity) {
+    tempSavePickerIdentityRef.current = tempSavePickerIdentity;
+    tempSavePickerGenerationRef.current += 1;
+    tempSavePickerPendingRef.current = false;
+    if (tempMerge.session || tempSavePickerIdentity === "none") {
+      tempSavePathRef.current = undefined;
+    }
+  }
   const selectedRef = useRef<ComparePair | undefined>(selected);
   const inspectRef = useRef(inspect);
   const availableFontFamilies = useMemo(
@@ -577,11 +608,34 @@ export function App() {
   }
 
   const refreshDiff = useCallback(async () => {
+    const generation = compareDiffGenerationRef.current + 1;
+    compareDiffGenerationRef.current = generation;
+    const sourceGenerations = { ...compareOpenGenerationRef.current };
+    const tempState = tempStateRef.current;
+    const ownership = tempState.retryOperation
+      ? `recovery:${tempState.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+      : tempState.session
+        ? `session:${tempState.session.id}:${tempState.session.targetSide}`
+        : "none";
+    const isCurrent = () => {
+      const currentTempState = tempStateRef.current;
+      const currentOwnership = currentTempState.retryOperation
+        ? `recovery:${currentTempState.retryOperation}:${tempTargetSideRef.current ?? "unknown"}`
+        : currentTempState.session
+          ? `session:${currentTempState.session.id}:${currentTempState.session.targetSide}`
+          : "none";
+      return compareDiffGenerationRef.current === generation
+        && compareOpenGenerationRef.current.left === sourceGenerations.left
+        && compareOpenGenerationRef.current.right === sourceGenerations.right
+        && currentOwnership === ownership;
+    };
     try {
       const diff = await computeDiff();
+      if (!isCurrent()) return;
       setPairs(diff.pairs);
       setNestedPairs({});
     } catch {
+      if (!isCurrent()) return;
       setPairs([]);
       setNestedPairs({});
     }
@@ -657,7 +711,7 @@ export function App() {
   const tempSourceChangeBlockReason = useCallback((side: Side) => {
     const state = tempStateRef.current;
     if (state.retryOperation) {
-      return `Retry ${state.retryOperation === "saveAs" ? "Save As" : state.retryOperation === "apply" ? "Apply" : "Discard"} before changing sources.`;
+      return `Retry ${tempRecoveryLabel(state.retryOperation)} before changing sources.`;
     }
     if (state.busy) return "Wait for the temporary merge operation to finish before changing sources.";
     if (state.session?.targetSide === side) {
@@ -733,6 +787,8 @@ export function App() {
       right: compareOpenGenerationRef.current.right + 1,
     };
     compareOpenGenerationRef.current = generations;
+    const diffGeneration = compareDiffGenerationRef.current + 1;
+    compareDiffGenerationRef.current = diffGeneration;
     if (tempStateRef.current.session || tempStateRef.current.retryOperation || tempStateRef.current.busy) {
       setMessage("Discard the temporary target before replacing both Compare sources.");
       return;
@@ -740,6 +796,7 @@ export function App() {
     const staleOrProtected = () => (
       compareOpenGenerationRef.current.left !== generations.left
       || compareOpenGenerationRef.current.right !== generations.right
+      || compareDiffGenerationRef.current !== diffGeneration
       || tempStateRef.current.session !== undefined
       || tempStateRef.current.retryOperation !== undefined
       || tempStateRef.current.busy !== undefined
@@ -827,10 +884,22 @@ export function App() {
     }
     const left = archives.left?.path;
     const right = archives.right?.path;
+    if (
+      mode === "compare"
+      && (tempMerge.session || tempMerge.retryOperation || projectedTempSessionIdRef.current)
+    ) return;
     if (mode === "compare" && left && right) {
       setHistory(recordSession("compare", [left, right], Date.now()));
     }
-  }, [view, mode, activeViewSource, archives.left?.path, archives.right?.path]);
+  }, [
+    view,
+    mode,
+    activeViewSource,
+    archives.left?.path,
+    archives.right?.path,
+    tempMerge.retryOperation,
+    tempMerge.session,
+  ]);
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -1160,7 +1229,7 @@ export function App() {
   const guardTempTargetMutation = useCallback((target: Side) => {
     const state = tempStateRef.current;
     if (state.retryOperation) {
-      setMessage(`Retry ${state.retryOperation === "saveAs" ? "Save As" : state.retryOperation === "apply" ? "Apply" : "Discard"} before changing staged work.`);
+      setMessage(`Retry ${tempRecoveryLabel(state.retryOperation)} before changing staged work.`);
       return false;
     }
     if (state.busy) {
@@ -1195,6 +1264,11 @@ export function App() {
   }, [guardTempTargetMutation, takeAllTo]);
 
   const guardedMoveHunkTo = useCallback((target: Side) => {
+    const state = tempStateRef.current;
+    if (state.session || state.retryOperation) {
+      setMessage("Move hunk is unavailable while a temporary target owns the workspace.");
+      return;
+    }
     if (!guardTempTargetMutation(target)) return;
     moveHunkTo(target);
   }, [guardTempTargetMutation, moveHunkTo]);
@@ -1213,16 +1287,26 @@ export function App() {
 
   function createTempTarget(creation: Parameters<typeof tempMerge.create>[1]) {
     const sourceSide = tempCreateSourceSideRef.current;
-    if (!sourceSide) return;
+    if (!sourceSide || tempControllerCallPendingRef.current) return;
     const targetSide: Side = sourceSide === "left" ? "right" : "left";
     compareOpenGenerationRef.current[targetSide] += 1;
-    void tempMerge.create(sourceSide, creation);
+    tempControllerCallPendingRef.current = true;
+    void tempMerge.create(sourceSide, creation).finally(() => {
+      tempControllerCallPendingRef.current = false;
+    });
   }
 
   function previewMergeAllToTemp(sourceSide: Side) {
-    if (!tempStateRef.current.session || tempStateRef.current.retryOperation) return;
+    if (
+      !tempStateRef.current.session
+      || tempStateRef.current.retryOperation
+      || tempControllerCallPendingRef.current
+    ) return;
     setTempConflictReviewDismissed(false);
-    void tempMerge.previewMergeAll(sourceSide);
+    tempControllerCallPendingRef.current = true;
+    void tempMerge.previewMergeAll(sourceSide).finally(() => {
+      tempControllerCallPendingRef.current = false;
+    });
   }
 
   function runTempOperation<T extends TempOperationIntent>(
@@ -1230,11 +1314,16 @@ export function App() {
     intent: Omit<T, keyof TempOperationIntent>,
     operation: () => Promise<void>,
   ) {
-    if (intentRef.current && !intentRef.current.settled) return;
+    if (
+      (intentRef.current && !intentRef.current.settled)
+      || tempControllerCallPendingRef.current
+    ) return;
     const attemptId = tempAttemptIdRef.current + 1;
     tempAttemptIdRef.current = attemptId;
     intentRef.current = { ...intent, attemptId, settled: false } as T;
+    tempControllerCallPendingRef.current = true;
     void operation().finally(() => {
+      tempControllerCallPendingRef.current = false;
       if (intentRef.current?.attemptId !== attemptId) return;
       intentRef.current.settled = true;
       setTempCompletionVersion((current) => current + 1);
@@ -1265,30 +1354,109 @@ export function App() {
     );
   }
 
+  const saveRegisteredAction = useCallback(() => {
+    const state = tempStateRef.current;
+    if (tempControllerCallPendingRef.current) {
+      setMessage("Wait for the temporary merge operation to finish before saving staged work.");
+      return;
+    }
+    if (state.retryOperation === "apply") {
+      applyTemp();
+      return;
+    }
+    if (state.retryOperation) {
+      setMessage(`Retry ${tempRecoveryLabel(state.retryOperation)} before saving staged work.`);
+      return;
+    }
+    if (state.busy) {
+      setMessage("Wait for the temporary merge operation to finish before saving staged work.");
+      return;
+    }
+    if (state.session) {
+      applyTemp();
+      return;
+    }
+    if (stagedTarget) void save(stagedTarget);
+  }, [save, stagedTarget]);
+
   async function saveTempAs(closeAfterSuccess = false) {
+    const closeRequestGeneration = closeAfterSuccess
+      ? tempCloseRequestGenerationRef.current
+      : undefined;
     const retrying = tempStateRef.current.retryOperation === "saveAs";
     let destination: string | null | undefined = retrying ? tempSavePathRef.current : undefined;
     if (!retrying) {
       const session = tempStateRef.current.session;
-      if (!session) return;
+      if (
+        !session
+        || tempSavePickerPendingRef.current
+        || tempControllerCallPendingRef.current
+        || tempStateRef.current.busy !== undefined
+      ) return;
+      const pickerGeneration = tempSavePickerGenerationRef.current + 1;
+      tempSavePickerGenerationRef.current = pickerGeneration;
+      tempSavePickerPendingRef.current = true;
+      const pickerIdentity = tempSavePickerIdentityRef.current;
       try {
         destination = await savePathDialog({
           defaultPath: session.workingName,
           filters: [{ name: "Archives", extensions: ["jar", "zip", "war", "ear"] }],
         });
       } catch (error) {
-        setMessage(`Save As picker failed: ${String(error)}`);
+        if (tempSavePickerGenerationRef.current === pickerGeneration) {
+          setMessage(`Save As picker failed: ${String(error)}`);
+        }
         return;
+      } finally {
+        if (tempSavePickerGenerationRef.current === pickerGeneration) {
+          tempSavePickerPendingRef.current = false;
+        }
       }
+      const currentSession = tempStateRef.current.session;
+      if (
+        tempSavePickerGenerationRef.current !== pickerGeneration
+        || tempSavePickerIdentityRef.current !== pickerIdentity
+        || !currentSession
+        || currentSession.id !== session.id
+        || currentSession.targetSide !== session.targetSide
+        || tempControllerCallPendingRef.current
+        || tempStateRef.current.busy !== undefined
+        || tempStateRef.current.retryOperation !== undefined
+      ) return;
     }
     if (!destination) return;
-    tempSavePathRef.current = destination;
+    const selectedDestination = destination;
+    tempSavePathRef.current = selectedDestination;
     const priorCloseAfterSuccess = tempSaveIntentRef.current?.closeAfterSuccess ?? false;
+    const currentCloseRequest = closeRequestGeneration !== undefined
+      && closeRequestGeneration === tempCloseRequestGenerationRef.current;
     runTempOperation(
       tempSaveIntentRef,
-      { closeAfterSuccess: closeAfterSuccess || priorCloseAfterSuccess },
-      () => tempMerge.saveAs(destination),
+      { closeAfterSuccess: currentCloseRequest || priorCloseAfterSuccess },
+      () => tempMerge.saveAs(selectedDestination),
     );
+  }
+
+  function cancelTempClose() {
+    tempCloseRequestGenerationRef.current += 1;
+    setTempCloseOpen(false);
+    if (tempSaveIntentRef.current?.closeAfterSuccess) {
+      tempSaveIntentRef.current = { ...tempSaveIntentRef.current, closeAfterSuccess: false };
+    }
+    if (tempDiscardIntentRef.current?.closeAfterSuccess) {
+      tempDiscardIntentRef.current = { ...tempDiscardIntentRef.current, closeAfterSuccess: false };
+    }
+  }
+
+  function retryTempCloseOperation() {
+    const operation = tempStateRef.current.retryOperation;
+    if (operation === "saveAs") {
+      void saveTempAs(true);
+    } else if (operation === "discard") {
+      discardTemp(true);
+    } else if (operation === "apply") {
+      applyTemp();
+    }
   }
 
   function discardTemp(closeAfterSuccess = false) {
@@ -1411,12 +1579,14 @@ export function App() {
       const tempState = tempStateRef.current;
       if (tempState.retryOperation) {
         event.preventDefault();
-        setTempCloseOpen(false);
-        setMessage(`Retry ${tempState.retryOperation === "saveAs" ? "Save As" : tempState.retryOperation === "apply" ? "Apply" : "Discard"} before closing LCDiff.`);
+        tempCloseRequestGenerationRef.current += 1;
+        setTempCloseOpen(true);
+        setMessage(`Retry ${tempRecoveryLabel(tempState.retryOperation)} before closing LCDiff.`);
         return;
       }
       if (tempState.session) {
         event.preventDefault();
+        tempCloseRequestGenerationRef.current += 1;
         setTempCloseOpen(true);
         return;
       }
@@ -1682,10 +1852,10 @@ export function App() {
     stagedTarget,
     stagedCount: Object.keys(stagedEntries).length,
     loadedSourceCount,
-    hunkMerge: activeTab !== "files" && hunkMerge,
+    hunkMerge: activeTab !== "files" && hunkMerge && !tempOwnedTargetSide,
     focusKind: classifyFocusTarget(document.activeElement),
     shortcutDialogOpen,
-  }), [activeTempSession, actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget, tempMerge.retryOperation]);
+  }), [activeTempSession, actionOpenTabs, activeTab, hunkMerge, loadedSourceCount, mode, selected, shortcutDialogOpen, stagedEntries, stagedTarget, tempMerge.retryOperation, tempOwnedTargetSide]);
 
   const actionHandlers = useMemo<AppActionHandlers>(() => ({
     openLeftFile: () => void browse("left"),
@@ -1693,7 +1863,7 @@ export function App() {
     openRightFile: () => void browse("right"),
     openRightDirectory: () => void browseFolder("right"),
     refresh: refreshSources,
-    save: () => stagedTarget && void save(stagedTarget),
+    save: saveRegisteredAction,
     clearStaged: () => void clearStaged(),
     toggleSearch: () => {
       if (mode === "text") {
@@ -1736,9 +1906,8 @@ export function App() {
     mode,
     refreshSources,
     runSearch,
-    save,
+    saveRegisteredAction,
     searchContext,
-    stagedTarget,
     updateShortcutDialogOpen,
   ]);
 
@@ -1890,7 +2059,7 @@ export function App() {
       fileMerge={isFileMerge}
       entryCopyEnabled={mode === "compare" && !tempMerge.retryOperation}
       diffEditableSides={diffEditableSides}
-      hunkMerge={mode === "compare" && isTextMerge && !tempMerge.retryOperation}
+      hunkMerge={mode === "compare" && isTextMerge && !tempOwnedTargetSide}
       onDiffEditEither={(side, content) => {
         const entryPath = selected?.path;
         const model = preview[side];
@@ -2244,26 +2413,39 @@ export function App() {
       <Dialog
         open={tempCloseOpen}
         onOpenChange={(open) => {
-          if (!open && tempMerge.busy === undefined) setTempCloseOpen(false);
+          if (!open && (tempMerge.busy === undefined || tempMerge.retryOperation)) cancelTempClose();
         }}
       >
-        <DialogContent showCloseButton={tempMerge.busy === undefined}>
+        <DialogContent showCloseButton={tempMerge.busy === undefined || tempMerge.retryOperation !== undefined}>
           <DialogHeader>
             <DialogTitle>Save temporary target before closing?</DialogTitle>
             <DialogDescription>
-              Save the current working result, discard the app-owned target, or cancel closing.
+              {tempMerge.retryOperation
+                ? `Retry ${tempRecoveryLabel(tempMerge.retryOperation)} to finish recovery, or cancel only this close request.`
+                : "Save the current working result, discard the app-owned target, or cancel closing."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={() => setTempCloseOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={() => discardTemp(true)}>
-              Discard
-            </Button>
-            <Button disabled={tempMerge.busy !== undefined} onClick={() => void saveTempAs(true)}>
-              Save As
-            </Button>
+            {tempMerge.retryOperation ? (
+              <>
+                <Button variant="outline" onClick={cancelTempClose}>Cancel closing</Button>
+                <Button onClick={retryTempCloseOperation}>
+                  Retry {tempRecoveryLabel(tempMerge.retryOperation)}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={cancelTempClose}>
+                  Cancel
+                </Button>
+                <Button variant="outline" disabled={tempMerge.busy !== undefined} onClick={() => discardTemp(true)}>
+                  Discard
+                </Button>
+                <Button disabled={tempMerge.busy !== undefined} onClick={() => void saveTempAs(true)}>
+                  Save As
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
