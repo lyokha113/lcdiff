@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-version = "0.3.11"
+version = "0.3.12"
 
 [workspace.dependencies]
 cap-std = "4.0.2"

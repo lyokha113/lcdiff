@@ -2130,7 +2130,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lcdiff-core"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "crc32fast",
  "same-file",
@@ -2144,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "lcdiff-desktop"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "cap-std",
  "font-kit",
