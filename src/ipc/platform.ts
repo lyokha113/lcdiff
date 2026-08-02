@@ -1,6 +1,11 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open, type OpenDialogOptions } from "@tauri-apps/plugin-dialog";
+import {
+  open,
+  save,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+} from "@tauri-apps/plugin-dialog";
 
 export type Unlisten = () => void;
 type ListenErrorHandler = (error: unknown) => void;
@@ -62,6 +67,10 @@ export function openPathDialog(
   options?: OpenDialogOptions,
 ): Promise<string | string[] | null> {
   return open(options);
+}
+
+export function savePathDialog(options?: SaveDialogOptions): Promise<string | null> {
+  return save(options);
 }
 
 export function subscribeWindowDragDrop(

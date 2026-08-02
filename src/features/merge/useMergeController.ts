@@ -8,11 +8,6 @@ import {
   unstage as unstageCommand,
   unstageViewWrite,
 } from "@/ipc/commands";
-import {
-  destroyCurrentWindow,
-  isTauriRuntime,
-  subscribeWindowCloseRequested,
-} from "@/ipc/platform";
 import type {
   ArchiveSummary,
   ComparePair,
@@ -32,7 +27,7 @@ import {
   stagingEntryPath,
   viewStagingKey,
 } from "./staging";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 export interface MergeControllerContext {
   mode: Mode;
@@ -67,15 +62,8 @@ export function useMergeController({
     Record<string, boolean>
   >({});
   const editStageGenerationRef = useRef(0);
-
-  useEffect(() => {
-    if (!stagedTarget || !isTauriRuntime()) return;
-    return subscribeWindowCloseRequested((event) => {
-      event.preventDefault();
-      if (!globalThis.confirm("Discard unsaved changes and close LCDiff?")) return;
-      void clearStagedCommand().then(destroyCurrentWindow);
-    });
-  }, [stagedTarget]);
+  const stagedEntriesRef = useRef(stagedEntries);
+  stagedEntriesRef.current = stagedEntries;
 
   const copy = useCallback(async (
     from: Side,
@@ -200,6 +188,63 @@ export function useMergeController({
     editor.resetToLoadedPreview();
     onMessage("Cleared unsaved changes.");
   }, [editor, onMessage]);
+
+  const clearStagedForSide = useCallback(async (side: Side) => {
+    invalidateStagingOperations(editStageGenerationRef);
+    const entries = Object.entries(stagedEntriesRef.current)
+      .filter(([, entry]) => entry.side === side);
+    const paths = [...new Set(entries.map(([key]) => stagingEntryPath(key)))];
+    const cleared = new Set<string>();
+    try {
+      for (const entryPath of paths) {
+        await unstageCommand(entryPath, side);
+        cleared.add(entryPath);
+      }
+    } catch (error) {
+      const next = Object.fromEntries(
+        Object.entries(stagedEntriesRef.current).filter(([key, entry]) => (
+          entry.side !== side || !cleared.has(stagingEntryPath(key))
+        )),
+      );
+      stagedEntriesRef.current = next;
+      setStagedEntries(next);
+      setStagedTarget(Object.values(next)[0]?.side);
+      onMessage(String(error));
+      return false;
+    }
+    const next = Object.fromEntries(
+      Object.entries(stagedEntriesRef.current).filter(([, entry]) => entry.side !== side),
+    );
+    stagedEntriesRef.current = next;
+    setStagedEntries(next);
+    setStagedTarget(Object.values(next)[0]?.side);
+    editor.resetToLoadedPreview();
+    onMessage("Cleared staged changes for the temporary target.");
+    return true;
+  }, [editor, onMessage]);
+
+  const projectTempStaged = useCallback((targetSide: Side, entryPaths: string[]) => {
+    setStagedEntries((current) => {
+      const stagedPaths = new Set(entryPaths);
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([key, entry]) => (
+          entry.side !== targetSide || !stagedPaths.has(stagingEntryPath(key))
+        )),
+      );
+      for (const entryPath of entryPaths) {
+        next[entryPath] = { side: targetSide, kind: "copy" };
+      }
+      return next;
+    });
+    if (entryPaths.length > 0) setStagedTarget(targetSide);
+  }, []);
+
+  const resetStagedProjection = useCallback(() => {
+    invalidateStagingOperations(editStageGenerationRef);
+    setStagedTarget(undefined);
+    setStagedEntries({});
+    editor.resetToLoadedPreview();
+  }, [editor]);
 
   const unstage = useCallback(async (key: string) => {
     try {
@@ -416,6 +461,9 @@ export function useMergeController({
       save,
       confirmSignedSave,
       clearStaged,
+      clearStagedForSide,
+      projectTempStaged,
+      resetStagedProjection,
       unstage,
       stageEdit,
       stageFileSide,

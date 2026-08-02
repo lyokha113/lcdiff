@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import type { TempMergeSessionSummary } from "@/ipc/types";
 
 export interface StatusBarUpdatePrompt {
   status: "available" | "downloading" | "readyToRestart" | "fallback" | "error";
@@ -14,10 +15,21 @@ interface StatusBarProps {
   message: string;
   searching: boolean;
   pendingCount: number;
+  tempSession?: TempMergeSessionSummary;
+  tempStagedCount?: number;
+  tempConflictCount?: number;
   updatePrompt?: StatusBarUpdatePrompt;
 }
 
-export function StatusBar({ message, searching, pendingCount, updatePrompt }: StatusBarProps) {
+export function StatusBar({
+  message,
+  searching,
+  pendingCount,
+  tempSession,
+  tempStagedCount = 0,
+  tempConflictCount = 0,
+  updatePrompt,
+}: StatusBarProps) {
   const showPrimary = updatePrompt?.primaryLabel && (updatePrompt.onPrimaryAction || updatePrompt.primaryDisabled);
   const showFallback = updatePrompt?.status !== "readyToRestart" && updatePrompt?.fallbackLabel && updatePrompt.onFallbackAction;
 
@@ -29,6 +41,17 @@ export function StatusBar({ message, searching, pendingCount, updatePrompt }: St
       </p>
       <div className="status-bar__meta">
         {searching && <span>Searching sources</span>}
+        {tempSession && (
+          <span className="status-bar__temp" aria-label="Temporary merge status">
+            Temp {tempSession.workingName}
+            {` · ${tempSession.appliedSourceCount} source${tempSession.appliedSourceCount === 1 ? "" : "s"} applied`}
+            {` · ${tempStagedCount} staged`}
+            {` · ${tempConflictCount} conflict${tempConflictCount === 1 ? "" : "s"}`}
+            {tempSession.exportedPath
+              ? ` · Exported: ${tempSession.exportedPath}`
+              : " · Not exported"}
+          </span>
+        )}
         {updatePrompt && (
           <span className={`status-bar__update status-bar__update--${updatePrompt.status}`} aria-live="polite">
             <span className="status-bar__update-text">{updatePrompt.message}</span>

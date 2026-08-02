@@ -34,6 +34,8 @@ let deferredAppActionListen: Promise<() => void> | undefined;
 let appActionHandler: ((event: { payload: { actionId: string } }) => void) | undefined;
 let osOpenPathsHandler: ((event: { payload: { paths: string[] } }) => void) | undefined;
 let dragDropHandler: ((event: { payload: { type: string; paths: string[]; position: { x: number; y: number } } }) => void) | undefined;
+let closeRequestHandler: ((event: { preventDefault(): void }) => void) | undefined;
+const destroyWindow = vi.fn(async () => undefined);
 const viewRootEntries: Record<string, string[]> = {
   "view:/tmp/alpha.jar": ["Alpha.class", "alpha.json", "alpha-two.json"],
   "view:/tmp/beta.jar": ["beta.json"],
@@ -68,6 +70,15 @@ const onePairDiff = {
       right: FILE_ENTRY,
     },
   ],
+};
+
+const tempSession = {
+  id: "temp-merge-1",
+  targetSide: "right" as const,
+  workingName: "lcdiff-working.jar",
+  entryCount: 1,
+  appliedSourceCount: 0,
+  exportedPath: null as string | null,
 };
 
 function entryPreview(side: "left" | "right") {
@@ -134,6 +145,18 @@ const defaultInvoke = async (cmd: string, args?: Record<string, unknown>): Promi
     }
     case "read_entry":
       return entryPreview(args?.side as "left" | "right");
+    case "create_temp_target":
+      return tempSession;
+    case "preview_merge_all_conflicts":
+      return { newEntries: ["new.txt"], conflicts: ["config.json"] };
+    case "stage_temp_merge_all":
+      return undefined;
+    case "apply_temp_merge":
+      return { ...tempSession, entryCount: 2, appliedSourceCount: 1 };
+    case "save_temp_target_as":
+      return { ...tempSession, exportedPath: args?.path as string };
+    case "discard_temp_target":
+      return { kind: "discarded" as const };
     case "read_view_entry": {
       const entryPath = args?.entryPath as string;
       return {
@@ -198,8 +221,11 @@ vi.mock("@tauri-apps/api/window", () => ({
       dragDropHandler = handler;
       return vi.fn();
     }),
-    onCloseRequested: vi.fn(async () => vi.fn()),
-    destroy: vi.fn(),
+    onCloseRequested: vi.fn(async (handler: typeof closeRequestHandler) => {
+      closeRequestHandler = handler;
+      return vi.fn();
+    }),
+    destroy: destroyWindow,
   }),
 }));
 const listen = vi.fn((eventName: string, handler: unknown) => {
@@ -252,7 +278,11 @@ const DIRECTORY_PICKER_OPTIONS: OpenDialogOptions = {
 // chooseFile (plugin-dialog `open`) returns a fixed path; openPath then drives
 // validate_path + open_archive.
 const chooseFile = vi.fn(async (_options?: OpenDialogOptions): Promise<string | null> => "/tmp/config.json");
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (options?: OpenDialogOptions) => chooseFile(options) }));
+const chooseSave = vi.fn(async (_options?: unknown): Promise<string | null> => "/tmp/merged.jar");
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (options?: OpenDialogOptions) => chooseFile(options),
+  save: (options?: unknown) => chooseSave(options),
+}));
 
 const updateClientMocks = vi.hoisted(() => {
   const releaseUrl = "https://github.com/lyokha113/lcdiff/releases/latest";
@@ -451,6 +481,28 @@ async function openCompareWorkspace(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Open Compare mode" }));
 }
 
+async function openLeftAndCreateRightTemp(user: ReturnType<typeof userEvent.setup>) {
+  await openCompareWorkspace(user);
+  await user.click(screen.getByLabelText("Change left source"));
+  await user.click(await screen.findByText("Browse file"));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+    "open_archive",
+    { path: "/tmp/config.json", side: "left" },
+  ));
+
+  await user.click(screen.getByLabelText("Change right source"));
+  await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+  await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+  await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+  await user.click(screen.getByRole("button", { name: "Create temp target" }));
+
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+    "create_temp_target",
+    { sourceSide: "left", creation: { kind: "copyCurrent" } },
+  ));
+  expect(await screen.findByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+}
+
 async function switchMode(mode: "View" | "Compare" | "Text") {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: `${mode} mode` }));
@@ -465,6 +517,21 @@ async function browseViewSource(user: ReturnType<typeof userEvent.setup>) {
   await user.click(browseButton);
 }
 
+async function clickBrowseFileForSide(
+  user: ReturnType<typeof userEvent.setup>,
+  side: "left" | "right",
+) {
+  const label = `${side === "left" ? "Left" : "Right"} File/Folder path`;
+  let input = screen.queryByLabelText(label);
+  if (!input) {
+    await user.click(screen.getByLabelText(`Change ${side} source`));
+    input = await screen.findByLabelText(label);
+  }
+  const picker = input.closest(".source-picker");
+  if (!(picker instanceof HTMLElement)) throw new Error(`No ${side} source picker is available`);
+  await user.click(within(picker).getByRole("button", { name: /Browse file/i }));
+}
+
 describe("App file-merge wiring", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -475,6 +542,9 @@ describe("App file-merge wiring", () => {
     invoke.mockImplementation(defaultInvoke);
     chooseFile.mockReset();
     chooseFile.mockImplementation(async () => "/tmp/config.json");
+    chooseSave.mockReset();
+    chooseSave.mockImplementation(async () => "/tmp/merged.jar");
+    destroyWindow.mockClear();
     setOriginal.mockClear();
     setModified.mockClear();
     revealOriginal.mockClear();
@@ -507,6 +577,7 @@ describe("App file-merge wiring", () => {
     appActionHandler = undefined;
     osOpenPathsHandler = undefined;
     dragDropHandler = undefined;
+    closeRequestHandler = undefined;
     listen.mockClear();
     Object.defineProperty(Element.prototype, "hasPointerCapture", {
       configurable: true,
@@ -3493,5 +3564,395 @@ describe("App file-merge wiring", () => {
       expect(committedSides).toContain("left");
       expect(committedSides).toContain("right");
     });
+  });
+
+  it("creates a right copy-current target, stages Merge all, applies, and replaces only the left source", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    expect(await screen.findByRole("dialog", { name: "Resolve merge conflicts" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Overwrite all" }));
+    await user.click(screen.getByRole("button", { name: "Stage merge decisions" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_temp_merge_all", {
+      sourceSide: "left",
+      decisions: [{ entryPath: "config.json", action: "overwrite" }],
+    }));
+    await user.click(await screen.findByRole("button", { name: "Apply to temp (2)" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+    expect(await screen.findByText(/1 sources applied/)).toBeInTheDocument();
+    await waitFor(() => expect(
+      screen.getByRole("button", { name: "Apply to temp (0)" }),
+    ).toBeDisabled());
+
+    chooseFile.mockResolvedValueOnce("/tmp/second.jar");
+    await clickBrowseFileForSide(user, "left");
+    expect(chooseFile).toHaveBeenCalledTimes(2);
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/second.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/second.jar", side: "right" },
+    );
+  });
+
+  it("dismisses conflict review without ending the temp session and can preview again", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    const review = await screen.findByRole("dialog", { name: "Resolve merge conflicts" });
+    await user.click(within(review).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(
+      screen.queryByRole("dialog", { name: "Resolve merge conflicts" }),
+    ).not.toBeInTheDocument());
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Merge all -> temp" }));
+    expect(await screen.findByRole("dialog", { name: "Resolve merge conflicts" })).toBeInTheDocument();
+  });
+
+  it("offers Apply, Discard staged, and Cancel before replacing a source with target work", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    chooseFile.mockResolvedValue("/tmp/replacement.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    expect(within(prompt).getByRole("button", { name: "Apply" })).toBeInTheDocument();
+    expect(within(prompt).getByRole("button", { name: "Discard staged" })).toBeInTheDocument();
+    await user.click(within(prompt).getByRole("button", { name: "Cancel" }));
+    expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/replacement.jar", side: "left" },
+    );
+
+    await clickBrowseFileForSide(user, "left");
+    const retryPrompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(retryPrompt).getByRole("button", { name: "Discard staged" }));
+
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("unstage", {
+      entryPath: "config.json",
+      side: "right",
+    }));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/replacement.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("applies staged target work before continuing a source replacement", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("stage_copy", {
+      from: "left",
+      to: "right",
+      entryPath: "config.json",
+    }));
+
+    chooseFile.mockResolvedValueOnce("/tmp/applied-source.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(prompt).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_temp_merge"));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/applied-source.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("keeps a left temporary target while replacing the right source repeatedly", async () => {
+    const user = userEvent.setup();
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "create_temp_target") return { ...tempSession, targetSide: "left" as const };
+      return defaultInvoke(cmd, args);
+    });
+    await openCompareWorkspace(user);
+    await clickBrowseFileForSide(user, "right");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "right" },
+    ));
+
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+    await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+    await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+    await user.click(screen.getByRole("button", { name: "Create temp target" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "create_temp_target",
+      { sourceSide: "right", creation: { kind: "copyCurrent" } },
+    ));
+
+    for (const path of ["/tmp/second.zip", "/tmp/third.jar", "/tmp/fourth.zip"]) {
+      chooseFile.mockResolvedValueOnce(path);
+      await clickBrowseFileForSide(user, "right");
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+        "open_archive",
+        { path, side: "right" },
+      ));
+    }
+
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    expect(invoke.mock.calls.some(([cmd, args]) => (
+      cmd === "open_archive" && (args as { side?: "left" | "right" })?.side === "left"
+    ))).toBe(false);
+  });
+
+  it("ignores a stale target-side failure after temp creation takes ownership", async () => {
+    const user = userEvent.setup();
+    let rejectLateValidation!: (error: Error) => void;
+    const lateValidation = new Promise<string>((_resolve, reject) => { rejectLateValidation = reject; });
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === "validate_path" && args?.raw === "/tmp/late-right.jar") {
+        return lateValidation;
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openCompareWorkspace(user);
+    await user.click(screen.getByLabelText("Change left source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/config.json", side: "left" },
+    ));
+
+    chooseFile.mockResolvedValueOnce("/tmp/late-right.jar");
+    await user.click(screen.getByLabelText("Change right source"));
+    await user.click(await screen.findByText("Browse file"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "validate_path",
+      { raw: "/tmp/late-right.jar" },
+    ));
+
+    await user.click(await screen.findByRole("button", { name: "Create temp target..." }));
+    await user.click(screen.getByRole("combobox", { name: "Temporary target type" }));
+    await user.click(await screen.findByRole("option", { name: "Copy current source" }));
+    await user.click(screen.getByRole("button", { name: "Create temp target" }));
+    expect(await screen.findByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    rejectLateValidation(new Error("late target validation failed"));
+    await act(async () => { await lateValidation.catch(() => undefined); });
+    await waitFor(() => expect(invoke).not.toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/late-right.jar", side: "right" },
+    ));
+    expect(screen.queryByText("Error: late target validation failed")).not.toBeInTheDocument();
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("keeps Apply recovery retry-only across the same repeated failure and then continues source replacement", async () => {
+    const user = userEvent.setup();
+    let applyAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "apply_temp_merge") {
+        applyAttempts += 1;
+        if (applyAttempts <= 2) {
+          throw new Error("temporary merge Apply recovery is pending; retry Apply");
+        }
+        return { ...tempSession, appliedSourceCount: 1 };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+    const cells = await screen.findAllByText("config.json");
+    await user.click(cells.find((element) => element.closest("button.tree-file"))!);
+    await user.click(await screen.findByRole("button", { name: "Copy selected -> temp" }));
+
+    chooseFile.mockResolvedValueOnce("/tmp/after-apply-recovery.jar");
+    await clickBrowseFileForSide(user, "left");
+    const prompt = await screen.findByRole("dialog", { name: "Apply staged changes before changing source?" });
+    await user.click(within(prompt).getByRole("button", { name: "Apply" }));
+
+    const firstRetry = await screen.findByRole("button", { name: "Retry Apply" });
+    expect(screen.queryByRole("button", { name: "Save temp as" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard temp" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    await user.click(firstRetry);
+    await waitFor(() => expect(applyAttempts).toBe(2));
+
+    await user.click(screen.getByRole("button", { name: "Retry Apply" }));
+    await waitFor(() => expect(applyAttempts).toBe(3));
+    await user.click(await screen.findByRole("button", { name: "Open anyway" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "open_archive",
+      { path: "/tmp/after-apply-recovery.jar", side: "left" },
+    ));
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("uses the selected Save As path for retry but trusts the backend export path", async () => {
+    const user = userEvent.setup();
+    let saveAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        saveAttempts += 1;
+        if (saveAttempts === 1) {
+          throw new Error("temporary merge export recovery is pending; retry Save As");
+        }
+        return { ...tempSession, exportedPath: "/backend/canonical-output.jar" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/dialog/chosen-output.jar");
+    await openLeftAndCreateRightTemp(user);
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByRole("button", { name: "Retry Save As" })).toBeEnabled();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry Save As" }));
+
+    await waitFor(() => expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toEqual([
+      ["save_temp_target_as", { path: "/dialog/chosen-output.jar" }],
+      ["save_temp_target_as", { path: "/dialog/chosen-output.jar" }],
+    ]));
+    expect(chooseSave).toHaveBeenCalledOnce();
+    expect(await screen.findByLabelText("Temporary merge status")).toHaveTextContent(
+      "Exported: /backend/canonical-output.jar",
+    );
+  });
+
+  it("cancels Save As without backend mutation and retries an ordinary failure with the session intact", async () => {
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    chooseSave.mockResolvedValueOnce(null);
+
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === "save_temp_target_as")).toHaveLength(0);
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+
+    let attempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "save_temp_target_as") {
+        attempts += 1;
+        if (attempts === 1) throw new Error("destination unavailable");
+        return { ...tempSession, exportedPath: args?.path as string };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    chooseSave.mockResolvedValue("/tmp/retry.jar");
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("destination unavailable");
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save temp as" }));
+    expect(await screen.findByLabelText("Temporary merge status")).toHaveTextContent(
+      "Exported: /tmp/retry.jar",
+    );
+  });
+
+  it("keeps only retry Discard after cleanup failure and converges without exposing the stale target", async () => {
+    const user = userEvent.setup();
+    let discardAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "discard_temp_target") {
+        discardAttempts += 1;
+        return discardAttempts === 1
+          ? { kind: "retryDiscardOnly", message: "cleanup recovery is pending" }
+          : { kind: "discarded" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+
+    await user.click(screen.getByRole("button", { name: "Discard temp" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm discard temp" }));
+    expect(await screen.findByRole("button", { name: "Retry Discard" })).toBeEnabled();
+    expect(screen.queryByText(/TEMP TARGET - SESSION ONLY/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save temp as" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry Discard" }));
+    await waitFor(() => expect(discardAttempts).toBe(2));
+    expect(screen.queryByRole("button", { name: "Retry Discard" })).not.toBeInTheDocument();
+    expect(screen.queryByText("lcdiff-working.jar")).not.toBeInTheDocument();
+  });
+
+  it("blocks temp-owned target drops and navigation before IPC", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+    invoke.mockClear();
+
+    act(() => dragDropHandler?.({
+      payload: { type: "drop", paths: ["/tmp/onto-target.jar"], position: { x: window.innerWidth, y: 20 } },
+    }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/temporary target/i));
+    expect(invoke).not.toHaveBeenCalledWith("validate_path", { raw: "/tmp/onto-target.jar" });
+    expect(invoke).not.toHaveBeenCalledWith("open_archive", expect.objectContaining({ side: "right" }));
+
+    await user.click(screen.getByRole("button", { name: "View mode" }));
+    expect(screen.getByRole("main", { name: "Comparison workspace" })).toBeInTheDocument();
+    expect(screen.getByText(/TEMP TARGET - SESSION ONLY/)).toBeInTheDocument();
+  });
+
+  it("guards window close with Save As, Discard, and Cancel and does not bypass discard recovery", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    const user = userEvent.setup();
+    let discardAttempts = 0;
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "discard_temp_target") {
+        discardAttempts += 1;
+        return discardAttempts === 1
+          ? { kind: "retryDiscardOnly", message: "cleanup recovery is pending" }
+          : { kind: "discarded" };
+      }
+      return defaultInvoke(cmd, args);
+    });
+    await openLeftAndCreateRightTemp(user);
+    await waitFor(() => expect(closeRequestHandler).toBeDefined());
+    const preventDefault = vi.fn();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    const closePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(within(closePrompt).getByRole("button", { name: "Save As" })).toBeInTheDocument();
+    expect(within(closePrompt).getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    await user.click(within(closePrompt).getByRole("button", { name: "Cancel" }));
+    expect(destroyWindow).not.toHaveBeenCalled();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    const retryClosePrompt = await screen.findByRole("dialog", { name: "Save temporary target before closing?" });
+    await user.click(within(retryClosePrompt).getByRole("button", { name: "Discard" }));
+    expect(await screen.findByRole("button", { name: "Retry Discard" })).toBeEnabled();
+    expect(destroyWindow).not.toHaveBeenCalled();
+
+    act(() => closeRequestHandler?.({ preventDefault }));
+    expect(screen.queryByRole("dialog", { name: "Save temporary target before closing?" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/retry Discard before closing/i);
+    await user.click(screen.getByRole("button", { name: "Retry Discard" }));
+    await waitFor(() => expect(destroyWindow).toHaveBeenCalledOnce());
   });
 });

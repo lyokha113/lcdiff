@@ -74,4 +74,55 @@ describe("StatusBar", () => {
     expect(onPrimaryAction).toHaveBeenCalledTimes(1);
     expect(onFallbackAction).not.toHaveBeenCalled();
   });
+
+  it("summarizes the authoritative temporary target without inventing an export", () => {
+    render(
+      <StatusBar
+        message="Ready"
+        searching={false}
+        pendingCount={3}
+        tempSession={{
+          id: "temp-1",
+          targetSide: "right",
+          workingName: "working.jar",
+          entryCount: 8,
+          appliedSourceCount: 2,
+          exportedPath: null,
+        }}
+        tempStagedCount={3}
+        tempConflictCount={1}
+      />,
+    );
+
+    const status = screen.getByLabelText("Temporary merge status");
+    expect(status).toHaveTextContent("working.jar");
+    expect(status).toHaveTextContent("2 sources applied");
+    expect(status).toHaveTextContent("3 staged");
+    expect(status).toHaveTextContent("1 conflict");
+    expect(status).toHaveTextContent("Not exported");
+  });
+
+  it("reports an export only from the backend session path", () => {
+    render(
+      <StatusBar
+        message="Ready"
+        searching={false}
+        pendingCount={0}
+        tempSession={{
+          id: "temp-1",
+          targetSide: "left",
+          workingName: "working.zip",
+          entryCount: 2,
+          appliedSourceCount: 0,
+          exportedPath: "/chosen/backend-result.zip",
+        }}
+        tempStagedCount={0}
+        tempConflictCount={0}
+      />,
+    );
+
+    expect(screen.getByLabelText("Temporary merge status")).toHaveTextContent(
+      "Exported: /chosen/backend-result.zip",
+    );
+  });
 });
